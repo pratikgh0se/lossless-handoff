@@ -2,6 +2,10 @@
 
 Lossless Handoff, formerly claude-handoff.
 
+## Unreleased
+
+- README: measured daily use, hybrid search explained, comparison
+
 ## [0.7.0] - 2026-11-14
 
 Automatic recall indexing (machine-setup F44.13, hooks 1.8.0).
