@@ -21,7 +21,7 @@ TESTS_REPO_HTTPS="https://github.com/pratikgh0se/lossless-handoff-tests.git"
 CLONE_URL="https://github.com/pratikgh0se/lossless-handoff"
 COST_CAP="4.00"
 
-NO_REAL=0; REAL_ONLY=0; TESTS_DIR=""; REPEAT=3
+ISO_NOTE=""; NO_REAL=0; REAL_ONLY=0; TESTS_DIR=""; REPEAT=3
 while [ $# -gt 0 ]; do
   case "$1" in
     --no-real) NO_REAL=1 ;;
@@ -66,6 +66,11 @@ snapshot() {
       printf 'manifest mtime=%s\n' "$(stat -f %m "$REAL_HOME/.claude/hooks/.handoff-manifest.json" 2>/dev/null || stat -c %Y "$REAL_HOME/.claude/hooks/.handoff-manifest.json")"
     else
       printf 'manifest absent\n'
+    fi
+    if [ -f "$REAL_HOME/.claude/settings.json" ]; then
+      printf 'settings mtime=%s\n' "$(stat -f %m "$REAL_HOME/.claude/settings.json" 2>/dev/null || stat -c %Y "$REAL_HOME/.claude/settings.json")"
+    else
+      printf 'settings absent\n'
     fi
     printf 'launchctl: %s\n' "$( (launchctl list 2>/dev/null | awk '{print $3}' | grep -i lossless | sort | tr '\n' ' ') || true)"
   } >"$out"
@@ -405,8 +410,43 @@ if [ "$NO_REAL" = 0 ]; then
 fi
 
 snapshot "$RAW/isolation-after.txt"
+# Isolation: (a) no row added to the real health.jsonl or receipts.jsonl during the run belongs to a proof
+# session; (b) manifest mtime, settings.json mtime and the lossless LaunchAgents are unchanged.
+# Rows that real chats added during the run are information only.
 ISO="PASS"
-cmp -s "$RAW/isolation-before.txt" "$RAW/isolation-after.txt" || { ISO="FAIL"; fail_overall; }
+grep -v -E '^(health|receipts)\.jsonl' "$RAW/isolation-before.txt" >"$RAW/iso-b.txt"
+grep -v -E '^(health|receipts)\.jsonl' "$RAW/isolation-after.txt" >"$RAW/iso-a.txt"
+cmp -s "$RAW/iso-b.txt" "$RAW/iso-a.txt" || { ISO="FAIL"; ISO_NOTE="manifest, settings.json or launchd changed during the run"; }
+python3 - "$REAL_STATE" "$RAW" "$REAL_JSON" <<'PY' >"$RAW/iso-rows.txt"
+import json, os, re, sys
+state, raw, rj = sys.argv[1:4]
+try:
+    sids = [s[:8] for s in json.load(open(rj)).get("proof_sids", [])]
+except Exception:
+    sids = []
+def lines_before(name):
+    for ln in open(os.path.join(raw, "isolation-before.txt")):
+        m = re.match(re.escape(name) + r" lines=(\d+)", ln)
+        if m:
+            return int(m.group(1))
+    return 0
+bad, info = 0, []
+for name in ("health.jsonl", "receipts.jsonl"):
+    path = os.path.join(state, name)
+    if not os.path.exists(path):
+        continue
+    rows = open(path, encoding="utf-8", errors="replace").read().split("\n")
+    rows = [r for r in rows if r.strip()][lines_before(name):]
+    mine = [r for r in rows if "handoff-canary-" in r or any(s in r for s in sids)]
+    bad += len(mine)
+    info.append("%s: %d row(s) added during the run, %d belong to proof sessions" % (name, len(rows), len(mine)))
+print("PROOF_ROWS=%d" % bad)
+for i in info:
+    print("INFO " + i)
+PY
+PROOF_ROWS="$(sed -n 's/^PROOF_ROWS=//p' "$RAW/iso-rows.txt")"
+if [ "${PROOF_ROWS:-0}" != 0 ]; then ISO="FAIL"; ISO_NOTE="${ISO_NOTE:+$ISO_NOTE; }$PROOF_ROWS proof row(s) reached the real health or receipts file"; fi
+[ "$ISO" = PASS ] || fail_overall
 
 # ---------------------------------------------------------------- report
 SHA="$(git -C "$ROOT" rev-parse --short=7 HEAD)"
@@ -445,7 +485,9 @@ CLAUDE_V="$(claude --version 2>/dev/null | head -1)"; [ -n "$CLAUDE_V" ] || CLAU
   echo
   echo "## Isolation check"
   echo
-  echo "Before and after the run, the real files and jobs were compared. Result: **$ISO**."
+  echo "Result: **$ISO**${ISO_NOTE:+ ($ISO_NOTE)}. Two tests ran: (a) no row added to the real \`health.jsonl\` or \`receipts.jsonl\` during the run belongs to a proof session (matched by session id and by \`handoff-canary-\` project paths); (b) the real manifest mtime, \`settings.json\` mtime and the lossless LaunchAgents are unchanged. Rows that real chats added during the run are information only."
+  echo
+  grep '^INFO ' "$RAW/iso-rows.txt" | sed 's/^INFO /- /'
   echo
   echo '```'
   echo "before:"; cat "$RAW/isolation-before.txt"; echo "after:"; cat "$RAW/isolation-after.txt"

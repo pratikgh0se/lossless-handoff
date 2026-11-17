@@ -19,6 +19,7 @@ WORDS = ("alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo li
          "marble thistle harbor lantern meadow orchid pewter saddle timber velvet walnut zephyr").split()
 HOME = os.path.expanduser("~")
 LOCK = threading.Lock()
+ALL_SIDS = []               # every proof session id, for the isolation check
 
 
 class CapReached(Exception):
@@ -46,12 +47,36 @@ def rand_hex(n=6):
     return uuid.uuid4().hex[:n].upper()
 
 
-def make_files(proj, prefix, count, lines=250, seed=0):
+def make_files(proj, prefix, count, lines=900, seed=0):
+    """Seed files of 900 lines with 8 random words each (about 60 KB). The Read tool refuses a file
+    above about 25k tokens, so every file must stay under 900 lines and 80 KB."""
     rnd = random.Random(seed)
     for i in range(1, count + 1):
-        with open(os.path.join(proj, "%s%d.txt" % (prefix, i)), "w", encoding="utf-8") as f:
+        path = os.path.join(proj, "%s%d.txt" % (prefix, i))
+        with open(path, "w", encoding="utf-8") as f:
             for ln in range(1, lines + 1):
-                f.write("%d.%04d " % (i, ln) + " ".join(rnd.choice(WORDS) for _ in range(14)) + "\n")
+                f.write("%d.%04d " % (i, ln) + " ".join(rnd.choice(WORDS) for _ in range(8)) + "\n")
+        if lines > 900 or os.path.getsize(path) > 80 * 1024:
+            raise SystemExit("seed file too large: " + path)
+
+
+def read_samples(paths, limit=200):
+    """First characters of every tool result in the given transcripts, with an error flag."""
+    out = []
+    for p in paths:
+        for r in jsonl(p)[0]:
+            m = r.get("message")
+            if not isinstance(m, dict) or not isinstance(m.get("content"), list):
+                continue
+            for b in m["content"]:
+                if isinstance(b, dict) and b.get("type") == "tool_result":
+                    c = b.get("content")
+                    if isinstance(c, list):
+                        c = " ".join(x.get("text", "") for x in c if isinstance(x, dict))
+                    c = str(c)
+                    out.append({"error": bool(b.get("is_error")) or c.lstrip().lower().startswith(("error", "file content")),
+                                "chars": len(c), "head": c[:limit].replace("\n", " ")})
+    return out
 
 
 def build_settings(src, dst, hooks_dir, mode="normal", precompact_timeout=None):
@@ -95,6 +120,7 @@ class Session:
                          "RECALL_EMBED_URL": "http://127.0.0.1:9", "HANDOFF_SUMMARY_MODEL": "haiku"})
         self.env.update(extra_env or {})
         self.errors = []
+        ALL_SIDS.append(self.sid)
 
     def turn(self, prompt):
         cmd = ["claude", "-p", "--session-id" if self.first else "--resume", self.sid, "--model", "haiku",
@@ -202,7 +228,7 @@ def sub_turn(files, code, main_code):
 def drive_main(s, codes, max_turns=5, need_sub=False):
     """Turn by turn until the session has the compactions it needs. Returns turns used.
     A subagent turn comes first (it reads many files), then main reading turns."""
-    mi = 1
+    mi = si = 1
     for t in range(max_turns):
         sub_done = (not need_sub) or s.sub_boundaries() >= 1
         if s.main_boundaries() >= 1 and sub_done:
@@ -212,12 +238,13 @@ def drive_main(s, codes, max_turns=5, need_sub=False):
         if not sub_done and (t == 0 or s.main_boundaries() >= 1):
             code = "SUBSEED-%s" % rand_hex()
             codes.setdefault("sub", []).append(code)
-            # a subagent compacts only when it reads a lot: all 8 large files (about 90,000 tokens)
-            files = ["sub%d.txt" % (k + 1) for k in range(8)]
+            # the subagent reads 3 files of about 20k tokens each
+            files = ["sub%d.txt" % (((si - 1 + k) % 8) + 1) for k in range(3)]
+            si += 3
             o = s.turn(sub_turn(files, code, main_code))
         else:
-            files = ["main%d.txt" % (((mi - 1 + k) % 8) + 1) for k in range(3)]
-            mi += 3
+            files = ["main%d.txt" % (((mi - 1 + k) % 8) + 1) for k in range(4)]
+            mi += 4
             o = s.turn(read_turn(files, main_code, "t%d" % t))
         if o is None:
             break
@@ -319,7 +346,7 @@ def e2e_run(i, args, budget, work):
     build_settings(args.settings, settings, hooks)
     proj = new_proj(work, "e2e%d" % i)
     make_files(proj, "main", 8, seed=100 + i)
-    make_files(proj, "sub", 8, lines=450, seed=200 + i)
+    make_files(proj, "sub", 8, seed=200 + i)
     s = Session("e2e%d" % i, proj, settings, state, budget)
     codes = {}
     # first turn always holds a main-only code that the subagent never sees
@@ -344,6 +371,10 @@ def e2e_run(i, args, budget, work):
             if c in txt:
                 leak.append("%s holds %s" % (os.path.basename(fp)[:60], c))
     res["sub_handoff_files"], res["leaks"] = len(sub_files), leak
+    samples = read_samples(s.sub_transcripts())
+    res["sub_read_samples"] = [dict(x, head=x["head"][:200]) for x in samples][:12]
+    res["sub_read_errors"] = sum(1 for x in samples if x["error"])
+    res["sub_read_chars"] = sum(x["chars"] for x in samples)
     line, full = prove(hooks, state)
     res["prove_line"], res["prove"] = line, parse_prove(line)
     p = res["prove"]
@@ -518,6 +549,7 @@ def main():
         out["stopped"] = "cost cap: %s" % e
         log(out["stopped"])
     out["cost_total"] = round(budget.spent, 4)
+    out["proof_sids"] = list(ALL_SIDS)
     out["turn_costs"] = [(a, round(b, 4)) for a, b in budget.turns]
     with open(args.out, "w", encoding="utf-8") as f:
         json.dump(out, f, indent=1, default=str)
