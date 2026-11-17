@@ -6,6 +6,7 @@ T="$(mktemp -d)"
 trap 'python3 -c "import shutil,sys; shutil.rmtree(sys.argv[1], ignore_errors=True)" "$T"' EXIT
 export HOME="$T/home"; mkdir -p "$HOME/.claude"
 export HANDOFF_HAIKU_FALLBACK=0
+export LOSSLESS_HANDOFF_NO_LAUNCHCTL=1   # never load or unload jobs in the real launchd from a temp HOME
 export RECALL_EMBED_URL="http://127.0.0.1:9"   # closed port: recall and the detached indexer stay keyword-only
 # no ollama on PATH: drop any PATH entry that holds one, so the install never pulls a model
 NP=""; IFS=: read -ra _pd <<<"$PATH"

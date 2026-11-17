@@ -126,7 +126,7 @@ PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
 if [ -e "$PLIST" ]; then
   say "boot out and remove LaunchAgent $LABEL"
   if [ "$DRY" = 0 ]; then
-    launchctl bootout "gui/$(id -u)/$LABEL" >/dev/null 2>&1 || true
+    [ -n "${LOSSLESS_HANDOFF_NO_LAUNCHCTL:-}" ] || launchctl bootout "gui/$(id -u)/$LABEL" >/dev/null 2>&1 || true
     rm "$PLIST"
   fi
 fi
@@ -136,7 +136,7 @@ RPLIST="$HOME/Library/LaunchAgents/$RLABEL.plist"
 if [ -e "$RPLIST" ]; then
   say "boot out and remove LaunchAgent $RLABEL"
   if [ "$DRY" = 0 ]; then
-    launchctl bootout "gui/$(id -u)/$RLABEL" >/dev/null 2>&1 || true
+    [ -n "${LOSSLESS_HANDOFF_NO_LAUNCHCTL:-}" ] || launchctl bootout "gui/$(id -u)/$RLABEL" >/dev/null 2>&1 || true
     rm "$RPLIST"
   fi
 fi
@@ -158,7 +158,7 @@ CPLIST="$HOME/Library/LaunchAgents/$CLABEL.plist"
 if [ -e "$CPLIST" ]; then
   say "boot out and remove LaunchAgent $CLABEL"
   if [ "$DRY" = 0 ]; then
-    launchctl bootout "gui/$(id -u)/$CLABEL" >/dev/null 2>&1 || true
+    [ -n "${LOSSLESS_HANDOFF_NO_LAUNCHCTL:-}" ] || launchctl bootout "gui/$(id -u)/$CLABEL" >/dev/null 2>&1 || true
     rm "$CPLIST"
   fi
 fi

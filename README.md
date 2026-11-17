@@ -352,7 +352,7 @@ A new line with `"trigger": "manual"` means the PreCompact hook fired. In a norm
 
 To test a real compaction without touching your own install:
 
-1. Install into a temporary home with `HOME=<tmp> ./install.sh --no-nightly`, so no LaunchAgent is written.
+1. Install into a temporary home with `HOME=<tmp> LOSSLESS_HANDOFF_NO_LAUNCHCTL=1 ./install.sh --no-nightly`, so no LaunchAgent is written or loaded.
 2. Keep your real HOME for the run, because `claude` reads its login from there.
 3. Run `claude -p --setting-sources local --settings <tmp>/.claude/settings.json ...` from a fresh folder, with `HANDOFF_STATE_DIR=<tmp>/.local/state/claude-handoffs`. This switches your own hooks off and keeps all handoff files in the temporary folder.
 4. To force a compaction quickly, set `CLAUDE_CODE_AUTO_COMPACT_WINDOW=30000` in the process environment. The value in the settings file alone did not force one in our test.
@@ -374,6 +374,7 @@ Use a folder name that contains `handoff-canary`, so that the nightly check on y
 | `HANDOFF_HAIKU_FALLBACK=0` | Legacy switch from 0.1.x; still honoured and also disables the fresh summary. |
 | `RECALL_EMBED_URL`, `RECALL_EMBED_MODEL`, `RECALL_EMBED_BACKEND`, `RECALL_EMBED_KEY` | Meaning search backend. Defaults: Ollama at `http://localhost:11434`, model `bge-m3`. Backend `openai` works with any `/v1/embeddings` server; the key is an optional Bearer token. |
 | `HANDOFF_STATE_DIR` | Use another directory instead of `~/.local/state/claude-handoffs`. |
+| `LOSSLESS_HANDOFF_NO_LAUNCHCTL=1` | `install.sh` and `uninstall.sh` write and remove the LaunchAgent files but never call `launchctl`. Use it for any install into a temporary HOME on macOS: `launchctl` acts on your real login session, so without it a test install loads, and a test uninstall unloads, jobs with the real labels. |
 | `HANDOFF_HOOK_CHILD` | Set by the hook for its own summary call so it never recurses. Do not set it yourself. |
 
 ## FAQ

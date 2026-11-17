@@ -21,6 +21,8 @@ No silent misses (machine-setup F45 to F48, hooks 1.10.0).
 - `tests/smoke.sh` covers a clean `--check`, a changed-file `--check`, `--reconcile` and `--prove` on an empty HOME, a subagent PreCompact input, `--managed-hooks`, and the install and uninstall round trip with the new entries.
 - `handoff-nudge.py` ignores subagent events (non-empty `agent_id`): no note and no meta write, so a subagent is never told to write the main `<sid>-agent.md` (spec F46 f).
 - Opt-in canary: `tools/handoff-canary/` (`run.sh`, `canary.py`, `check.py`) and `hooks/handoff-canary.sh`. `install.sh --canary` installs it with the LaunchAgent `com.lossless-handoff.handoff-canary` (03:30, `--catch-up`; crontab line on Linux); not part of a default install because it makes real model calls (about $0.03-0.10 per run). Uninstall removes it and keeps its state.
+- `LOSSLESS_HANDOFF_NO_LAUNCHCTL=1` now covers all three LaunchAgents (recall index, reconcile, canary) in both `install.sh` and `uninstall.sh`. Before, it covered only the canary install, so a test install into a temp HOME on macOS loaded real jobs, and a test uninstall could unload the real ones. `tests/smoke.sh` sets it.
+- `install.sh --help` printed `about ./install.sh.03-0.10` for the canary cost; it now prints `$0.03-0.10`.
 - `uninstall.sh` also removes `handoff-canary/__pycache__/` (written when `canary.py` imports `check`), so the canary folder is removed. Found by CI on Linux and macOS runners.
 - ADRs 0001, 0007, 0008 and 0011 moved into `docs/adr/` (generic versions) and the README links repointed.
 - New `docs/handoff-reliability.md` and `docs/spec.md` (the behaviour contract the code-blind tests are written from, with AC numbers); this repository is now the home of the handoff system.

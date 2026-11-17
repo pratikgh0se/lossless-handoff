@@ -21,7 +21,7 @@ Usage: ./install.sh [--dry-run] [--force] [--window N] [--no-window] [--yes] [--
   --no-nightly  do not install the nightly jobs (macOS LaunchAgents: recall index 03:30,
                 reconcile and proof 04:15); on Linux the crontab lines are not printed
   --canary      also install the opt-in nightly canary (a real headless Claude Code run past a
-                compaction; spends model money, about $0.03-0.10 per run): copies it to
+                compaction; spends model money, about \$0.03-0.10 per run): copies it to
                 ~/.claude/hooks/handoff-canary/ and adds a LaunchAgent (03:30) on macOS or prints a
                 crontab line on Linux. Off by default
   --managed-hooks
@@ -493,9 +493,11 @@ elif [ "$(uname)" = "Darwin" ]; then
 </dict>
 </plist>
 PLISTEOF
-    launchctl bootout "gui/$(id -u)/$LABEL" >/dev/null 2>&1 || true
-    launchctl bootstrap "gui/$(id -u)" "$PLIST" \
-      || echo "warning: could not load the LaunchAgent; run: launchctl bootstrap gui/$(id -u) $PLIST" >&2
+    if [ -z "${LOSSLESS_HANDOFF_NO_LAUNCHCTL:-}" ]; then
+      launchctl bootout "gui/$(id -u)/$LABEL" >/dev/null 2>&1 || true
+      launchctl bootstrap "gui/$(id -u)" "$PLIST" \
+        || echo "warning: could not load the LaunchAgent; run: launchctl bootstrap gui/$(id -u) $PLIST" >&2
+    fi
   fi
 else
   echo "Nightly index job: add this line with 'crontab -e' (not edited for you):"
@@ -549,9 +551,11 @@ elif [ "$(uname)" = "Darwin" ]; then
 </plist>
 PLISTEOF
     marker_set reconcile_agent_added true
-    launchctl bootout "gui/$(id -u)/$RLABEL" >/dev/null 2>&1 || true
-    launchctl bootstrap "gui/$(id -u)" "$RPLIST" \
-      || echo "warning: could not load the LaunchAgent; run: launchctl bootstrap gui/$(id -u) $RPLIST" >&2
+    if [ -z "${LOSSLESS_HANDOFF_NO_LAUNCHCTL:-}" ]; then
+      launchctl bootout "gui/$(id -u)/$RLABEL" >/dev/null 2>&1 || true
+      launchctl bootstrap "gui/$(id -u)" "$RPLIST" \
+        || echo "warning: could not load the LaunchAgent; run: launchctl bootstrap gui/$(id -u) $RPLIST" >&2
+    fi
   fi
 else
   echo "Nightly reconcile and proof job: add this line with 'crontab -e' (not edited for you):"
