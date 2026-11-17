@@ -744,3 +744,22 @@ Why: some users already have a context nudge from another tool (for example a Cl
   - 209. A plain `install.sh --no-nightly`, then `install.sh --no-nightly --no-nudge`: after the second run, the nudge file and the nudge entry are gone. Every other entry is still there exactly once, and `--check` prints nothing.
   - 210. `install.sh --no-nightly --no-nudge`, then `uninstall.sh`: exits 0, and the settings file equals (as parsed JSON) the file before the install.
   - 211. `install.sh --dry-run --no-nudge` on a temp HOME with a settings file: the settings file is byte-identical afterwards, and no file is created under `~/.claude/hooks/`.
+
+## F51 Precomputed compactions (2026-11-17)
+
+Why (live finding, Claude Code 2.1.326, a long interactive session): Claude Code can **precompute** a compaction. PreCompact fires when the summary is built (time T0). The compaction is applied later (T1, minutes to hours after T0), in under 100 ms. The `compact_boundary` record then has `compactMetadata.precomputed: true` and a `preservedSegment` (`headUuid` ... `tailUuid`) whose first message is at about T0: every message from T0 to T1 is kept word for word after the summary. 4 of 8 compactions in one session were precomputed, with T1 - T0 from 22 minutes to 1 h 44 min. So the handoff written at T0 plus the preserved segment cover everything. But hooks 1.10.0 judged the handoff by its age only (15 min) and ran recovery, which claims "the pre-compaction hook did not run" (false) and replaces the model-written handoff.
+
+Rule (SessionStart `compact`, main and subagent keys alike):
+- Let H = the `ts` of `<key>-last-health.json`. Let B = the newest `compact_boundary` timestamp in the transcript (`transcript_path`; for a subagent, its own transcript) that is more than 60 s older than now. Records 60 s old or newer are ignored, because the current boundary may or may not be flushed yet (Ruling F47).
+- The handoff **belongs to this compaction** when `<key>-latest.md` is non-empty, H is a valid timestamp, and EITHER H is at most 15 min old (unchanged rule) OR H is later than B, OR the transcript has no such boundary B (no earlier compaction).
+- When it belongs and H is more than 15 min old: inject the normal handoff (the same text and parts as for a fresh handoff), with this one line placed right after the `PREFIX` line in part 1: `Note: this compaction was prepared at <H as YYYY-MM-DD HH:MM:SSZ>; the messages after that time are kept word for word after the summary.` No `HANDOFF RECOVERED`, no `HANDOFF DEGRADED`, no `handoff not refreshed` text, no recovery run. The receipt kind is `normal`.
+- Otherwise the 1.10.0 behaviour is unchanged (recovery, then DEGRADED).
+- If the transcript cannot be read, treat it as having no boundary B.
+
+Acceptance (temp HOME; fixtures with `last-health.json` ts, `latest.md` and a transcript JSONL holding `compact_boundary` records; "now" is the real clock):
+- 212. Previous boundary 3 h ago, H 100 min ago, no newer boundary: part 1 output holds the handoff text and the `Note: this compaction was prepared at` line with H; it holds neither `HANDOFF RECOVERED` nor `not refreshed`. One receipt with kind `normal`. Parts 2 and 3 print their normal parts.
+- 213. Previous boundary 30 min ago, H 100 min ago (H is older than B): recovery runs as in 1.10.0 (output starts with `HANDOFF RECOVERED`, or `HANDOFF DEGRADED` if recovery fails).
+- 214. Transcript without any `compact_boundary`, H 100 min ago: as 212.
+- 215. Newest boundary 20 s ago (precomputed true), the one before it 3 h ago, H 100 min ago: as 212 (the 20 s record is ignored).
+- 216. H 5 min ago: unchanged 1.10.0 output; no `Note: this compaction was prepared` line.
+- 217. Subagent key (`agent_id` set): the same rule uses the subagent's own transcript and `<sid>-a-<agent_id>` files (the 212 fixture for a subagent gives the 212 result).
