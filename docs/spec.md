@@ -754,7 +754,8 @@ Rule (SessionStart `compact`, main and subagent keys alike):
 - The handoff **belongs to this compaction** when `<key>-latest.md` is non-empty, H is a valid timestamp, and EITHER H is at most 15 min old (unchanged rule) OR H is later than B, OR the transcript has no such boundary B (no earlier compaction).
 - When it belongs and H is more than 15 min old: inject the normal handoff (the same text and parts as for a fresh handoff), with this one line placed right after the `PREFIX` line in part 1: `Note: this compaction was prepared at <H as YYYY-MM-DD HH:MM:SSZ>; the messages after that time are kept word for word after the summary.` No `HANDOFF RECOVERED`, no `HANDOFF DEGRADED`, no `handoff not refreshed` text, no recovery run. The receipt kind is `normal`.
 - Otherwise the 1.10.0 behaviour is unchanged (recovery, then DEGRADED).
-- If the transcript cannot be read, treat it as having no boundary B.
+- If `transcript_path` is missing, or the transcript file does not exist or cannot be read, F51 does not apply: the 1.10.0 behaviour stays (recovery, then DEGRADED), so AC 63 is unchanged. Only a readable transcript with no boundary B counts as "no earlier compaction".
+- Hooks 1.10.1: `HOOK_VERSION` in both hooks, and the `hook_version` in health rows and sidecars, is `1.10.1`. This amends the version value in ACs 136, 150, 172, 180 and 188.
 
 Acceptance (temp HOME; fixtures with `last-health.json` ts, `latest.md` and a transcript JSONL holding `compact_boundary` records; "now" is the real clock):
 - 212. Previous boundary 3 h ago, H 100 min ago, no newer boundary: part 1 output holds the handoff text and the `Note: this compaction was prepared at` line with H; it holds neither `HANDOFF RECOVERED` nor `not refreshed`. One receipt with kind `normal`. Parts 2 and 3 print their normal parts.

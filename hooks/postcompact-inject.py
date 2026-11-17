@@ -476,7 +476,9 @@ def belongs_to_compaction(d, hts):
     except Exception:
         return False
     tp = own_transcript(d)
-    b = boundary_before(tp, time.time() - 60) if tp else None
+    if not tp or not os.path.isfile(tp) or not os.access(tp, os.R_OK):
+        return False  # F51: no readable transcript, so keep the 1.10.0 rule (AC 63)
+    b = boundary_before(tp, time.time() - 60)
     return b is None or h > b
 
 
