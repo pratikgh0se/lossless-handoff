@@ -72,7 +72,7 @@ python3 - "$H" <<'PY'
 import hashlib, json, sys
 h = sys.argv[1]
 m = json.load(open(h + "/.handoff-manifest.json"))
-assert m["version"] == "1.10.0" and m["installed_at"], m
+assert m["version"] == "1.10.1" and m["installed_at"], m
 assert sorted(m["files"]) == ["claims.json", "handoff-nudge.py", "postcompact-inject.py", "precompact-handoff.py", "recall.py"], m
 for n, want in m["files"].items():
     assert hashlib.sha256(open(h + "/" + n, "rb").read()).hexdigest() == want, n
@@ -336,6 +336,31 @@ d = json.load(open(sys.argv[1]))["hookSpecificOutput"]
 assert d["hookEventName"] == "SessionStart" and "Please refactor the parser" in d["additionalContext"]
 PY
 ok "inject --part 1 JSON"
+
+# Inject: a precomputed compaction (F51) keeps its own handoff; a handoff older than the last boundary is recovered
+PC="$T/precomp"; mkdir -p "$PC/st"
+python3 - "$PC" <<'PY'
+import datetime, json, sys
+pc = sys.argv[1]
+now = datetime.datetime.now(datetime.timezone.utc)
+z = lambda m: (now - datetime.timedelta(minutes=m)).strftime("%Y-%m-%dT%H:%M:%SZ")
+def mk(name, boundary_min, h_min):
+    open(f"{pc}/st/{name}-latest.md", "w").write("## Agent handoff\nPRECOMP-MARK\n")
+    json.dump({"ts": z(h_min), "trigger": "auto"}, open(f"{pc}/st/{name}-last-health.json", "w"))
+    with open(f"{pc}/{name}.jsonl", "w") as f:
+        f.write(json.dumps({"type": "user", "message": {"content": "hi"}}) + "\n")
+        f.write(json.dumps({"type": "system", "subtype": "compact_boundary", "timestamp": z(boundary_min)}) + "\n")
+mk("p212", 180, 100)
+mk("p213", 30, 100)
+PY
+for n in p212 p213; do
+  printf '{"session_id":"%s","transcript_path":"%s/%s.jsonl"}' "$n" "$PC" "$n" \
+    | HANDOFF_STATE_DIR="$PC/st" python3 "$H/postcompact-inject.py" --part 1 >"$PC/$n.out"
+done
+grep -q 'Note: this compaction was prepared at' "$PC/p212.out" && grep -q PRECOMP-MARK "$PC/p212.out" \
+  && ! grep -q 'HANDOFF RECOVERED' "$PC/p212.out" || fail "precomputed compaction: expected the Note line and no recovery"
+grep -q 'HANDOFF RECOVERED' "$PC/p213.out" || fail "handoff older than the last boundary: expected recovery"
+ok "inject: precomputed compaction gets the Note line; an old handoff is recovered"
 
 # Nudge: 310k nudges once, 320k not, 355k once more
 mk() { python3 - "$TR" "$1" <<'PY'

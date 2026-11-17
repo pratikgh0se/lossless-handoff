@@ -77,7 +77,7 @@ HARD_MAX = 9900    # each part's total output (warning + header + content + cont
 INLINE_MAX = 9700  # content target per part
 NAMES_MAX = 150    # the section-name list in a continuation line is cut to this many chars
 MAX_PARTS = 3      # F37.6
-HOOK_VERSION = "1.10.0"
+HOOK_VERSION = "1.10.1"
 _SID = ["unknown"]
 
 
@@ -110,8 +110,11 @@ if PART not in (1, 2, 3):
     PART = 1
 
 
+_NOTE = [""]  # F51: the "prepared at" line for a precomputed compaction; part 1 only
+
+
 def header(k, first=""):
-    return first + PREFIX if k == 1 else f"Pre-compaction handoff (auto-saved, part {k}):\n"
+    return first + PREFIX + _NOTE[0] if k == 1 else f"Pre-compaction handoff (auto-saved, part {k}):\n"
 
 
 def cont_line(k, n, names, path):
@@ -417,6 +420,68 @@ def last_boundary_ts(path):
     return None
 
 
+def own_transcript(d):
+    """The transcript of this event: for a subagent, its own file (the rule of precompact-handoff.py agent_view)."""
+    aid = d.get("agent_id")
+    aid = aid.strip() if isinstance(aid, str) and aid.strip() else None
+    tp = d.get("transcript_path") if isinstance(d.get("transcript_path"), str) else ""
+    if aid and tp and "/subagents/" not in tp:
+        tp = os.path.join(os.path.dirname(tp), str(d.get("session_id")), "subagents", f"agent-{aid}.jsonl")
+    return tp
+
+
+def boundary_before(path, cutoff):
+    """F51: epoch seconds of the newest compact_boundary record whose timestamp is at most `cutoff`
+    (None if there is none or the file cannot be read). Reads the file from the end in 1 MiB steps."""
+    try:
+        pos, carry = os.path.getsize(path), b""
+        with open(path, "rb") as f:
+            while pos > 0:
+                step = min(1 << 20, pos)
+                pos -= step
+                f.seek(pos)
+                buf = f.read(step) + carry
+                if pos > 0:  # the first line of this block may be cut: keep it for the next block
+                    nl = buf.find(b"\n")
+                    carry, body = (buf, b"") if nl < 0 else (buf[:nl], buf[nl + 1:])
+                else:
+                    body = buf
+                if b"compact_boundary" not in body:
+                    continue
+                best = None
+                for ln in body.split(b"\n"):
+                    if b"compact_boundary" not in ln:
+                        continue
+                    try:
+                        o = json.loads(ln)
+                        if o.get("subtype") != "compact_boundary" and o.get("type") != "compact_boundary":
+                            continue
+                        t = datetime.datetime.fromisoformat(o["timestamp"].replace("Z", "+00:00")).timestamp()
+                    except Exception:
+                        continue
+                    if t <= cutoff and (best is None or t > best):
+                        best = t
+                if best is not None:
+                    return best
+    except Exception:
+        pass
+    return None
+
+
+def belongs_to_compaction(d, hts):
+    """F51: True when a handoff older than MAX_AGE_S still belongs to this compaction: it is newer than the previous
+    compaction boundary (older than 60 s, because the current one may not be flushed yet, Ruling F47), or there is none."""
+    try:
+        h = datetime.datetime.strptime(hts, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=datetime.timezone.utc).timestamp()
+    except Exception:
+        return False
+    tp = own_transcript(d)
+    if not tp or not os.path.isfile(tp) or not os.access(tp, os.R_OK):
+        return False  # F51: no readable transcript, so keep the 1.10.0 rule (AC 63)
+    b = boundary_before(tp, time.time() - 60)
+    return b is None or h > b
+
+
 def write_receipt(d, key, kind, text):
     """F47.a: append one line to <state>/receipts.jsonl for a handoff part 1 emitted. Never raises, never changes output."""
     try:
@@ -424,9 +489,7 @@ def write_receipt(d, key, kind, text):
         aid = d.get("agent_id")
         aid = aid.strip() if isinstance(aid, str) and aid.strip() else None
         psid = str(d.get("session_id") or "unknown").replace("/", "_")
-        tp = d.get("transcript_path") if isinstance(d.get("transcript_path"), str) else ""
-        if aid and tp and "/subagents/" not in tp:
-            tp = os.path.join(os.path.dirname(tp), str(d.get("session_id")), "subagents", f"agent-{aid}.jsonl")
+        tp = own_transcript(d)
         try:
             bts = last_boundary_ts(tp) if tp else None
         except Exception:
@@ -648,6 +711,11 @@ try:
             if S and S.get("trigger") == "recovered" and age_ok_s(S.get("ts"), 60) and PART in (2, 3):
                 raise SystemExit(0)
             need = not txt or S is None or not isinstance(S.get("ts"), str) or not age_ok(S["ts"])
+            precomputed = False
+            if need and txt and S is not None and isinstance(S.get("ts"), str) and belongs_to_compaction(d, S["ts"]):
+                need, precomputed = False, True  # F51: prepared at T0, applied later; the kept messages cover T0..now
+                _NOTE[0] = ("Note: this compaction was prepared at " + S["ts"][:10] + " " + S["ts"][11:19]
+                            + "Z; the messages after that time are kept word for word after the summary.\n")
             if need and PART in (2, 3):
                 raise SystemExit(0)
             if need:
@@ -670,7 +738,7 @@ try:
                         errs = S.get("errors") or []
                         if not codes:
                             codes = ["no_health"]
-                    if not age_ok(S["ts"]):
+                    if not precomputed and not age_ok(S["ts"]):
                         codes.append("handoff_old")
                 first = ("HANDOFF DEGRADED: " + warning_text(codes, errs)
                          + ". Verify the handoff against the transcript before acting.\n") if codes else ""

@@ -254,6 +254,8 @@ A hook cannot force Claude Code to run it, so a handoff can be missed (the hook 
 | **`--check`** | At session `startup` and `resume`, `postcompact-inject.py --check` prints one `HANDOFF CHECK:` line when a hook is not wired, a hook file is missing or changed since install (it compares the manifest), the two hooks' versions differ, or reconcile found compactions without a handoff. It prints nothing when all is well. |
 | **Nightly reconcile and proof** | At 04:15, `precompact-handoff.py --reconcile --prove --days 30` counts every `compact_boundary` in your transcripts against `health.jsonl` and proves each receipt (see [Proof, not promises](#proof-not-promises)). |
 
+Claude Code can also precompute a compaction. PreCompact runs when the summary is built, and the compaction is applied later, sometimes hours later. The messages from that time on stay word for word after the summary. So the handoff from the first moment, plus the kept messages, cover everything. Hooks 1.10.1 see this case: if the handoff is newer than the previous compaction boundary, they inject it with the line `Note: this compaction was prepared at <time>; ...` and do not run recovery.
+
 Restart open Claude Code sessions after installing: hooks load when a session starts. The longer write-up is [docs/handoff-reliability.md](docs/handoff-reliability.md).
 
 ## Subagents

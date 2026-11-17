@@ -2,7 +2,7 @@
 # Lossless Handoff installer (formerly claude-handoff): copies the hooks and merges them into ~/.claude/settings.json.
 set -euo pipefail
 
-VERSION="0.8.0"
+VERSION="0.8.1"
 usage() {
   cat <<EOF
 Lossless Handoff $VERSION (formerly claude-handoff)

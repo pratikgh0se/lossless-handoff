@@ -4,6 +4,12 @@ Lossless Handoff, formerly claude-handoff.
 
 ## Unreleased
 
+## [0.8.1] - 2026-11-17
+
+Precomputed compactions (hooks 1.10.1).
+
+- A precomputed compaction keeps its own handoff. If the handoff is older than 15 minutes but newer than the previous compaction boundary, SessionStart injects it with a `Note: this compaction was prepared at ...` line. It no longer runs recovery or says `HANDOFF RECOVERED`. New F51 in `docs/spec.md`, ACs 212-217.
+
 ## [0.8.0] - 2026-11-17
 
 No silent misses (machine-setup F45 to F48, hooks 1.10.0).
