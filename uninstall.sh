@@ -166,6 +166,7 @@ if [ -e "$HOOKS_DIR/handoff-canary" ] || [ -e "$HOOKS_DIR/handoff-canary.sh" ]; 
   say "remove the canary: $HOOKS_DIR/handoff-canary/ and handoff-canary.sh"
   if [ "$DRY" = 0 ]; then
     for f in run.sh canary.py check.py; do rm -f "$HOOKS_DIR/handoff-canary/$f"; done
+    rm -rf "$HOOKS_DIR/handoff-canary/__pycache__"  # canary.py imports check, so Python can leave a bytecode cache here
     rmdir "$HOOKS_DIR/handoff-canary" 2>/dev/null || true
     rm -f "$HOOKS_DIR/handoff-canary.sh"
   fi
