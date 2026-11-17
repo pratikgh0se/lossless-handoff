@@ -172,7 +172,7 @@ The tables above are one-off measurements. From 1.10.0 the install also keeps it
 python3 ~/.claude/hooks/precompact-handoff.py --claims-lint README.md
 ```
 
-It exits 1 unless every marker is known and `pass`: an unknown, `fail`, `stale` or `no-data` marker blocks publishing. On a machine with no receipts yet, C1 to C6 are `no-data`, so lint is for the author's own machine.
+It exits 1 unless every marker is known and `pass`: an unknown, `fail`, `stale` or `no-data` marker blocks publishing. On a machine with no receipts yet, C1 to C6 are `no-data`, so lint is for the author's own machine. On the author's machine, lint reports C2 and C6 as `fail` until about 2026-12-17: the 30-day window still holds misses from before hooks 1.10.0 (deliberate probe runs, and subagent compactions from before the fix). They are not excluded, because hiding real data would make the register worthless.
 
 **What the author's own data says.** In a 30-day reconcile on the author's machine (2026-11-17), 188 of 192 main compactions had a handoff [C2]. The 4 misses: 3 came from a deliberate probe run with user settings switched off, and 1 was a hook most likely killed at its timeout on 2026-10-23. For subagents, 0 of 28 compactions had a handoff before this release; that gap is the bug 1.10.0 fixes. A live subagent test after the fix: right-agent 2/2 [C3], delivered 2/2 [C4], failed 0. A dated one-off blind quiz (2026-11-14, same sessions with and without the handoff) scored 98% with the handoff against 62% with Claude Code's compaction summary alone [C7]. One author, one machine, small counts.
 

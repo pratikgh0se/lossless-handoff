@@ -100,7 +100,7 @@ o="$(python3 "$H/postcompact-inject.py" --check 2>&1)" || fail "--check exited n
 [ -z "$o" ] || fail "--check printed output on a clean install: $o"
 cp "$H/claims.json" "$T/claims.keep"; printf ' ' >> "$H/claims.json"
 o="$(python3 "$H/postcompact-inject.py" --check 2>&1)" || fail "--check exited non-zero on a changed file"
-echo "$o" | grep -q "^HANDOFF CHECK: .*claims.json differs from the installed manifest" || fail "--check missed a changed file: $o"
+grep -q "^HANDOFF CHECK: .*claims.json differs from the installed manifest" <<<"$o" || fail "--check missed a changed file: $o"
 cp "$T/claims.keep" "$H/claims.json"
 [ -z "$(python3 "$H/postcompact-inject.py" --check 2>&1)" ] || fail "--check still reports after restoring the file"
 ok "--check: silent on a clean install, reports a changed hook file"
@@ -115,7 +115,7 @@ ok "--reconcile and --prove run and exit 0 on an empty HOME"
 o="$(printf '{}' | python3 "$H/recall.py" session-end 2>&1)" || fail "session-end exited non-zero"
 [ -z "$o" ] || fail "session-end printed output: $o"
 o="$(python3 "$H/recall.py" index --all 2>&1)" || fail "index --all exited non-zero"
-echo "$o" | grep -q "indexed" || fail "index --all: expected 'indexed': $o"
+grep -q "indexed" <<<"$o" || fail "index --all: expected 'indexed': $o"
 ok "recall.py session-end is silent with {}, index --all exits 0"
 # --yes with a fake ollama pulls bge-m3
 mkdir -p "$T/fakebin"; printf '#!/bin/sh\necho "$@" >> "%s/ollama.calls"\n' "$T" > "$T/fakebin/ollama"; chmod +x "$T/fakebin/ollama"
@@ -277,10 +277,10 @@ ok "HANDOFF_LEDGER_TIMEOUT=2 gives ledger_error timeout"
 inj() { printf '{"cwd":"%s"}' "$PR" | python3 "$H/postcompact-inject.py" --ledger; }
 inj_ctx() { python3 -c "import json,sys; print(json.load(sys.stdin)['hookSpecificOutput']['additionalContext'])"; }
 o="$(inj | inj_ctx)"
-echo "$o" | grep -q "D1 " && echo "$o" | grep -q "D3 " || fail "plain --ledger lacks entries"
-! echo "$o" | grep -q "D2 " || fail "plain --ledger shows a superseded entry"
+grep -q "D1 " <<<"$o" && grep -q "D3 " <<<"$o" || fail "plain --ledger lacks entries"
+! grep -q "D2 " <<<"$o" || fail "plain --ledger shows a superseded entry"
 o="$(printf '{"cwd":"%s"}' "$PR" | python3 "$H/postcompact-inject.py" --ledger --part 1 | inj_ctx)"
-echo "$o" | grep -q "part 1 of the ledger" && echo "$o" | grep -q "D3 " || fail "--ledger --part 1 lacks entries"
+grep -q "part 1 of the ledger" <<<"$o" && grep -q "D3 " <<<"$o" || fail "--ledger --part 1 lacks entries"
 [ -z "$(printf '{"cwd":"%s"}' "$PR" | python3 "$H/postcompact-inject.py" --ledger --part 2)" ] || fail "--ledger --part 2 should be empty for a short ledger"
 # a big ledger spills into part 2 and plain mode is cut to 4,000 chars
 PB="$T/bigproj"; mkdir -p "$PB"
@@ -298,10 +298,10 @@ p1="$(printf '{"cwd":"%s"}' "$PB" | python3 "$H/postcompact-inject.py" --ledger 
 p2="$(printf '{"cwd":"%s"}' "$PB" | python3 "$H/postcompact-inject.py" --ledger --part 2 | inj_ctx)"
 p3="$(printf '{"cwd":"%s"}' "$PB" | python3 "$H/postcompact-inject.py" --ledger --part 3 | inj_ctx)"
 [ "${#p1}" -lt 10000 ] && [ "${#p2}" -lt 10000 ] && [ "${#p3}" -lt 10000 ] || fail "ledger part over 10,000 chars"
-echo "$p1" | grep -q "D40 " && echo "$p2" | grep -q "part 2 of the ledger" || fail "part 2 content wrong"
+grep -q "D40 " <<<"$p1" && grep -q "part 2 of the ledger" <<<"$p2" || fail "part 2 content wrong"
 # nothing is dropped: every one of the 40 entries appears in parts 1-3 (in full or as an index line)
 allp="$p1 $p2 $p3"
-for i in $(seq 1 40); do echo "$allp" | grep -q "D$i " || fail "entry D$i missing from the 3 parts"; done
+for i in $(seq 1 40); do grep -q "D$i " <<<"$allp" || fail "entry D$i missing from the 3 parts"; done
 ok "--ledger --part 1/2/3 and plain --ledger print the entries, nothing dropped"
 
 # git: the ledger is keyed on the repo root, so a subfolder reaches the same file
@@ -311,7 +311,7 @@ if command -v git >/dev/null 2>&1; then
   ls -d "$ST"/projects/gitrepo-* >/dev/null 2>&1 || fail "git repo ledger not keyed on the repo root"
   [ "$(ls -d "$ST"/projects/gitrepo-* | wc -l)" -eq 1 ] || fail "more than one ledger for one repo"
   o="$(printf '{"cwd":"%s"}' "$GR" | python3 "$H/postcompact-inject.py" --ledger | inj_ctx)"
-  echo "$o" | grep -q "D1 " || fail "repo root and subfolder do not share the ledger"
+  grep -q "D1 " <<<"$o" || fail "repo root and subfolder do not share the ledger"
   ok "git repo: ledger keyed on the repo root"
 else
   echo "SKIP: git not installed, git-specific ledger check skipped"
@@ -375,12 +375,12 @@ mk 310000; o1="$(nudge)"
 mk 320000; o2="$(nudge)"
 mk 355000; o3="$(nudge)"
 [ -n "$o1" ] && [ -z "$o2" ] && [ -n "$o3" ] || fail "nudge pattern wrong (got: ${#o1} ${#o2} ${#o3} chars)"
-echo "$o1" | grep -q "nsess-agent.md" || fail "nudge lacks agent path"
-echo "$o1" | grep -q "claude-handoff PostToolUse hook that the user installed" || fail "nudge does not identify its source"
+grep -q "nsess-agent.md" <<<"$o1" || fail "nudge lacks agent path"
+grep -q "claude-handoff PostToolUse hook that the user installed" <<<"$o1" || fail "nudge does not identify its source"
 python3 -c "import json,sys; t=json.load(sys.stdin)['hookSpecificOutput']['additionalContext']; assert len(t)<1300, len(t)" <<<"$o1" || fail "nudge too long"
 echo "$o1" | python3 -c "import json,sys; assert json.load(sys.stdin)['hookSpecificOutput']['hookEventName']=='PostToolUse'"
-echo "$o1" | grep -q "Parallel work running" && ! echo "$o1" | grep -q "imminent" || fail "first nudge: seventh heading missing or wrongly imminent"
-echo "$o3" | grep -q "Compaction is imminent" || fail "final nudge at 355k lacks the imminent wording"
+grep -q "Parallel work running" <<<"$o1" && ! grep -q "imminent" <<<"$o1" || fail "first nudge: seventh heading missing or wrongly imminent"
+grep -q "Compaction is imminent" <<<"$o3" || fail "final nudge at 355k lacks the imminent wording"
 ok "nudge fires at 310k, not at 320k, again (final) at 355k"
 
 # Agent write is recorded in meta
@@ -506,12 +506,12 @@ open(sys.argv[1], "w").write("\n".join(json.dumps(r) for r in rows) + "\n")
 PY
 o="$(cd "$RP" && python3 "$H/recall.py" search "zebra-mode" 2>&1)" || fail "recall search exited non-zero"
 echo "$o" | head -1 | grep -q "keyword only" || fail "recall: first line should say keyword only: $o"
-echo "$o" | grep -q "abcd1234:1 " && echo "$o" | grep -q "zebra-mode" || fail "recall: hit missing: $o"
-echo "$o" | grep -q "hits shown of 2" || fail "recall: count line wrong: $o"
-o="$(cd "$RP" && python3 "$H/recall.py" open abcd1234:1 2>&1)" && echo "$o" | grep -q "zebra-mode" || fail "recall open failed"
-o="$(cd "$RP" && python3 "$H/recall.py" user --last 5 2>&1)" && echo "$o" | grep -q "zebra-mode" || fail "recall user failed"
+grep -q "abcd1234:1 " <<<"$o" && grep -q "zebra-mode" <<<"$o" || fail "recall: hit missing: $o"
+grep -q "hits shown of 2" <<<"$o" || fail "recall: count line wrong: $o"
+o="$(cd "$RP" && python3 "$H/recall.py" open abcd1234:1 2>&1)" && grep -q "zebra-mode" <<<"$o" || fail "recall open failed"
+o="$(cd "$RP" && python3 "$H/recall.py" user --last 5 2>&1)" && grep -q "zebra-mode" <<<"$o" || fail "recall user failed"
 o="$(cd "$RP" && python3 "$H/recall.py" index 2>&1)" || fail "recall index should exit 0 with the server down"
-echo "$o" | grep -q "meaning index skipped" || fail "recall index: expected skip message: $o"
+grep -q "meaning index skipped" <<<"$o" || fail "recall index: expected skip message: $o"
 ok "recall: search, open, user and index (keyword only, server down)"
 python3 - "$H/recall.py" "$RP" <<'PY'
 import re, subprocess, sys
