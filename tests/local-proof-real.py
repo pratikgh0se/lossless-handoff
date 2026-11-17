@@ -202,7 +202,7 @@ def sub_turn(files, code, main_code):
 def drive_main(s, codes, max_turns=5, need_sub=False):
     """Turn by turn until the session has the compactions it needs. Returns turns used.
     A subagent turn comes first (it reads many files), then main reading turns."""
-    mi, si = 1, 1
+    mi = 1
     for t in range(max_turns):
         sub_done = (not need_sub) or s.sub_boundaries() >= 1
         if s.main_boundaries() >= 1 and sub_done:
@@ -212,8 +212,8 @@ def drive_main(s, codes, max_turns=5, need_sub=False):
         if not sub_done and (t == 0 or s.main_boundaries() >= 1):
             code = "SUBSEED-%s" % rand_hex()
             codes.setdefault("sub", []).append(code)
-            files = ["sub%d.txt" % (((si - 1 + k) % 8) + 1) for k in range(6)]
-            si += 6
+            # a subagent compacts only when it reads a lot: all 8 large files (about 90,000 tokens)
+            files = ["sub%d.txt" % (k + 1) for k in range(8)]
             o = s.turn(sub_turn(files, code, main_code))
         else:
             files = ["main%d.txt" % (((mi - 1 + k) % 8) + 1) for k in range(3)]
@@ -319,7 +319,7 @@ def e2e_run(i, args, budget, work):
     build_settings(args.settings, settings, hooks)
     proj = new_proj(work, "e2e%d" % i)
     make_files(proj, "main", 8, seed=100 + i)
-    make_files(proj, "sub", 8, seed=200 + i)
+    make_files(proj, "sub", 8, lines=450, seed=200 + i)
     s = Session("e2e%d" % i, proj, settings, state, budget)
     codes = {}
     # first turn always holds a main-only code that the subagent never sees

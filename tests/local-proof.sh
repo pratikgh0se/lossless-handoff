@@ -232,7 +232,12 @@ layer_fresh_clone() {
     else
       # the current branch is not pushed: use the nearest ancestor commit that a remote branch holds
       for c in $(git -C "$ROOT" rev-list HEAD | head -50); do
-        rb="$(git -C "$ROOT" branch -r --contains "$c" 2>/dev/null | grep -v 'HEAD ->' | sed 's/^ *//' | grep -v '^origin/main$' | head -1)"
+        rb=""
+        for cand in $(git -C "$ROOT" branch -r --contains "$c" 2>/dev/null | grep -v 'HEAD ->' | sed 's/^ *//'); do
+          [ "$cand" = origin/main ] && continue
+          [ -z "$rb" ] && rb="$cand"
+          [ "$(git -C "$ROOT" rev-parse "$cand")" = "$c" ] && { rb="$cand"; break; }   # prefer a branch whose tip is this commit
+        done
         [ -z "$rb" ] && rb="$(git -C "$ROOT" branch -r --contains "$c" 2>/dev/null | grep -v 'HEAD ->' | sed 's/^ *//' | head -1)"
         if [ -n "$rb" ]; then sha="$c"; rb="${rb#origin/}"; break; fi
       done
