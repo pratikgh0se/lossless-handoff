@@ -10,7 +10,7 @@ Copies the hooks (three handoff hooks plus the recall command) into ~/.claude/ho
 Also sets up automatic recall indexing: an end-of-chat hook, an optional bge-m3 model pull, a nightly job (macOS) and a first index.
 Hooks 1.10.0 add: an install check at session start, a nightly reconcile and proof job (macOS), and an install manifest.
 
-Usage: ./install.sh [--dry-run] [--force] [--window N] [--no-window] [--yes] [--no-nightly] [--managed-hooks] [--version] [-h|--help]
+Usage: ./install.sh [--dry-run] [--force] [--window N] [--no-window] [--yes] [--no-nightly] [--canary] [--managed-hooks] [--version] [-h|--help]
 
   --dry-run     show what would change, change nothing
   --window N    set CLAUDE_CODE_AUTO_COMPACT_WINDOW to N tokens (default 400000;
@@ -20,6 +20,10 @@ Usage: ./install.sh [--dry-run] [--force] [--window N] [--no-window] [--yes] [--
                 it, an interactive run asks y/N and a non-interactive run skips it
   --no-nightly  do not install the nightly jobs (macOS LaunchAgents: recall index 03:30,
                 reconcile and proof 04:15); on Linux the crontab lines are not printed
+  --canary      also install the opt-in nightly canary (a real headless Claude Code run past a
+                compaction; spends model money, about $0.03-0.10 per run): copies it to
+                ~/.claude/hooks/handoff-canary/ and adds a LaunchAgent (03:30) on macOS or prints a
+                crontab line on Linux. Off by default
   --managed-hooks
                 standalone mode: write a managed-settings file with the handoff hook
                 entries (so headless runs keep them) and PRINT the sudo command that
@@ -34,7 +38,7 @@ search still works (https://ollama.com/download). Ollama itself is never install
 EOF
 }
 
-DRY=0; FORCE=0; WINDOW=400000; SETWINDOW=1; YES=0; NONIGHTLY=0; MANAGED=0
+DRY=0; FORCE=0; WINDOW=400000; SETWINDOW=1; YES=0; NONIGHTLY=0; MANAGED=0; CANARY=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --dry-run) DRY=1 ;;
@@ -44,6 +48,7 @@ while [ $# -gt 0 ]; do
     --yes|-y) YES=1 ;;
     --no-nightly) NONIGHTLY=1 ;;
     --managed-hooks) MANAGED=1 ;;
+    --canary) CANARY=1 ;;
     --version) echo "Lossless Handoff $VERSION"; exit 0 ;;
     -h|--help) usage; exit 0 ;;
     *) echo "unknown option: $1" >&2; exit 2 ;;
@@ -551,6 +556,71 @@ PLISTEOF
 else
   echo "Nightly reconcile and proof job: add this line with 'crontab -e' (not edited for you):"
   echo "  15 4 * * * $RECON_CMD >> $STATE_DIR/reconcile.log 2>&1"
+fi
+
+# 4c. opt-in canary (--canary only)
+if [ "$CANARY" = 1 ]; then
+  CLABEL="com.lossless-handoff.handoff-canary"
+  CPLIST="$HOME/Library/LaunchAgents/$CLABEL.plist"
+  CDIR="$HOME/.local/state/handoff-canary"
+  say "install the canary: $HOOKS_DIR/handoff-canary/ and $HOOKS_DIR/handoff-canary.sh (spends model money: about \$0.03-0.10 per run)"
+  if [ "$DRY" = 0 ]; then
+    mkdir -p "$HOOKS_DIR/handoff-canary"
+    cp "$SRC/tools/handoff-canary/run.sh" "$SRC/tools/handoff-canary/canary.py" "$SRC/tools/handoff-canary/check.py" "$HOOKS_DIR/handoff-canary/"
+    chmod 755 "$HOOKS_DIR/handoff-canary/run.sh" "$HOOKS_DIR/handoff-canary/canary.py" "$HOOKS_DIR/handoff-canary/check.py"
+    cp "$SRC/hooks/handoff-canary.sh" "$HOOKS_DIR/handoff-canary.sh"; chmod 755 "$HOOKS_DIR/handoff-canary.sh"
+    marker_set canary_added true
+  fi
+  if [ "$(uname)" = "Darwin" ]; then
+    say "install LaunchAgent $CLABEL (daily 03:30): $CPLIST"
+    if [ "$DRY" = 0 ]; then
+      mkdir -p "$HOME/Library/LaunchAgents" "$CDIR/logs"
+      cat > "$CPLIST" <<PLISTEOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>$CLABEL</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>-lc</string>
+    <string>$HOOKS_DIR/handoff-canary.sh --catch-up</string>
+  </array>
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key>
+    <integer>3</integer>
+    <key>Minute</key>
+    <integer>30</integer>
+  </dict>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>$CDIR/logs/launchd.out</string>
+  <key>StandardErrorPath</key>
+  <string>$CDIR/logs/launchd.err</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>HOME</key>
+    <string>$HOME</string>
+    <key>PATH</key>
+    <string>$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+  </dict>
+</dict>
+</plist>
+PLISTEOF
+      if [ -z "${LOSSLESS_HANDOFF_NO_LAUNCHCTL:-}" ]; then
+        launchctl bootout "gui/$(id -u)/$CLABEL" >/dev/null 2>&1 || true
+        launchctl bootstrap "gui/$(id -u)" "$CPLIST" \
+          || echo "warning: could not load the LaunchAgent; run: launchctl bootstrap gui/$(id -u) $CPLIST" >&2
+      fi
+    fi
+  else
+    echo "Nightly canary: add this line with 'crontab -e' (not edited for you):"
+    echo "  30 3 * * * $HOOKS_DIR/handoff-canary.sh --catch-up >> $CDIR/cron.log 2>&1"
+  fi
 fi
 
 # 5. first index, detached

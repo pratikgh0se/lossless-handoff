@@ -42,7 +42,7 @@ The installer sets up, in one go:
 - a first index of all your projects, started in the background;
 - optionally, `ollama pull bge-m3` for meaning search, if `ollama` is on your PATH.
 
-Options: `--window N`, `--no-window`, `--yes` (pull bge-m3 without asking), `--no-nightly`, `--managed-hooks` (see [Headless runs](#headless-runs)), `--dry-run`, `--force`, `--version`, `--help`. Install is idempotent. Full details are in [What install changes](#what-install-changes).
+Options: `--window N`, `--no-window`, `--yes` (pull bge-m3 without asking), `--no-nightly`, `--managed-hooks` (see [Headless runs](#headless-runs)), `--canary` (opt-in nightly end-to-end test, see below), `--dry-run`, `--force`, `--version`, `--help`. Install is idempotent. Full details are in [What install changes](#what-install-changes).
 
 ## Quick start
 
@@ -239,7 +239,7 @@ Restart open Claude Code sessions after installing: hooks load when a session st
 When a subagent compacts, Claude Code fires the hooks with `agent_id` set but with the parent's `session_id` and `transcript_path`. Before 1.10.0 that looked like a main-session compaction and no subagent handoff was written. Now each compacting subagent gets its own handoff, built from its own transcript (`<session>/subagents/agent-<agent_id>.jsonl` next to the parent transcript) and stored under `<sid>-a-<agent_id>` files.
 
 - A subagent never reads or writes the main session's handoff, and the other way round [C3].
-- A subagent never merges the decisions list and never starts the indexer; the rules are still injected into it.
+- A subagent never merges the decisions list and never starts the indexer; the rules are still injected into it. The nudge hook ignores subagent events (non-empty `agent_id`), so a subagent is never told to write the main session's handoff file.
 - If the subagent transcript is missing, the health row says `degraded` / `agent_transcript_missing` and no handoff is written.
 - Reconcile counts subagent compactions separately, and the register tracks that they are covered [C6]. Before 1.10.0 they were not: 0 of 28 in the author's first 30-day reconcile.
 
@@ -315,6 +315,7 @@ Every command accepts `--cwd DIR` (default: the current folder). `search` also t
 - On macOS, unless `--no-nightly`: writes and loads the LaunchAgent `~/Library/LaunchAgents/com.lossless-handoff.handoff-reconcile.plist` (daily 04:15, runs `precompact-handoff.py --reconcile --prove --days 30`, log `~/.local/state/claude-handoffs/reconcile.log`). On Linux it prints that crontab line too (`15 4 * * * python3 ~/.claude/hooks/precompact-handoff.py --reconcile --prove --days 30 >> ~/.local/state/claude-handoffs/reconcile.log 2>&1`, with your real path).
 - With `--managed-hooks` (standalone): stages a managed-settings file in the state folder and prints the `sudo install -m 644 ...` command; it changes nothing else and never runs sudo.
 - Starts `recall.py index --all` in the background.
+- With `--canary` (opt-in, off by default because it makes real model calls, about $0.03-0.10 per run): copies `tools/handoff-canary/` to `~/.claude/hooks/handoff-canary/` and `handoff-canary.sh` to `~/.claude/hooks/`, and on macOS writes the LaunchAgent `com.lossless-handoff.handoff-canary` (daily 03:30, `--catch-up`); on Linux it prints the crontab line. The canary drives two headless Claude Code sessions past a compaction and checks the handoff arrives; see [`tools/handoff-canary/README.md`](tools/handoff-canary/README.md).
 
 Your other hooks and settings are left alone: new entries are appended next to existing ones. If the same hook scripts are already registered from another path, install prints those commands and exits 2, because every hook would run twice; remove them, or pass `--force`. Install fails with a clear message if `python3` is missing or `settings.json` is not valid JSON.
 
@@ -337,7 +338,7 @@ Your other hooks and settings are left alone: new entries are appended next to e
 | `~/.claude/hooks/.handoff-manifest.json` | Installed hook file hashes (not in the state folder). |
 | `projects/<project>-<hash>/decisions.md` | The project's decisions list (kept by uninstall). Beside it: `decisions.<timestamp>.md`, `decisions.state.json`, `decisions.lock`. |
 
-Files older than 14 days are cleaned up automatically. The directory is outside `~/.claude/` because Claude Code refuses model writes under that path ([ADR 0008](https://github.com/pratikgh0se/machine-setup/blob/main/docs/adr/0008-handoffs-directory-under-local-state.md)).
+Files older than 14 days are cleaned up automatically. The directory is outside `~/.claude/` because Claude Code refuses model writes under that path ([ADR 0008](docs/adr/0008-handoffs-directory-under-local-state.md)).
 
 ## Verify
 
@@ -375,7 +376,7 @@ A new line with `"trigger": "manual"` means the PreCompact hook fired. In a norm
 
 **Where must `CLAUDE_CODE_AUTO_COMPACT_WINDOW` be set?** In your user `~/.claude/settings.json` under `env` (install does this) or exported in the shell that starts Claude Code. A live test showed `env` in a project's `.claude/settings.json` did not override it.
 
-**What window size should I use?** One that comfortably exceeds your baseline context. Very small windows (below roughly 150k) compact before the 75% nudge is reached; the PreCompact hook then covers it. Savings come from long sessions on 1M-context models; if your sessions rarely pass 300k tokens the window never triggers and you mainly get the handoff. Whether a shorter context also improves answer quality was not measured. See [ADR 0001](https://github.com/pratikgh0se/machine-setup/blob/main/docs/adr/0001-compact-window-400k-with-handoff.md).
+**What window size should I use?** One that comfortably exceeds your baseline context. Very small windows (below roughly 150k) compact before the 75% nudge is reached; the PreCompact hook then covers it. Savings come from long sessions on 1M-context models; if your sessions rarely pass 300k tokens the window never triggers and you mainly get the handoff. Whether a shorter context also improves answer quality was not measured. See [ADR 0001](docs/adr/0001-compact-window-400k-with-handoff.md).
 
 **Can the nudge be skipped?** Yes. It reads the previous turn's token count, so one very large tool result can jump past the threshold without a nudge. The PreCompact hook still writes a handoff.
 
@@ -399,7 +400,7 @@ A new line with `"trigger": "manual"` means the PreCompact hook fired. In a norm
 - **Handoffs can be cut.** 20% of handoffs (43 of 217) hit the 14,000-character size cap and were truncated. 15% were `reduced` and 2% `degraded`, and the nightly self-test failed 2 of 34 runs.
 - **Recall is new.** It has existed since 2026-11-12, and its use so far is mostly the author's, much of it while building and testing it. The meaning half is a minority of wins (4 of 26 searches had a meaning-only top hit), and 143 meaning hits count lines shown, not proof they were useful.
 - **Misses still happen.** 4 of 192 main compactions in the 30-day reconcile had no handoff (see [Proof, not promises](#proof-not-promises)); the early write, recovery and `--check` exist to shrink and surface them, not to promise zero. Receipts only exist from the first compaction after install, so proof rates start small. C7 and C8 are dated one-off studies, not live rates.
-- **Platform.** The nightly jobs (index and reconcile-and-prove) are macOS LaunchAgents; on Linux you add the printed cron lines yourself. Windows is not supported. The nightly self-test mentioned above is part of the author's own setup and is not included in this repo.
+- **Platform.** The nightly jobs (index and reconcile-and-prove) are macOS LaunchAgents; on Linux you add the printed cron lines yourself. Windows is not supported. The nightly self-test mentioned above is the canary; it ships in `tools/handoff-canary/` and is opt-in (`./install.sh --canary`, about $0.03-0.10 per run).
 - **AI-graded evals.** The quizzes and benchmarks were written and graded by models, on one user's projects. The 19% cost estimate is a single 4.7-day, one-user figure against a modelled counterfactual, not a bill.
 - The nudge only works if the model obeys it. If it does not, you still get the fresh summary, which is lossier than the model's own note.
 - The fresh summary and the decisions update each run `claude -p --model sonnet` and use some of your quota (75 s and 100 s timeouts by default).
@@ -419,6 +420,6 @@ Removes exactly the hook entries install added (matched by command path; other h
 
 - Reliability notes (misses, subagents, headless runs, proof, state files): [docs/handoff-reliability.md](docs/handoff-reliability.md).
 - Behaviour contract these hooks and their tests are written from: [docs/spec.md](docs/spec.md).
-- Decisions: [ADR 0007](https://github.com/pratikgh0se/machine-setup/blob/main/docs/adr/0007-handoff-degraded-vs-reduced.md) (degraded vs reduced), [ADR 0011](https://github.com/pratikgh0se/machine-setup/blob/main/docs/adr/0011-handoff-nudge-bounded-channel.md) (the nudge).
+- Decisions: [ADR 0007](docs/adr/0007-handoff-degraded-vs-reduced.md) (degraded vs reduced), [ADR 0011](docs/adr/0011-handoff-nudge-bounded-channel.md) (the nudge).
 
 MIT license, copyright Pratik Ghose. See `LICENSE`. Security notes: `SECURITY.md`. Changes: `CHANGELOG.md`.

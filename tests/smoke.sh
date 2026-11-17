@@ -409,6 +409,42 @@ assert d["hooks"]["SessionEnd"][0]["hooks"][0]["command"].endswith("recall.py se
 PY
 ok "--managed-hooks stages managed settings, prints the sudo command, touches nothing else"
 
+# nudge ignores a subagent event: no output, no meta write
+mk 399000
+rm -f "$ST/asub-agent.meta.json"
+o="$(printf '{"session_id":"asub","agent_id":"ag9","transcript_path":"%s","tool_name":"Bash","tool_input":{}}' "$TR" | python3 "$H/handoff-nudge.py")"
+[ -z "$o" ] && [ ! -e "$ST/asub-agent.meta.json" ] || fail "nudge acted on a subagent event"
+o="$(printf '{"session_id":"asub","transcript_path":"%s","tool_name":"Bash","tool_input":{}}' "$TR" | python3 "$H/handoff-nudge.py")"
+[ -n "$o" ] && [ -e "$ST/asub-agent.meta.json" ] || fail "nudge no longer fires for the main session"
+ok "nudge ignores subagent events (agent_id), still nudges the main session"
+
+# opt-in canary: not in a default install; --canary installs it; run.sh skips without claude; check.py unit
+[ ! -e "$H/handoff-canary.sh" ] && [ ! -e "$H/handoff-canary" ] || fail "default install put the canary in place"
+"$ROOT/install.sh" --no-nightly --canary --dry-run >"$T/canary-dry.out"
+grep -q "handoff-canary" "$T/canary-dry.out" && [ ! -e "$H/handoff-canary.sh" ] || fail "--canary --dry-run output or side effect wrong"
+LOSSLESS_HANDOFF_NO_LAUNCHCTL=1 "$ROOT/install.sh" --no-nightly --canary >"$T/canary.out" || fail "--canary install failed"
+[ -x "$H/handoff-canary.sh" ] && [ -x "$H/handoff-canary/run.sh" ] && [ -f "$H/handoff-canary/check.py" ] || fail "canary files not installed"
+python3 -c "import json,sys; assert json.load(open(sys.argv[1]))['canary_added'] is True" "$H/.claude-handoff-install.json" || fail "marker lacks canary_added"
+if [ "$(uname)" = "Darwin" ]; then
+  CP="$HOME/Library/LaunchAgents/com.lossless-handoff.handoff-canary.plist"
+  [ -f "$CP" ] && grep -q "handoff-canary.sh --catch-up" "$CP" && grep -q "<integer>30</integer>" "$CP" || fail "canary LaunchAgent plist wrong"
+else
+  grep -q "30 3 \* \* \* .*handoff-canary.sh --catch-up" "$T/canary.out" || fail "canary crontab line missing"
+fi
+NC="$T/nocl"; mkdir -p "$NC"; ln -s "$(command -v python3)" "$NC/python3"
+if PATH="$NC:/usr/bin:/bin" command -v claude >/dev/null 2>&1; then
+  echo "SKIP: a claude binary is in /usr/bin or /bin, canary skip-run check skipped"
+else
+  HANDOFF_CANARY_STATE_DIR="$T/canary-state" HANDOFF_HEALTH_FILE="$T/canary-health.jsonl" PATH="$NC:/usr/bin:/bin" /bin/bash "$H/handoff-canary.sh" >"$T/canary-run.out" 2>&1 || fail "canary without claude did not exit 0: $(cat "$T/canary-run.out")"
+  grep -q '"skip"' "$T/canary-state/last-run.json" || fail "canary without claude did not record skip"
+fi
+mkdir -p "$T/canary-state"
+mkdir -p "$T/case"; rc=0; python3 "$H/handoff-canary/check.py" A "$T/case" >"$T/check.out" || rc=$?
+[ "$rc" -eq 1 ] && grep -q '"result": "fail"' "$T/check.out" && grep -q '"reason": "c1"' "$T/check.out" || fail "check.py on an empty case: $(cat "$T/check.out")"
+rc=0; python3 "$H/handoff-canary/check.py" >/dev/null 2>&1 || rc=$?
+[ "$rc" -eq 2 ] || fail "check.py usage exit should be 2"
+ok "canary: opt-in only, --canary installs it, runs to skip without claude, check.py fails an empty case (c1)"
+
 # Conflict: same hooks registered from another path -> exit 2, settings untouched; --force installs
 H2="$T/home2"; mkdir -p "$H2/.claude"
 cat > "$H2/.claude/settings.json" <<'JSON'
@@ -475,6 +511,8 @@ PY
 python3 -c "import json,sys; assert 'SessionEnd' not in json.load(open(sys.argv[1])).get('hooks', {})" "$S" || fail "SessionEnd hook left behind"
 for f in precompact-handoff.py postcompact-inject.py handoff-nudge.py recall.py claims.json .handoff-manifest.json .claude-handoff-install.json; do [ ! -e "$H/$f" ] || fail "$f left behind"; done
 [ ! -e "$HOME/Library/LaunchAgents/com.lossless-handoff.handoff-reconcile.plist" ] || fail "reconcile LaunchAgent left behind"
+[ ! -e "$HOME/Library/LaunchAgents/com.lossless-handoff.handoff-canary.plist" ] && [ ! -e "$H/handoff-canary" ] && [ ! -e "$H/handoff-canary.sh" ] || fail "canary left behind"
+[ -d "$T/canary-state" ] || fail "canary state should be kept"
 [ -d "$ST" ] || fail "state dir should be kept"
 [ -s "$ST/health.jsonl" ] && [ -s "$ST/subsess-a-ag7-latest.md" ] || fail "uninstall deleted state data"
 "$ROOT/uninstall.sh" >/dev/null

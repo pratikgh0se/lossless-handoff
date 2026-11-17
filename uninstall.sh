@@ -153,6 +153,24 @@ if [ -f "$HOOKS_DIR/.claude-handoff-install.json" ] && grep -q managed_settings_
   fi
 fi
 
+CLABEL="com.lossless-handoff.handoff-canary"
+CPLIST="$HOME/Library/LaunchAgents/$CLABEL.plist"
+if [ -e "$CPLIST" ]; then
+  say "boot out and remove LaunchAgent $CLABEL"
+  if [ "$DRY" = 0 ]; then
+    launchctl bootout "gui/$(id -u)/$CLABEL" >/dev/null 2>&1 || true
+    rm "$CPLIST"
+  fi
+fi
+if [ -e "$HOOKS_DIR/handoff-canary" ] || [ -e "$HOOKS_DIR/handoff-canary.sh" ]; then
+  say "remove the canary: $HOOKS_DIR/handoff-canary/ and handoff-canary.sh"
+  if [ "$DRY" = 0 ]; then
+    for f in run.sh canary.py check.py; do rm -f "$HOOKS_DIR/handoff-canary/$f"; done
+    rmdir "$HOOKS_DIR/handoff-canary" 2>/dev/null || true
+    rm -f "$HOOKS_DIR/handoff-canary.sh"
+  fi
+fi
+
 for f in precompact-handoff.py postcompact-inject.py handoff-nudge.py recall.py claims.json .handoff-manifest.json .claude-handoff-install.json; do
   if [ -e "$HOOKS_DIR/$f" ]; then
     say "remove $HOOKS_DIR/$f"
@@ -164,6 +182,7 @@ echo "kept $STATE_DIR (handoffs and health.jsonl); delete it yourself if you do 
 echo "kept the recall indexes and logs under $STATE_DIR/recall/ (delete that folder yourself to drop them)"
 echo "kept the project decision ledgers under $STATE_DIR/projects/ (delete that folder yourself to forget them)"
 for b in "$HOOKS_DIR"/.claude-handoff-backup-*; do [ -e "$b" ] && echo "kept backup: $b"; done
+echo "kept canary state under $HOME/.local/state/handoff-canary (if you used --canary)"
 echo "kept proof receipts, reports and claims status under $STATE_DIR (delete the folder yourself to drop them)"
 echo "Done. Restart open Claude Code sessions: hooks load when a session starts."
 exit 0

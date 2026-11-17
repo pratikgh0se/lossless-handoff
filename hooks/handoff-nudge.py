@@ -5,7 +5,7 @@ Reads the hook JSON on stdin and the TAIL of the transcript only. When context c
 75% of the auto-compact window (then every 25,000 tokens, plus one final note) it prints one
 PostToolUse additionalContext note. Steps stay 12,000 tokens below the real compaction point
 (window minus 33,000), so with a 400k window the notes come at 300k, 325k, 350k and a final at 355k. State lives in <sid>-agent.meta.json, which precompact-handoff.py
-reads for its freshness rule. Never fails: any error means exit 0 with no output.
+reads for its freshness rule. A subagent event (non-empty `agent_id`) is ignored entirely. Never fails: any error means exit 0 with no output.
 """
 import hashlib, json, os, re, sys, time
 
@@ -124,6 +124,9 @@ def main():
     except ValueError:
         return
     if not isinstance(payload, dict):
+        return
+    aid = payload.get("agent_id")
+    if isinstance(aid, str) and aid.strip():  # a subagent event: never nudge it, never write the main session's meta (spec F46 f)
         return
     sid = str(payload.get("session_id") or "").replace("/", "_")
     tpath = payload.get("transcript_path")
