@@ -44,3 +44,38 @@ jobs:
 
       - name: Smoke test
         run: bash tests/smoke.sh
+
+  acceptance:
+    # Code-blind acceptance tests from pratikgh0se/lossless-handoff-tests, pinned by tests.ref.
+    # Builders read only the test names and assertion output below, never the test code.
+    name: acceptance (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    env:
+      LOSSLESS_HANDOFF_NO_LAUNCHCTL: "1"
+      RECALL_EMBED_URL: "http://127.0.0.1:9"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read tests.ref
+        id: ref
+        run: echo "sha=$(tr -d '[:space:]' < tests.ref)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v4
+        with:
+          repository: pratikgh0se/lossless-handoff-tests
+          ref: ${{ steps.ref.outputs.sha }}
+          path: .acceptance
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Run acceptance tests
+        run: |
+          HANDOFF_HOOKS_DIR="$GITHUB_WORKSPACE/hooks" LOSSLESS_HANDOFF_REPO="$GITHUB_WORKSPACE" \
+            python3 -W ignore -m unittest discover -s .acceptance
