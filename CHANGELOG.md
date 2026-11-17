@@ -4,14 +4,15 @@ Lossless Handoff, formerly claude-handoff.
 
 ## Unreleased
 
+## [0.8.0] - 2026-11-17
+
+No silent misses (machine-setup F45 to F48, hooks 1.10.0).
+
 - `install.sh --no-nudge` does not install the context nudge (`handoff-nudge.py` and its PostToolUse entry) and removes one left by an earlier install. New F50 in `docs/spec.md`, ACs 208-211.
 - CI runs the code-blind acceptance tests from the new repository [lossless-handoff-tests](https://github.com/pratikgh0se/lossless-handoff-tests) on Ubuntu and macOS, pinned by `tests.ref`. The tests moved there from bento-mods-tests with their history, and were ported to this repository's layout (`LOSSLESS_HANDOFF_REPO`, `install.sh` in a temporary HOME).
 - `docs/spec.md`: the canary plist runs the `hooks/handoff-canary.sh` wrapper (AC 71 amended); the machine-setup `--launchd`, `--render-only`, `LABEL_PREFIX` and `deps.tsv` statements are withdrawn; new F49 uninstall ACs 202-207.
 - README: a Tests part (the three CI layers, the code-blind rule, `tests.ref`, how to run the acceptance tests locally).
-
-## [0.8.0] - 2026-11-17
-
-No silent misses (machine-setup F45 to F48, hooks 1.10.0).
+- `tests/local-proof.sh`: one local command that runs every test layer, including real Claude Code compactions, and writes a dated report in `docs/proof/`.
 
 - **Early write and recovery (F45).** PreCompact writes `<sid>-pending.json` and a deterministic handoff before the first model call, so a hook killed at its timeout still leaves a handoff. If a compaction still has none, the SessionStart `compact` hook rebuilds one from the transcript (no model call, 6 s deadline) and says `HANDOFF RECOVERED`.
 - **Install check (F45).** `postcompact-inject.py --check` runs at SessionStart `startup` and `resume` (timeout 5) and prints one `HANDOFF CHECK:` line when a hook is not wired, a hook file is missing or changed since install, the two hooks' versions differ, or reconcile found compactions without a handoff. Silent otherwise.

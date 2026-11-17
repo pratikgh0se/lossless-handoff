@@ -97,6 +97,28 @@ Behaviour worth knowing:
 
 Command reference is in [Recall commands](#recall-commands).
 
+## Local proof
+
+One command runs every test layer on your machine and writes a dated report:
+
+```
+tests/local-proof.sh
+```
+
+The report goes to `docs/proof/<date>-<sha>.md`. It starts with a one-line verdict and a table, one row per layer. Past reports are in [docs/proof/](docs/proof/); cite them in release PRs.
+
+| Layer | What it does |
+|---|---|
+| 1 Static | `bash -n`, `shellcheck`, `py_compile` |
+| 2 Smoke | `tests/smoke.sh` |
+| 3 Acceptance | the separate acceptance suite, repeated (`--repeat N`, default 3), with flaky tests rerun alone |
+| 4 Fresh clone | clone the pushed commit, install, `--check`, uninstall twice, all in a temporary HOME |
+| 5 Real end to end | 3 real headless Claude Code runs where a main agent and a subagent each compact; checked with `--prove` |
+| 6 Real stress | 3 sessions at the same time, a hook killed at its timeout, a missing PreCompact hook |
+| 7 Claims | `--claims-lint README.md`, for information only |
+
+Layers 5 and 6 use real model calls and cost about $3 in total (measured $2.96) (the run stops at $4). Use `--no-real` for a free run, `--real-only` for only layers 5 and 6, `--tests-dir DIR` for an existing tests checkout. The run never changes your real `~/.claude`, your real state folder or your launchd jobs; the report shows a before and after check of them.
+
 ## Proof it works
 
 Measured on the author's machine on 2026-11-13/14, on the author's own projects. These are measurements, not promises. All tests are AI-written and AI-graded, on one user's projects.
@@ -355,7 +377,7 @@ To test a real compaction without touching your own install:
 1. Install into a temporary home with `HOME=<tmp> LOSSLESS_HANDOFF_NO_LAUNCHCTL=1 ./install.sh --no-nightly`, so no LaunchAgent is written or loaded.
 2. Keep your real HOME for the run, because `claude` reads its login from there.
 3. Run `claude -p --setting-sources local --settings <tmp>/.claude/settings.json ...` from a fresh folder, with `HANDOFF_STATE_DIR=<tmp>/.local/state/claude-handoffs`. This switches your own hooks off and keeps all handoff files in the temporary folder.
-4. To force a compaction quickly, set `CLAUDE_CODE_AUTO_COMPACT_WINDOW=30000` in the process environment. The value in the settings file alone did not force one in our test.
+4. To force a compaction quickly, set `CLAUDE_CODE_AUTO_COMPACT_WINDOW=30000` both in the process environment and in the `env` of the settings file you pass with `--settings`. If you run with your own user settings and they set this variable (the installer sets 400000), that value wins over the process environment, so pass `--settings '{"env":{"CLAUDE_CODE_AUTO_COMPACT_WINDOW":"30000"}}'`. Keep each file the agents read under about 20k tokens (for example 900 lines); the Read tool refuses larger files, and then the context does not grow.
 5. Check with `HANDOFF_STATE_DIR=... python3 <tmp>/.claude/hooks/precompact-handoff.py --prove --days 1`.
 
 Use a folder name that contains `handoff-canary`, so that the nightly check on your real install does not count these compactions as missed.
