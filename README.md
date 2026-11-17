@@ -97,6 +97,28 @@ Behaviour worth knowing:
 
 Command reference is in [Recall commands](#recall-commands).
 
+## Local proof
+
+One command runs every test layer on your machine and writes a dated report:
+
+```
+tests/local-proof.sh
+```
+
+The report goes to `docs/proof/<date>-<sha>.md`. It starts with a one-line verdict and a table, one row per layer. Past reports are in [docs/proof/](docs/proof/); cite them in release PRs.
+
+| Layer | What it does |
+|---|---|
+| 1 Static | `bash -n`, `shellcheck`, `py_compile` |
+| 2 Smoke | `tests/smoke.sh` |
+| 3 Acceptance | the separate acceptance suite, repeated (`--repeat N`, default 3), with flaky tests rerun alone |
+| 4 Fresh clone | clone the pushed commit, install, `--check`, uninstall twice, all in a temporary HOME |
+| 5 Real end to end | 3 real headless Claude Code runs where a main agent and a subagent each compact; checked with `--prove` |
+| 6 Real stress | 3 sessions at the same time, a hook killed at its timeout, a missing PreCompact hook |
+| 7 Claims | `--claims-lint README.md`, for information only |
+
+Layers 5 and 6 use real model calls and cost about $2-3 in total (the run stops at $4). Use `--no-real` for a free run, `--real-only` for only layers 5 and 6, `--tests-dir DIR` for an existing tests checkout. The run never changes your real `~/.claude`, your real state folder or your launchd jobs; the report shows a before and after check of them.
+
 ## Proof it works
 
 Measured on the author's machine on 2026-11-13/14, on the author's own projects. These are measurements, not promises. All tests are AI-written and AI-graded, on one user's projects.

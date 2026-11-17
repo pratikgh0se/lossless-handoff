@@ -8,6 +8,7 @@ Lossless Handoff, formerly claude-handoff.
 - CI runs the code-blind acceptance tests from the new repository [lossless-handoff-tests](https://github.com/pratikgh0se/lossless-handoff-tests) on Ubuntu and macOS, pinned by `tests.ref`. The tests moved there from bento-mods-tests with their history, and were ported to this repository's layout (`LOSSLESS_HANDOFF_REPO`, `install.sh` in a temporary HOME).
 - `docs/spec.md`: the canary plist runs the `hooks/handoff-canary.sh` wrapper (AC 71 amended); the machine-setup `--launchd`, `--render-only`, `LABEL_PREFIX` and `deps.tsv` statements are withdrawn; new F49 uninstall ACs 202-207.
 - README: a Tests part (the three CI layers, the code-blind rule, `tests.ref`, how to run the acceptance tests locally).
+- `tests/local-proof.sh`: one local command that runs every test layer, including real Claude Code compactions, and writes a dated report in `docs/proof/`.
 
 ## [0.8.0] - 2026-11-17
 
