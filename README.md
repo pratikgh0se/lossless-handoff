@@ -117,7 +117,7 @@ The report goes to `docs/proof/<date>-<sha>.md`. It starts with a one-line verdi
 | 6 Real stress | 3 sessions at the same time, a hook killed at its timeout, a missing PreCompact hook |
 | 7 Claims | `--claims-lint README.md`, for information only |
 
-Layers 5 and 6 use real model calls and cost about $2-3 in total (the run stops at $4). Use `--no-real` for a free run, `--real-only` for only layers 5 and 6, `--tests-dir DIR` for an existing tests checkout. The run never changes your real `~/.claude`, your real state folder or your launchd jobs; the report shows a before and after check of them.
+Layers 5 and 6 use real model calls and cost about $1-2 in total (the run stops at $4). Use `--no-real` for a free run, `--real-only` for only layers 5 and 6, `--tests-dir DIR` for an existing tests checkout. The run never changes your real `~/.claude`, your real state folder or your launchd jobs; the report shows a before and after check of them.
 
 ## Proof it works
 

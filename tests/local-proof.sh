@@ -75,7 +75,8 @@ snapshot "$RAW/isolation-before.txt"
 # ---------------------------------------------------------------- shared temp install
 # make_install DIR REPO_ROOT [seed-json]: install into DIR as HOME. Never touches the real HOME.
 make_install() {
-  local home="$1" repo="$2" seed="${3:-\{\}}"
+  local home="$1" repo="$2" seed="${3:-}"
+  [ -n "$seed" ] || seed='{}'
   mkdir -p "$home/.claude"
   printf '%s\n' "$seed" >"$home/.claude/settings.json"
   ( cd "$repo" && HOME="$home" LOSSLESS_HANDOFF_NO_LAUNCHCTL=1 RECALL_EMBED_URL=http://127.0.0.1:9 ./install.sh --no-nightly )
