@@ -385,7 +385,7 @@ printf '%s' "$subin" | HANDOFF_LEDGER=0 python3 "$H/precompact-handoff.py" >"$T/
 [ -s "$ST/subsess-a-ag7-latest.md" ] || fail "no subagent handoff subsess-a-ag7-latest.md (have: $(ls "$ST" | tr '\n' ' '))"
 grep -q "SUBMARK" "$ST/subsess-a-ag7-latest.md" || fail "subagent handoff lacks the subagent's own message"
 ! grep -q "MAINMARK" "$ST/subsess-a-ag7-latest.md" || fail "subagent handoff holds main-session text"
-( cd "$ST" && cksum subsess-latest.md; ls subsess-* | grep -v -- "-a-ag7" | sort ) > "$T/main.after"
+( cd "$ST" && cksum subsess-latest.md; printf "%s\n" subsess-* | grep -v -- "-a-ag7" | sort ) > "$T/main.after"
 cmp -s "$T/main.before" "$T/main.after" || fail "a subagent event changed the main session's files"
 tail -n 1 "$ST/health.jsonl" | grep -q '"agent_id": *"ag7"' || fail "health row lacks the agent_id"
 ok "subagent PreCompact writes <sid>-a-<agent_id> files, main files untouched"
