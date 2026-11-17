@@ -377,7 +377,7 @@ To test a real compaction without touching your own install:
 1. Install into a temporary home with `HOME=<tmp> LOSSLESS_HANDOFF_NO_LAUNCHCTL=1 ./install.sh --no-nightly`, so no LaunchAgent is written or loaded.
 2. Keep your real HOME for the run, because `claude` reads its login from there.
 3. Run `claude -p --setting-sources local --settings <tmp>/.claude/settings.json ...` from a fresh folder, with `HANDOFF_STATE_DIR=<tmp>/.local/state/claude-handoffs`. This switches your own hooks off and keeps all handoff files in the temporary folder.
-4. To force a compaction quickly, set `CLAUDE_CODE_AUTO_COMPACT_WINDOW=30000` in the process environment. The value in the settings file alone did not force one in our test.
+4. To force a compaction quickly, set `CLAUDE_CODE_AUTO_COMPACT_WINDOW=30000` both in the process environment and in the `env` of the settings file you pass with `--settings`. If you run with your own user settings and they set this variable (the installer sets 400000), that value wins over the process environment, so pass `--settings '{"env":{"CLAUDE_CODE_AUTO_COMPACT_WINDOW":"30000"}}'`. Keep each file the agents read under about 20k tokens (for example 900 lines); the Read tool refuses larger files, and then the context does not grow.
 5. Check with `HANDOFF_STATE_DIR=... python3 <tmp>/.claude/hooks/precompact-handoff.py --prove --days 1`.
 
 Use a folder name that contains `handoff-canary`, so that the nightly check on your real install does not count these compactions as missed.
