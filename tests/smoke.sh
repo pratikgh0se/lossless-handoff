@@ -298,10 +298,10 @@ p1="$(printf '{"cwd":"%s"}' "$PB" | python3 "$H/postcompact-inject.py" --ledger 
 p2="$(printf '{"cwd":"%s"}' "$PB" | python3 "$H/postcompact-inject.py" --ledger --part 2 | inj_ctx)"
 p3="$(printf '{"cwd":"%s"}' "$PB" | python3 "$H/postcompact-inject.py" --ledger --part 3 | inj_ctx)"
 [ "${#p1}" -lt 10000 ] && [ "${#p2}" -lt 10000 ] && [ "${#p3}" -lt 10000 ] || fail "ledger part over 10,000 chars"
-echo "$p1" | grep -q "D40 " && echo "$p2" | grep -q "part 2 of the ledger" || fail "part 2 content wrong"
+grep -q "D40 " <<<"$p1" && grep -q "part 2 of the ledger" <<<"$p2" || fail "part 2 content wrong"
 # nothing is dropped: every one of the 40 entries appears in parts 1-3 (in full or as an index line)
 allp="$p1 $p2 $p3"
-for i in $(seq 1 40); do echo "$allp" | grep -q "D$i " || fail "entry D$i missing from the 3 parts"; done
+for i in $(seq 1 40); do grep -q "D$i " <<<"$allp" || fail "entry D$i missing from the 3 parts"; done
 ok "--ledger --part 1/2/3 and plain --ledger print the entries, nothing dropped"
 
 # git: the ledger is keyed on the repo root, so a subfolder reaches the same file
