@@ -4,7 +4,22 @@ Lossless Handoff, formerly claude-handoff.
 
 ## Unreleased
 
-- README: measured daily use, hybrid search explained, comparison
+## [0.8.0] - 2026-11-17
+
+No silent misses (machine-setup F45 to F48, hooks 1.10.0).
+
+- **Early write and recovery (F45).** PreCompact writes `<sid>-pending.json` and a deterministic handoff before the first model call, so a hook killed at its timeout still leaves a handoff. If a compaction still has none, the SessionStart `compact` hook rebuilds one from the transcript (no model call, 6 s deadline) and says `HANDOFF RECOVERED`.
+- **Install check (F45).** `postcompact-inject.py --check` runs at SessionStart `startup` and `resume` (timeout 5) and prints one `HANDOFF CHECK:` line when a hook is not wired, a hook file is missing or changed since install, the two hooks' versions differ, or reconcile found compactions without a handoff. Silent otherwise.
+- **Reconcile (F45).** `precompact-handoff.py --reconcile [--days N]` counts `compact_boundary` records against `health.jsonl` and writes `reconcile.json`.
+- **Subagent handoffs (F46).** A compacting subagent (hook input with `agent_id`) gets its own handoff from its own transcript, stored as `<sid>-a-<agent_id>` files; it never touches the main session's files, never merges the decisions list and never starts the indexer. Before this, subagent compactions got no handoff (0 of 28 in the author's first 30-day reconcile).
+- **Headless runs (F46).** `claude -p` and the SDK load user hooks by default. `install.sh --managed-hooks` stages a managed-settings file with the handoff hooks and prints the `sudo install -m 644 ...` command (macOS `/Library/Application Support/ClaudeCode/managed-settings.json`, Linux `/etc/claude-code/managed-settings.json`); it never runs sudo. Only `--bare` skips managed hooks. `--check` accepts hooks from user or managed settings.
+- **Proof (F47).** Every injected handoff appends a receipt to `receipts.jsonl`. `precompact-handoff.py --prove [--days N]` checks receipts with plain code (`lossless`, `right_agent`, `delivered`, `decisions_safe`), appends verdicts to `proofs.jsonl` and writes `proof-report.md`.
+- **Claims register (F48).** New `hooks/claims.json` (C1 to C8). `--prove` evaluates it into `claims-status.json` and `claims-report.md` (`pass`, `fail`, `stale`, `no-data`); `--claims` prints it; `--claims-lint <file.md>` exits 1 unless every `[C<n>]` marker in a document is known and `pass`. README claims now carry these markers; C7 (blind quiz) and C8 (cost) are dated one-off studies.
+- `install.sh` installs `claims.json`, writes `~/.claude/hooks/.handoff-manifest.json`, adds `postcompact-inject.py --check` to `startup` and `resume`, and on macOS installs the LaunchAgent `com.lossless-handoff.handoff-reconcile` (daily 04:15, `--reconcile --prove --days 30`, log `~/.local/state/claude-handoffs/reconcile.log`; `--no-nightly` skips it). On Linux it prints the crontab line. Everything it adds is recorded in the install marker. It prints "Restart open Claude Code sessions: hooks load when a session starts."
+- `uninstall.sh` removes the `--check` entries, the reconcile LaunchAgent, the manifest and `claims.json`; it keeps all state (handoffs, receipts, proofs, indexes, ledgers) and tells you if a system managed-settings file may still hold the hook entries.
+- `precompact-handoff.py` and `postcompact-inject.py` 1.10.0 copied from machine-setup; `recall.py` is byte-identical to the 1.8.0 copy.
+- `tests/smoke.sh` covers a clean `--check`, a changed-file `--check`, `--reconcile` and `--prove` on an empty HOME, a subagent PreCompact input, `--managed-hooks`, and the install and uninstall round trip with the new entries.
+- README: a "When a compaction is missed" section, subagents, headless runs and "Proof, not promises"; the old "0 hook errors" wording is replaced by the measured miss counts (188 of 192 main compactions covered in a 30-day reconcile on 2026-11-17; 4 missed: 3 from a deliberate probe run with user settings off, 1 likely a hook killed at its timeout on 2026-10-23; 0 of 28 subagent compactions before this release; live subagent test after the fix: right-agent 2/2, delivered 2/2, failed 0). Also: measured daily use, hybrid search explained, comparison.
 
 ## [0.7.0] - 2026-11-14
 

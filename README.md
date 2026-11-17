@@ -12,11 +12,12 @@
 
 - **Without it:** every compaction turns your session into a generic summary. The exact next step, the dead ends, your standing rules and your exact wording are gone, and the model re-does work or asks again.
 - **With it:** before each compaction a structured handoff is written and fed back in. Each project keeps a decisions list that survives compactions, and `recall` finds the exact words of earlier chats (keyword plus local semantic search). Python 3 standard library only.
-- **Proof:** 217 compactions with a handoff over 32 days on the author's machine, 0 hook errors logged, 497 of 497 sampled messages retrieved byte-identical. Details and caveats below.
+- **No silent misses:** a hook cannot force Claude Code to run it, so a missed compaction is caught three ways: a handoff is written early, rebuilt after the fact if it is still missing, and counted every night. Subagents get their own handoff. See [When a compaction is missed](#when-a-compaction-is-missed).
+- **Proof:** in a 30-day reconcile on the author's machine (2026-11-17), 188 of 192 main compactions had a handoff [C2] and 497 of 497 sampled messages came back byte-identical [C1]. The 4 misses and the subagent gap are listed in [Proof, not promises](#proof-not-promises).
 
 ## Why this exists
 
-I run Claude Code with a 400k auto-compact window (`CLAUDE_CODE_AUTO_COMPACT_WINDOW=400000`) instead of the 1M default. With 1M, long sessions rarely compact and pay for their whole context on every turn. In a single-user estimate over 4.7 days, the shorter window gave about 19% lower API-equivalent cost.
+I run Claude Code with a 400k auto-compact window (`CLAUDE_CODE_AUTO_COMPACT_WINDOW=400000`) instead of the 1M default. With 1M, long sessions rarely compact and pay for their whole context on every turn. In a single-user estimate over 4.7 days, the shorter window gave about 19% lower API-equivalent cost [C8] (a dated one-off study, 2026-10-20, not a bill).
 
 The catch is many more compactions, and each one used to lose rules, decisions and exact wording. This tool is what makes running small and compacting often safe. I use it every day, on my own projects. It has one heavy user so far (see [Limitations](#limitations)).
 
@@ -29,18 +30,19 @@ cd lossless-handoff
 ./install.sh
 ```
 
-Then restart Claude Code. Prerequisites: `python3` and `bash` on macOS or Linux (Windows is not supported), and a Claude Code version that supports `PreCompact`, `SessionStart` and `PostToolUse` hooks with `additionalContext`. Optional: the `claude` binary on `PATH` (used for the fresh summary) and [Ollama](https://ollama.com/download) (meaning search).
+Then restart open Claude Code sessions: hooks load when a session starts. Prerequisites: `python3` and `bash` on macOS or Linux (Windows is not supported), and a Claude Code version that supports `PreCompact`, `SessionStart` and `PostToolUse` hooks with `additionalContext`. Optional: the `claude` binary on `PATH` (used for the fresh summary) and [Ollama](https://ollama.com/download) (meaning search).
 
 The installer sets up, in one go:
 
 - the hooks and `recall.py`, copied to `~/.claude/hooks/`;
 - the entries in `~/.claude/settings.json`, merged next to yours, with a timestamped backup;
 - the end-of-chat index (a `SessionEnd` hook);
-- on macOS, a nightly index job (03:30);
+- an install check that runs at session start and prints one line only when something is wrong (`postcompact-inject.py --check`), with an install manifest (`~/.claude/hooks/.handoff-manifest.json`) it compares against;
+- on macOS, two nightly jobs: the index (03:30) and the reconcile-and-prove run (04:15);
 - a first index of all your projects, started in the background;
 - optionally, `ollama pull bge-m3` for meaning search, if `ollama` is on your PATH.
 
-Options: `--window N`, `--no-window`, `--yes` (pull bge-m3 without asking), `--no-nightly`, `--dry-run`, `--force`, `--version`, `--help`. Install is idempotent. Full details are in [What install changes](#what-install-changes).
+Options: `--window N`, `--no-window`, `--yes` (pull bge-m3 without asking), `--no-nightly`, `--managed-hooks` (see [Headless runs](#headless-runs)), `--dry-run`, `--force`, `--version`, `--help`. Install is idempotent. Full details are in [What install changes](#what-install-changes).
 
 ## Quick start
 
@@ -53,7 +55,7 @@ Options: `--window N`, `--no-window`, `--yes` (pull bge-m3 without asking), `--n
 | What | Number |
 |---|---|
 | Compactions with a handoff | 217 over 32 days, across 23 sessions; the busiest session had 96 compactions |
-| Handoff status | 83% ok, 15% reduced, 2% degraded; 0 hook errors logged |
+| Handoff status | 83% ok, 15% reduced, 2% degraded |
 | Nightly self-test | passed 31 of 34 runs; the last 7 nights all passed |
 | Decisions lists | 12 projects, 495 active entries (84 standing rules), 111 finished |
 | Search index | 48,282 chunks from about 30.6k messages across 1,242 sessions |
@@ -101,7 +103,7 @@ Measured on the author's machine on 2026-11-13/14, on the author's own projects.
 
 | Test | Result |
 |---|---|
-| Lossless retrieval: 497 random messages from before a compaction | 497 of 497 found and returned byte-identical |
+| Lossless retrieval: 497 random messages from before a compaction [C1] | 497 of 497 found and returned byte-identical |
 | Meaning search, easy paraphrase test, 118 queries | 98% in the top 10, 89% first |
 | Blind quiz after compaction, 33 questions | 41/66 with the v0.4 injection, 50/66 with the full decisions list, 65/66 with the decisions list plus recall |
 | Handoff quality, 18 real compactions (score out of 100) | Claude Code's summary alone 62; plus the model's own note 68; plus a fresh Sonnet summary 75-76; given the real recent chat 85 |
@@ -115,6 +117,42 @@ Measured on the author's machine on 2026-11-13/14, on the author's own projects.
 **Handoff quality.** A fresh Claude was quizzed on what it needed to carry on (latest request, next step, decisions, dead ends, rules, files). Version 0.2.0 added the fresh Sonnet summary. Treat it as a strong hint, not proof.
 
 **Decisions list.** By age: 1 compaction 21 to 66, 2 compactions 10 to 56, 3 or more 8 to 44. Recent memory was unchanged (62.5).
+
+## Proof, not promises
+
+The tables above are one-off measurements. From 1.10.0 the install also keeps its own evidence, checked by plain code (no model, no cost), and publishes only what that evidence supports.
+
+**Receipts.** Every handoff that `postcompact-inject.py` injects appends a line to `~/.local/state/claude-handoffs/receipts.jsonl`: transcript, boundary time, hashes and the first 300 characters. Receipts start with the first compaction after install, so earlier compactions have none.
+
+**Four checks per receipt** (`precompact-handoff.py --prove`, verdicts in `proofs.jsonl`):
+
+| Check | Passes when |
+|---|---|
+| `lossless` | 5 sampled messages from the transcript come back word for word through recall's own commands [C1] |
+| `right_agent` | every quoted user line in the handoff occurs in the receipt's own transcript, so a subagent never gets the main session's context [C3] |
+| `delivered` | the transcript after the boundary holds the injected text [C4] |
+| `decisions_safe` | no decision id present before a ledger update is missing after it, and no superseded id came back [C5] |
+
+**Nightly report.** The 04:15 job runs `--reconcile --prove --days 30` and writes `proof-report.md` (summary line first, then failed checks and skip counts) and `reconcile.json`. `--check` shows `proof failed: <n> checks` once when a run has failures.
+
+**Claims register.** `hooks/claims.json` lists each public claim (`C1` to `C8`) with its evidence source, window, refresh time and minimum rate. Each `--prove` run evaluates it into `claims-status.json` and `claims-report.md`:
+
+| Status | Meaning |
+|---|---|
+| `pass` | rate at or above the minimum, evidence present and fresh |
+| `fail` | rate below the minimum |
+| `stale` | evidence older than its refresh time |
+| `no-data` | no evidence in the window (neither failing nor stale) |
+
+`precompact-handoff.py --claims` prints the table. Claims in this README carry `[C1]` to `[C8]` markers matching the register. C1 to C6 are live: computed from your own transcripts and receipts. C7 (blind quiz) and C8 (cost) are dated one-off studies with a recorded date and a refresh time, not live rates. Before publishing a document that cites claims, run:
+
+```
+python3 ~/.claude/hooks/precompact-handoff.py --claims-lint README.md
+```
+
+It exits 1 unless every marker is known and `pass`: an unknown, `fail`, `stale` or `no-data` marker blocks publishing. On a machine with no receipts yet, C1 to C6 are `no-data`, so lint is for the author's own machine.
+
+**What the author's own data says.** In a 30-day reconcile on the author's machine (2026-11-17), 188 of 192 main compactions had a handoff [C2]. The 4 misses: 3 came from a deliberate probe run with user settings switched off, and 1 was a hook most likely killed at its timeout on 2026-10-23. For subagents, 0 of 28 compactions had a handoff before this release; that gap is the bug 1.10.0 fixes. A live subagent test after the fix: right-agent 2/2 [C3], delivered 2/2 [C4], failed 0. A dated one-off blind quiz (2026-11-14, same sessions with and without the handoff) scored 98% with the handoff against 62% with Claude Code's compaction summary alone [C7]. One author, one machine, small counts.
 
 ## Built on the LCM paper
 
@@ -183,6 +221,48 @@ Other projects solve parts of this well. Stars were fetched on 2026-11-16 and mo
 
 **Works without the model's cooperation.** If the model never writes the agent file, you still get the fresh Sonnet summary plus the facts (status `reduced`). If the summary also fails or is disabled, you get the facts only, and the injected text starts with a `HANDOFF DEGRADED` warning line.
 
+## When a compaction is missed
+
+A hook cannot force Claude Code to run it, so a handoff can be missed (the hook was killed at its timeout, hooks were switched off for a run, the install broke). Hooks 1.10.0 treat that as the case to design for: write early, recover after, detect every miss, check the install, and keep evidence.
+
+| Step | What happens |
+|---|---|
+| **Early write** | PreCompact writes `<sid>-pending.json` first, then a deterministic handoff (facts and your last messages) before the first model call. A hook killed at its timeout still leaves a handoff. The health line removes the pending file. |
+| **HANDOFF RECOVERED** | If a compaction still has no handoff, the SessionStart `compact` hook rebuilds one from the transcript (no model call, 6 s deadline) and the injected text starts with `HANDOFF RECOVERED`. |
+| **`--check`** | At session `startup` and `resume`, `postcompact-inject.py --check` prints one `HANDOFF CHECK:` line when a hook is not wired, a hook file is missing or changed since install (it compares the manifest), the two hooks' versions differ, or reconcile found compactions without a handoff. It prints nothing when all is well. |
+| **Nightly reconcile and proof** | At 04:15, `precompact-handoff.py --reconcile --prove --days 30` counts every `compact_boundary` in your transcripts against `health.jsonl` and proves each receipt (see [Proof, not promises](#proof-not-promises)). |
+
+Restart open Claude Code sessions after installing: hooks load when a session starts.
+
+## Subagents
+
+When a subagent compacts, Claude Code fires the hooks with `agent_id` set but with the parent's `session_id` and `transcript_path`. Before 1.10.0 that looked like a main-session compaction and no subagent handoff was written. Now each compacting subagent gets its own handoff, built from its own transcript (`<session>/subagents/agent-<agent_id>.jsonl` next to the parent transcript) and stored under `<sid>-a-<agent_id>` files.
+
+- A subagent never reads or writes the main session's handoff, and the other way round [C3].
+- A subagent never merges the decisions list and never starts the indexer; the rules are still injected into it.
+- If the subagent transcript is missing, the health row says `degraded` / `agent_transcript_missing` and no handoff is written.
+- Reconcile counts subagent compactions separately, and the register tracks that they are covered [C6]. Before 1.10.0 they were not: 0 of 28 in the author's first 30-day reconcile.
+
+## Headless runs
+
+`claude -p` and the Agent SDK load your user hooks by default. They skip them only with `--bare`, `disableAllHooks`, `--setting-sources` without `user`, or SDK `settingSources: []`.
+
+To keep the handoff hooks in every run except `--bare`, use managed settings:
+
+```
+./install.sh --managed-hooks
+```
+
+This is a standalone mode that changes nothing else. It writes `~/.local/state/claude-handoffs/managed-settings.json` (an existing system file is read and merged in, never written) and prints the command to install it, which you run yourself because it needs admin rights. The script never runs sudo:
+
+```
+# macOS
+sudo install -m 644 ~/.local/state/claude-handoffs/managed-settings.json "/Library/Application Support/ClaudeCode/managed-settings.json"
+# Linux: /etc/claude-code/managed-settings.json
+```
+
+With managed hooks installed, only `--bare` skips them. `--check` accepts hooks from user or managed settings. Reconcile reports any compaction that still got no handoff, headless or not.
+
 ## The project decisions list
 
 A handoff is per session, but decisions belong to the project. One plain-text list is kept per project (a git repo, or the folder you started in when there is no repo) at `~/.local/state/claude-handoffs/projects/<project>-<hash>/decisions.md`. One line per decision: an id (`D12`), the date, a kind, what was decided, and why.
@@ -220,16 +300,20 @@ Every command accepts `--cwd DIR` (default: the current folder). `search` also t
 
 ## What install changes
 
-- Copies `precompact-handoff.py`, `postcompact-inject.py`, `handoff-nudge.py` and `recall.py` to `~/.claude/hooks/` (a differing existing file is first saved to `~/.claude/hooks/.claude-handoff-backup-<timestamp>/`).
+- Copies `precompact-handoff.py`, `postcompact-inject.py`, `handoff-nudge.py`, `recall.py` and `claims.json` to `~/.claude/hooks/` (a differing existing file is first saved to `~/.claude/hooks/.claude-handoff-backup-<timestamp>/`).
+- Writes `~/.claude/hooks/.handoff-manifest.json`: version, time and a SHA-256 per installed file, which `--check` compares.
+- Records everything it added in `~/.claude/hooks/.claude-handoff-install.json`, so uninstall removes exactly that.
 - Merges into `~/.claude/settings.json` (backup `settings.json.bak-<timestamp>`):
   - a PreCompact hook (timeout 150) and a PostToolUse hook (matcher `*`, timeout 5);
-  - a SessionStart `compact` group with the three inject commands and the three `--ledger --part 1/2/3` commands (timeout 10), and `startup` and `resume` groups with the three `--ledger` commands;
+  - a SessionStart `compact` group with the three inject commands and the three `--ledger --part 1/2/3` commands (timeout 10), and `startup` and `resume` groups with the three `--ledger` commands plus `postcompact-inject.py --check` (timeout 5);
   - a `SessionEnd` hook running `recall.py session-end` (timeout 5);
   - `permissions.allow` entries `Edit(~/.local/state/claude-handoffs/**)` (so the model can write its handoff without a prompt) and `Bash(python3 ~/.claude/hooks/recall.py:*)` (so it can run recall without a prompt);
   - `env.CLAUDE_CODE_AUTO_COMPACT_WINDOW` = `"400000"` unless already set (`--window N` picks another value, `--no-window` leaves it alone).
 - Creates `~/.local/state/claude-handoffs/`.
 - Optionally runs `ollama pull bge-m3`.
 - On macOS, unless `--no-nightly`: writes the LaunchAgent `~/Library/LaunchAgents/com.lossless-handoff.recall-index.plist` (daily 03:30, runs `recall.py index --all --max-seconds 3000`, log `~/.local/state/claude-handoffs/recall/index-all.log`) and loads it. On Linux it prints the equivalent crontab line and does not edit your crontab.
+- On macOS, unless `--no-nightly`: writes and loads the LaunchAgent `~/Library/LaunchAgents/com.lossless-handoff.handoff-reconcile.plist` (daily 04:15, runs `precompact-handoff.py --reconcile --prove --days 30`, log `~/.local/state/claude-handoffs/reconcile.log`). On Linux it prints that crontab line too (`15 4 * * * python3 ~/.claude/hooks/precompact-handoff.py --reconcile --prove --days 30 >> ~/.local/state/claude-handoffs/reconcile.log 2>&1`, with your real path).
+- With `--managed-hooks` (standalone): stages a managed-settings file in the state folder and prints the `sudo install -m 644 ...` command; it changes nothing else and never runs sudo.
 - Starts `recall.py index --all` in the background.
 
 Your other hooks and settings are left alone: new entries are appended next to existing ones. If the same hook scripts are already registered from another path, install prints those commands and exits 2, because every hook would run twice; remove them, or pass `--force`. Install fails with a clear message if `python3` is missing or `settings.json` is not valid JSON.
@@ -244,6 +328,13 @@ Your other hooks and settings are left alone: new entries are appended next to e
 | `recall-index.json`, `recall/` | Recall caches: which transcripts belong to which project, and the meaning index (`<project>.sqlite`, `index.log`). Safe to delete. |
 | `health.jsonl` | One JSON line per compaction: time, trigger, agent file fresh/stale/absent, fallback result, ledger result (`ok`, `unchanged`, `failed`, `locked`, `disabled`) and counts, duration, size, status `ok` / `reduced` / `degraded`. No message text or paths. Rotates at 5,000 lines. |
 | `<sid>-last-health.json`, `<sid>-degraded.json` | Per-session status and degraded reasons. |
+| `<sid>-pending.json` | Marker while PreCompact runs; removed by the health line. |
+| `<sid>-a-<agent_id>*` | The same files for a compacting subagent (handoff, latest, pending, note). Health rows for subagents carry `agent_id` and `agent_type`. |
+| `reconcile.json`, `reconcile.log` | Last reconcile result (with the once-only notice marker for `--check`) and the nightly job's output. |
+| `receipts.jsonl`, `proofs.jsonl`, `proof-report.md`, `proof-notice.json` | Proof: one receipt per injected handoff, one verdict per receipt, the report, and the once-only alert marker. |
+| `claims-status.json`, `claims-report.md`, `claims-notice.json` | Claims register evaluation and its once-only alert marker. |
+| `managed-settings.json` | Only after `install.sh --managed-hooks`: the file you copy to the system location. |
+| `~/.claude/hooks/.handoff-manifest.json` | Installed hook file hashes (not in the state folder). |
 | `projects/<project>-<hash>/decisions.md` | The project's decisions list (kept by uninstall). Beside it: `decisions.<timestamp>.md`, `decisions.state.json`, `decisions.lock`. |
 
 Files older than 14 days are cleaned up automatically. The directory is outside `~/.claude/` because Claude Code refuses model writes under that path ([ADR 0008](https://github.com/pratikgh0se/machine-setup/blob/main/docs/adr/0008-handoffs-directory-under-local-state.md)).
@@ -294,6 +385,8 @@ A new line with `"trigger": "manual"` means the PreCompact hook fired. In a norm
 
 - Logs and health live in `~/.local/state/claude-handoffs/` (or `$HANDOFF_STATE_DIR`). Start with `tail -n 5 ~/.local/state/claude-handoffs/health.jsonl`: one line per compaction with `status` `ok`, `reduced` or `degraded`.
 - `<sid>-degraded.json` and `<sid>-last-health.json` in the same folder say why a compaction was degraded.
+- A `HANDOFF CHECK:` line at session start names what is wrong (hook not wired, file missing or changed, version mismatch, compactions without a handoff). Run `./install.sh` again, then restart open sessions. `proof failed` and `claims` lines point at `proof-report.md` and `claims-report.md` in the state folder.
+- A `HANDOFF RECOVERED` line at the top of the injected text means PreCompact did not finish and the handoff was rebuilt from the transcript without a model call; check `health.jsonl` and `hooks-error.jsonl`.
 - No health line after `/compact`: restart Claude Code (hooks load at startup), then check `~/.claude/settings.json` has the `PreCompact` entry and that `~/.claude/hooks/precompact-handoff.py` exists.
 - No nudge: it only fires above 75% of the window (300k for 400k) and needs a usage entry in the transcript; check `CLAUDE_CODE_AUTO_COMPACT_WINDOW`.
 - Search says `keyword only`: Ollama is not running or `bge-m3` is not pulled. Start Ollama and run `ollama pull bge-m3`.
@@ -305,7 +398,8 @@ A new line with `"trigger": "manual"` means the PreCompact hook fired. In a norm
 - **One heavy user so far.** All numbers come from the author's machine. Whether it helps other workflows is untested.
 - **Handoffs can be cut.** 20% of handoffs (43 of 217) hit the 14,000-character size cap and were truncated. 15% were `reduced` and 2% `degraded`, and the nightly self-test failed 2 of 34 runs.
 - **Recall is new.** It has existed since 2026-11-12, and its use so far is mostly the author's, much of it while building and testing it. The meaning half is a minority of wins (4 of 26 searches had a meaning-only top hit), and 143 meaning hits count lines shown, not proof they were useful.
-- **Platform.** The nightly index job is a macOS LaunchAgent; on Linux you add the printed cron line yourself. Windows is not supported. The nightly self-test mentioned above is part of the author's own setup and is not included in this repo.
+- **Misses still happen.** 4 of 192 main compactions in the 30-day reconcile had no handoff (see [Proof, not promises](#proof-not-promises)); the early write, recovery and `--check` exist to shrink and surface them, not to promise zero. Receipts only exist from the first compaction after install, so proof rates start small. C7 and C8 are dated one-off studies, not live rates.
+- **Platform.** The nightly jobs (index and reconcile-and-prove) are macOS LaunchAgents; on Linux you add the printed cron lines yourself. Windows is not supported. The nightly self-test mentioned above is part of the author's own setup and is not included in this repo.
 - **AI-graded evals.** The quizzes and benchmarks were written and graded by models, on one user's projects. The 19% cost estimate is a single 4.7-day, one-user figure against a modelled counterfactual, not a bill.
 - The nudge only works if the model obeys it. If it does not, you still get the fresh summary, which is lossier than the model's own note.
 - The fresh summary and the decisions update each run `claude -p --model sonnet` and use some of your quota (75 s and 100 s timeouts by default).
@@ -319,10 +413,11 @@ A new line with `"trigger": "manual"` means the PreCompact hook fired. In a norm
 ./uninstall.sh
 ```
 
-Removes exactly the hook entries install added (matched by command path; other hooks in those groups stay), the allow rules and the window value if install added them, the macOS LaunchAgent, and the hook files including `recall.py`, after backing up settings. Handoff files, indexes and the project decisions lists under `~/.local/state/claude-handoffs/projects/` stay; delete that folder yourself if you want them gone. Backups are kept.
+Removes exactly the hook entries install added (matched by command path; other hooks in those groups stay), the allow rules and the window value if install added them, the macOS LaunchAgents (index and reconcile), the `--check` entries, and the hook files including `recall.py`, `claims.json` and the manifest, after backing up settings. A system managed-settings file is never touched (it needs sudo); uninstall tells you if one is present. Handoff files, receipts, proofs, indexes and the project decisions lists under `~/.local/state/claude-handoffs/` stay; delete that folder yourself if you want them gone. Backups are kept.
 
 ## More
 
+- Reliability notes (misses, subagents, headless runs, proof): the sections above; the longer write-up is `docs/handoff-reliability.md` in [machine-setup](https://github.com/pratikgh0se/machine-setup).
 - Behaviour contract for these hooks: `specs/handoff-hooks-spec.md` in [machine-setup](https://github.com/pratikgh0se/machine-setup).
 - Decisions: [ADR 0007](https://github.com/pratikgh0se/machine-setup/blob/main/docs/adr/0007-handoff-degraded-vs-reduced.md) (degraded vs reduced), [ADR 0011](https://github.com/pratikgh0se/machine-setup/blob/main/docs/adr/0011-handoff-nudge-bounded-channel.md) (the nudge).
 
