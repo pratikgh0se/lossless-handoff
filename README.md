@@ -42,7 +42,7 @@ The installer sets up, in one go:
 - a first index of all your projects, started in the background;
 - optionally, `ollama pull bge-m3` for meaning search, if `ollama` is on your PATH.
 
-Options: `--window N`, `--no-window`, `--yes` (pull bge-m3 without asking), `--no-nightly`, `--managed-hooks` (see [Headless runs](#headless-runs)), `--canary` (opt-in nightly end-to-end test, see below), `--dry-run`, `--force`, `--version`, `--help`. Install is idempotent. Full details are in [What install changes](#what-install-changes).
+Options: `--window N`, `--no-window`, `--yes` (pull bge-m3 without asking), `--no-nightly`, `--no-nudge` (skip the context nudge, and remove one from an earlier install), `--managed-hooks` (see [Headless runs](#headless-runs)), `--canary` (opt-in nightly end-to-end test, see below), `--dry-run`, `--force`, `--version`, `--help`. Use `--no-nudge` if another tool already nudges you before compaction. Install is idempotent. Full details are in [What install changes](#what-install-changes).
 
 ## Quick start
 
