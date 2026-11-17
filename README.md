@@ -232,7 +232,7 @@ A hook cannot force Claude Code to run it, so a handoff can be missed (the hook 
 | **`--check`** | At session `startup` and `resume`, `postcompact-inject.py --check` prints one `HANDOFF CHECK:` line when a hook is not wired, a hook file is missing or changed since install (it compares the manifest), the two hooks' versions differ, or reconcile found compactions without a handoff. It prints nothing when all is well. |
 | **Nightly reconcile and proof** | At 04:15, `precompact-handoff.py --reconcile --prove --days 30` counts every `compact_boundary` in your transcripts against `health.jsonl` and proves each receipt (see [Proof, not promises](#proof-not-promises)). |
 
-Restart open Claude Code sessions after installing: hooks load when a session starts.
+Restart open Claude Code sessions after installing: hooks load when a session starts. The longer write-up is [docs/handoff-reliability.md](docs/handoff-reliability.md).
 
 ## Subagents
 
@@ -417,8 +417,8 @@ Removes exactly the hook entries install added (matched by command path; other h
 
 ## More
 
-- Reliability notes (misses, subagents, headless runs, proof): the sections above; the longer write-up is `docs/handoff-reliability.md` in [machine-setup](https://github.com/pratikgh0se/machine-setup).
-- Behaviour contract for these hooks: `specs/handoff-hooks-spec.md` in [machine-setup](https://github.com/pratikgh0se/machine-setup).
+- Reliability notes (misses, subagents, headless runs, proof, state files): [docs/handoff-reliability.md](docs/handoff-reliability.md).
+- Behaviour contract these hooks and their tests are written from: [docs/spec.md](docs/spec.md).
 - Decisions: [ADR 0007](https://github.com/pratikgh0se/machine-setup/blob/main/docs/adr/0007-handoff-degraded-vs-reduced.md) (degraded vs reduced), [ADR 0011](https://github.com/pratikgh0se/machine-setup/blob/main/docs/adr/0011-handoff-nudge-bounded-channel.md) (the nudge).
 
 MIT license, copyright Pratik Ghose. See `LICENSE`. Security notes: `SECURITY.md`. Changes: `CHANGELOG.md`.
