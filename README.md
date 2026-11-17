@@ -350,6 +350,16 @@ tail -n 3 ~/.local/state/claude-handoffs/health.jsonl
 
 A new line with `"trigger": "manual"` means the PreCompact hook fired. In a normal session, run `/compact` and look at the same file. `status` is `ok` (model handoff used), `reduced` (fresh summary used instead) or `degraded` (facts only). You can also run `bash tests/smoke.sh`; it uses a temporary HOME and does not touch your real settings.
 
+To test a real compaction without touching your own install:
+
+1. Install into a temporary home with `HOME=<tmp> ./install.sh --no-nightly`, so no LaunchAgent is written.
+2. Keep your real HOME for the run, because `claude` reads its login from there.
+3. Run `claude -p --setting-sources local --settings <tmp>/.claude/settings.json ...` from a fresh folder, with `HANDOFF_STATE_DIR=<tmp>/.local/state/claude-handoffs`. This switches your own hooks off and keeps all handoff files in the temporary folder.
+4. To force a compaction quickly, set `CLAUDE_CODE_AUTO_COMPACT_WINDOW=30000` in the process environment. The value in the settings file alone did not force one in our test.
+5. Check with `HANDOFF_STATE_DIR=... python3 <tmp>/.claude/hooks/precompact-handoff.py --prove --days 1`.
+
+Use a folder name that contains `handoff-canary`, so that the nightly check on your real install does not count these compactions as missed.
+
 ## Configuration
 
 | Variable | Effect |
