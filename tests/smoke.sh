@@ -30,6 +30,10 @@ cp "$S" "$T/original.json"
 
 "$ROOT/install.sh" --no-nightly --dry-run >/dev/null
 cmp -s "$S" "$T/original.json" || fail "dry-run changed settings"
+"$ROOT/install.sh" --dry-run >"$T/dry-nightly.out"
+grep -Eq "handoff-reconcile|--reconcile --prove --days 30" "$T/dry-nightly.out" || fail "dry-run does not mention the nightly reconcile job"
+[ ! -e "$HOME/Library/LaunchAgents" ] || fail "dry-run wrote a LaunchAgent"
+[ ! -e "$H/claims.json" ] || fail "dry-run installed files"
 ok "dry-run changes nothing"
 
 "$ROOT/install.sh" --no-nightly >"$T/install1.out"
@@ -51,14 +55,30 @@ assert sorted(ss) == ["compact", "resume", "startup"], ss
 pi = "python3 %s/postcompact-inject.py" % h
 assert ss["compact"] == [pi + " --part 1", pi + " --part 2", pi + " --part 3", pi + " --ledger --part 1", pi + " --ledger --part 2", pi + " --ledger --part 3"], ss
 led3 = [pi + " --ledger --part %d" % n for n in (1, 2, 3)]
-assert ss["startup"] == ["echo hello"] + led3 and ss["resume"] == led3, ss
-assert all(x["timeout"] == 10 for g in d["hooks"]["SessionStart"] for x in g["hooks"] if "inject" in x["command"])
+chk = pi + " --check"
+assert ss["startup"] == ["echo hello"] + led3 + [chk] and ss["resume"] == led3 + [chk], ss
+assert all(x["timeout"] == 10 for g in d["hooks"]["SessionStart"] for x in g["hooks"] if "inject" in x["command"] and "--check" not in x["command"])
+assert all(x["timeout"] == 5 for g in d["hooks"]["SessionStart"] for x in g["hooks"] if x["command"].endswith("--check"))
+assert ss["compact"].count(chk) == 0
 assert d["hooks"]["PostToolUse"][0]["hooks"][0]["timeout"] == 5
 assert "Edit(~/.local/state/claude-handoffs/**)" in d["permissions"]["allow"]
 assert d["permissions"]["allow"].count("Bash(python3 ~/.claude/hooks/recall.py:*)") == 1
 assert "Bash(ls:*)" in d["permissions"]["allow"]
 PY
 [ -f "$H/recall.py" ] || fail "recall.py not installed"
+[ -f "$H/claims.json" ] || fail "claims.json not installed"
+python3 - "$H" <<'PY'
+import hashlib, json, sys
+h = sys.argv[1]
+m = json.load(open(h + "/.handoff-manifest.json"))
+assert m["version"] == "1.10.0" and m["installed_at"], m
+assert sorted(m["files"]) == ["claims.json", "handoff-nudge.py", "postcompact-inject.py", "precompact-handoff.py", "recall.py"], m
+for n, want in m["files"].items():
+    assert hashlib.sha256(open(h + "/" + n, "rb").read()).hexdigest() == want, n
+mk = json.load(open(h + "/.claude-handoff-install.json"))
+assert mk["check_added"] is True and mk["manifest_written"] is True, mk
+PY
+ok "claims.json installed, manifest written (hashes match), marker records them"
 grep -q "building in the background" "$T/install1.out" || fail "install did not say the first index is building"
 grep -q "https://ollama.com/download" "$T/install1.out" || fail "install did not print the Ollama hint"
 grep -q "ollama.com/download" "$T/install1.out" && grep -q "skipped (--no-nightly)" "$T/install1.out" || fail "install did not report skipping the nightly job"
@@ -74,6 +94,22 @@ PY
 for _ in 1 2 3 4 5 6 7 8 9 10; do [ -e "$ST/recall/index-all.log" ] && break; sleep 1; done
 [ -e "$ST/recall/index-all.log" ] || fail "first index did not start (no index-all.log)"
 ok "SessionEnd hook registered and recorded, ollama hint, no nightly job, first index started"
+# --check: a clean install prints nothing; a hook file changed since install is reported
+o="$(python3 "$H/postcompact-inject.py" --check 2>&1)" || fail "--check exited non-zero"
+[ -z "$o" ] || fail "--check printed output on a clean install: $o"
+cp "$H/claims.json" "$T/claims.keep"; printf ' ' >> "$H/claims.json"
+o="$(python3 "$H/postcompact-inject.py" --check 2>&1)" || fail "--check exited non-zero on a changed file"
+echo "$o" | grep -q "^HANDOFF CHECK: .*claims.json differs from the installed manifest" || fail "--check missed a changed file: $o"
+cp "$T/claims.keep" "$H/claims.json"
+[ -z "$(python3 "$H/postcompact-inject.py" --check 2>&1)" ] || fail "--check still reports after restoring the file"
+ok "--check: silent on a clean install, reports a changed hook file"
+# reconcile and prove on an empty HOME: run and exit 0
+EH="$T/emptyhome"; mkdir -p "$EH"
+HOME="$EH" python3 "$H/precompact-handoff.py" --reconcile >"$T/rec.out" 2>&1 || fail "--reconcile exited non-zero on an empty HOME: $(cat "$T/rec.out")"
+HOME="$EH" python3 "$H/precompact-handoff.py" --prove >"$T/prove.out" 2>&1 || fail "--prove exited non-zero on an empty HOME: $(cat "$T/prove.out")"
+HOME="$EH" python3 "$H/precompact-handoff.py" --reconcile --prove --days 30 >/dev/null 2>&1 || fail "--reconcile --prove --days 30 exited non-zero"
+HOME="$EH" python3 "$H/precompact-handoff.py" --claims >/dev/null 2>&1 || fail "--claims exited non-zero"
+ok "--reconcile and --prove run and exit 0 on an empty HOME"
 # SessionEnd hook: empty input, silent, exit 0
 o="$(printf '{}' | python3 "$H/recall.py" session-end 2>&1)" || fail "session-end exited non-zero"
 [ -z "$o" ] || fail "session-end printed output: $o"
@@ -326,6 +362,53 @@ printf '{"session_id":"nsess","transcript_path":"%s","tool_name":"Write","tool_i
 python3 -c "import json,sys; m=json.load(open(sys.argv[1])); assert m['agentWrittenAt'] and m['nudgeCount']==2" "$ST/nsess-agent.meta.json"
 ok "agent write recorded in meta"
 
+# F46: a subagent compaction (agent_id set) writes its own files and leaves the main ones alone
+SD="$T/subs"; mkdir -p "$SD/subsess/subagents"
+python3 - "$SD" <<'PY'
+import json, sys
+d = sys.argv[1]
+def w(path, text):
+    rows = [{"type": "user", "message": {"content": text}},
+            {"type": "assistant", "message": {"content": [{"type": "text", "text": "Noted."}]}}]
+    open(path, "w").write("\n".join(json.dumps(r) for r in rows) + "\n")
+w(d + "/subsess.jsonl", "MAINMARK please fix the importer")
+w(d + "/subsess/subagents/agent-ag7.jsonl", "SUBMARK summarise the schema")
+PY
+mainin="$(printf '{"session_id":"subsess","cwd":"%s","transcript_path":"%s","trigger":"auto"}' "$T" "$SD/subsess.jsonl")"
+subin="$(printf '{"session_id":"subsess","agent_id":"ag7","agent_type":"general-purpose","cwd":"%s","transcript_path":"%s","trigger":"auto"}' "$T" "$SD/subsess.jsonl")"
+printf '%s' "$mainin" | HANDOFF_LEDGER=0 python3 "$H/precompact-handoff.py" >/dev/null 2>&1 || fail "main precompact failed"
+[ -s "$ST/subsess-latest.md" ] || fail "main handoff not written"
+grep -q "MAINMARK" "$ST/subsess-latest.md" || fail "main handoff lacks its own message"
+( cd "$ST" && cksum subsess-latest.md; ls subsess-* | sort ) > "$T/main.before"
+printf '%s' "$subin" | HANDOFF_LEDGER=0 python3 "$H/precompact-handoff.py" >"$T/sub.out" 2>"$T/sub.err" || fail "subagent precompact exited non-zero"
+[ ! -s "$T/sub.out" ] && [ ! -s "$T/sub.err" ] || fail "subagent precompact printed output"
+[ -s "$ST/subsess-a-ag7-latest.md" ] || fail "no subagent handoff subsess-a-ag7-latest.md (have: $(ls "$ST" | tr '\n' ' '))"
+grep -q "SUBMARK" "$ST/subsess-a-ag7-latest.md" || fail "subagent handoff lacks the subagent's own message"
+! grep -q "MAINMARK" "$ST/subsess-a-ag7-latest.md" || fail "subagent handoff holds main-session text"
+( cd "$ST" && cksum subsess-latest.md; ls subsess-* | grep -v -- "-a-ag7" | sort ) > "$T/main.after"
+cmp -s "$T/main.before" "$T/main.after" || fail "a subagent event changed the main session's files"
+tail -n 1 "$ST/health.jsonl" | grep -q '"agent_id": *"ag7"' || fail "health row lacks the agent_id"
+ok "subagent PreCompact writes <sid>-a-<agent_id> files, main files untouched"
+
+# --managed-hooks: stages a file, prints the sudo command, runs no sudo, changes no settings
+cp "$S" "$T/before-managed.json"
+printf '{"allowedMcpServers": []}' > "$T/ms-sys.json"; cp "$T/ms-sys.json" "$T/ms-sys.orig"
+HANDOFF_MANAGED_SETTINGS_PATH="$T/ms-sys.json" "$ROOT/install.sh" --managed-hooks >"$T/mh.out" || fail "--managed-hooks failed"
+grep -q "^sudo install -m 644 .*managed-settings.json\" \"$T/ms-sys.json\"" "$T/mh.out" || fail "--managed-hooks did not print the sudo install command: $(cat "$T/mh.out")"
+grep -q "Restart open Claude Code sessions: hooks load when a session starts." "$T/mh.out" || fail "--managed-hooks lacks the restart line"
+cmp -s "$T/ms-sys.json" "$T/ms-sys.orig" || fail "--managed-hooks wrote the system file"
+cmp -s "$S" "$T/before-managed.json" || fail "--managed-hooks changed user settings"
+python3 - "$ST/managed-settings.json" "$H" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1])); h = sys.argv[2]
+assert d["allowedMcpServers"] == []
+assert [g["hooks"][0]["command"] for g in d["hooks"]["PreCompact"]] == ["python3 %s/precompact-handoff.py" % h]
+ss = {g["matcher"]: [x["command"] for x in g["hooks"]] for g in d["hooks"]["SessionStart"]}
+assert sorted(ss) == ["compact", "resume", "startup"] and ss["startup"][-1].endswith("postcompact-inject.py --check"), ss
+assert d["hooks"]["SessionEnd"][0]["hooks"][0]["command"].endswith("recall.py session-end")
+PY
+ok "--managed-hooks stages managed settings, prints the sudo command, touches nothing else"
+
 # Conflict: same hooks registered from another path -> exit 2, settings untouched; --force installs
 H2="$T/home2"; mkdir -p "$H2/.claude"
 cat > "$H2/.claude/settings.json" <<'JSON'
@@ -390,8 +473,10 @@ a = json.load(open(sys.argv[1], encoding="utf-8")); b = json.load(open(sys.argv[
 assert a == b, (a, b)
 PY
 python3 -c "import json,sys; assert 'SessionEnd' not in json.load(open(sys.argv[1])).get('hooks', {})" "$S" || fail "SessionEnd hook left behind"
-for f in precompact-handoff.py postcompact-inject.py handoff-nudge.py recall.py; do [ ! -e "$H/$f" ] || fail "$f left behind"; done
+for f in precompact-handoff.py postcompact-inject.py handoff-nudge.py recall.py claims.json .handoff-manifest.json .claude-handoff-install.json; do [ ! -e "$H/$f" ] || fail "$f left behind"; done
+[ ! -e "$HOME/Library/LaunchAgents/com.lossless-handoff.handoff-reconcile.plist" ] || fail "reconcile LaunchAgent left behind"
 [ -d "$ST" ] || fail "state dir should be kept"
+[ -s "$ST/health.jsonl" ] && [ -s "$ST/subsess-a-ag7-latest.md" ] || fail "uninstall deleted state data"
 "$ROOT/uninstall.sh" >/dev/null
 ok "uninstall removes recall.py and its allow rule, restores settings; second uninstall is a no-op"
 echo "ALL PASSED"

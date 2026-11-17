@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Lossless Handoff uninstaller (formerly claude-handoff): removes exactly what install.sh added.
 # Usage: ./uninstall.sh [--dry-run]
-# Handoff files, recall indexes and project ledgers in ~/.local/state/claude-handoffs are kept (delete that folder yourself if you want them gone).
+# Handoff files, receipts and proofs, recall indexes and project ledgers in ~/.local/state/claude-handoffs are kept (delete that folder yourself if you want them gone).
 set -euo pipefail
 
 DRY=0
@@ -33,6 +33,7 @@ ours |= {"python3 %s/postcompact-inject.py --part %d" % (hooks_dir, n) for n in 
 ours |= {"python3 %s/postcompact-inject.py --ledger --part %d" % (hooks_dir, n) for n in (1, 2, 3)}
 ours.add("python3 %s/postcompact-inject.py --ledger" % hooks_dir)
 ours.add("python3 %s/postcompact-inject.py" % hooks_dir)  # --part-less form
+ours.add("python3 %s/postcompact-inject.py --check" % hooks_dir)  # hooks 1.10.0 install check (startup, resume)
 sess_end = "python3 %s/recall.py session-end" % hooks_dir
 allow_rule = "Edit(~/.local/state/claude-handoffs/**)"
 recall_rule = "Bash(python3 ~/.claude/hooks/recall.py:*)"
@@ -130,7 +131,29 @@ if [ -e "$PLIST" ]; then
   fi
 fi
 
-for f in precompact-handoff.py postcompact-inject.py handoff-nudge.py recall.py .claude-handoff-install.json; do
+RLABEL="com.lossless-handoff.handoff-reconcile"
+RPLIST="$HOME/Library/LaunchAgents/$RLABEL.plist"
+if [ -e "$RPLIST" ]; then
+  say "boot out and remove LaunchAgent $RLABEL"
+  if [ "$DRY" = 0 ]; then
+    launchctl bootout "gui/$(id -u)/$RLABEL" >/dev/null 2>&1 || true
+    rm "$RPLIST"
+  fi
+fi
+
+# a managed-settings file staged by install.sh --managed-hooks lives in the state dir (kept); the system copy is yours to remove
+if [ -f "$HOOKS_DIR/.claude-handoff-install.json" ] && grep -q managed_settings_file "$HOOKS_DIR/.claude-handoff-install.json"; then
+  case "$(uname -s)" in
+    Darwin) MS_SYS="/Library/Application Support/ClaudeCode/managed-settings.json" ;;
+    *) MS_SYS="/etc/claude-code/managed-settings.json" ;;
+  esac
+  [ -n "${HANDOFF_MANAGED_SETTINGS_PATH:-}" ] && MS_SYS="$HANDOFF_MANAGED_SETTINGS_PATH"
+  if [ -f "$MS_SYS" ]; then
+    echo "Managed settings: $MS_SYS may still hold the handoff hook entries. This script never uses sudo; edit that file yourself (or remove it if it holds nothing else)."
+  fi
+fi
+
+for f in precompact-handoff.py postcompact-inject.py handoff-nudge.py recall.py claims.json .handoff-manifest.json .claude-handoff-install.json; do
   if [ -e "$HOOKS_DIR/$f" ]; then
     say "remove $HOOKS_DIR/$f"
     [ "$DRY" = 1 ] || rm "$HOOKS_DIR/$f"
@@ -141,5 +164,6 @@ echo "kept $STATE_DIR (handoffs and health.jsonl); delete it yourself if you do 
 echo "kept the recall indexes and logs under $STATE_DIR/recall/ (delete that folder yourself to drop them)"
 echo "kept the project decision ledgers under $STATE_DIR/projects/ (delete that folder yourself to forget them)"
 for b in "$HOOKS_DIR"/.claude-handoff-backup-*; do [ -e "$b" ] && echo "kept backup: $b"; done
-echo "Done. Restart Claude Code."
+echo "kept proof receipts, reports and claims status under $STATE_DIR (delete the folder yourself to drop them)"
+echo "Done. Restart open Claude Code sessions: hooks load when a session starts."
 exit 0
