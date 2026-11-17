@@ -10,7 +10,7 @@ Copies the hooks (three handoff hooks plus the recall command) into ~/.claude/ho
 Also sets up automatic recall indexing: an end-of-chat hook, an optional bge-m3 model pull, a nightly job (macOS) and a first index.
 Hooks 1.10.0 add: an install check at session start, a nightly reconcile and proof job (macOS), and an install manifest.
 
-Usage: ./install.sh [--dry-run] [--force] [--window N] [--no-window] [--yes] [--no-nightly] [--canary] [--managed-hooks] [--version] [-h|--help]
+Usage: ./install.sh [--dry-run] [--force] [--window N] [--no-window] [--yes] [--no-nightly] [--no-nudge] [--canary] [--managed-hooks] [--version] [-h|--help]
 
   --dry-run     show what would change, change nothing
   --window N    set CLAUDE_CODE_AUTO_COMPACT_WINDOW to N tokens (default 400000;
@@ -20,6 +20,8 @@ Usage: ./install.sh [--dry-run] [--force] [--window N] [--no-window] [--yes] [--
                 it, an interactive run asks y/N and a non-interactive run skips it
   --no-nightly  do not install the nightly jobs (macOS LaunchAgents: recall index 03:30,
                 reconcile and proof 04:15); on Linux the crontab lines are not printed
+  --no-nudge    do not install the context nudge (handoff-nudge.py). Use it if another tool already
+                nudges you before compaction. It also removes a nudge file and entry from an earlier install
   --canary      also install the opt-in nightly canary (a real headless Claude Code run past a
                 compaction; spends model money, about \$0.03-0.10 per run): copies it to
                 ~/.claude/hooks/handoff-canary/ and adds a LaunchAgent (03:30) on macOS or prints a
@@ -38,7 +40,7 @@ search still works (https://ollama.com/download). Ollama itself is never install
 EOF
 }
 
-DRY=0; FORCE=0; WINDOW=400000; SETWINDOW=1; YES=0; NONIGHTLY=0; MANAGED=0; CANARY=0
+DRY=0; FORCE=0; WINDOW=400000; SETWINDOW=1; YES=0; NONIGHTLY=0; MANAGED=0; CANARY=0; NONUDGE=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --dry-run) DRY=1 ;;
@@ -47,6 +49,7 @@ while [ $# -gt 0 ]; do
     --force) FORCE=1 ;;
     --yes|-y) YES=1 ;;
     --no-nightly) NONIGHTLY=1 ;;
+    --no-nudge) NONUDGE=1 ;;
     --managed-hooks) MANAGED=1 ;;
     --canary) CANARY=1 ;;
     --version) echo "Lossless Handoff $VERSION"; exit 0 ;;
@@ -71,6 +74,8 @@ RPLIST="$HOME/Library/LaunchAgents/$RLABEL.plist"
 MARKER="$HOOKS_DIR/.claude-handoff-install.json"
 MANIFEST="$HOOKS_DIR/.handoff-manifest.json"
 FILES="precompact-handoff.py postcompact-inject.py handoff-nudge.py recall.py claims.json"
+# --no-nudge: the nudge file is not part of the install, so the manifest does not list it
+if [ "$NONUDGE" = 1 ]; then FILES="precompact-handoff.py postcompact-inject.py recall.py claims.json"; fi
 
 say() { if [ "$DRY" = 1 ]; then echo "[dry-run] $*"; else echo "$*"; fi; }
 
@@ -152,7 +157,7 @@ PY
 fi
 
 # 3. settings merge
-HC_DRY="$DRY" HC_FORCE="$FORCE" HC_WINDOW="$WINDOW" HC_SETWINDOW="$SETWINDOW" HC_SETTINGS="$SETTINGS" \
+HC_NONUDGE="$NONUDGE" HC_DRY="$DRY" HC_FORCE="$FORCE" HC_WINDOW="$WINDOW" HC_SETWINDOW="$SETWINDOW" HC_SETTINGS="$SETTINGS" \
 HC_HOOKS="$HOOKS_DIR" HC_TS="$TS" python3 - <<'PY'
 import json, os, shutil, sys
 dry = os.environ["HC_DRY"] == "1"
@@ -230,10 +235,28 @@ else:
     groups.append({"hooks": [{"type": "command", "command": pre, "timeout": 150}]})
     changes.append("add PreCompact hook (timeout 150)")
 
-groups = hooks.setdefault("PostToolUse", [])
-if has_cmd(groups, nudge):
+if os.environ["HC_NONUDGE"] == "1":
+    # remove only the entry whose command is exactly ours; drop a group only if it ends up empty
+    ptu = hooks.get("PostToolUse")
+    if isinstance(ptu, list) and has_cmd(ptu, nudge):
+        kept = []
+        for g in ptu:
+            if isinstance(g, dict) and isinstance(g.get("hooks"), list):
+                g["hooks"] = [h for h in g["hooks"] if not (isinstance(h, dict) and h.get("command") == nudge)]
+                if not g["hooks"]:
+                    continue
+            kept.append(g)
+        if kept:
+            hooks["PostToolUse"] = kept
+        else:
+            del hooks["PostToolUse"]
+        changes.append("remove PostToolUse nudge hook (--no-nudge)")
+    else:
+        changes.append("PostToolUse nudge hook not installed (--no-nudge)")
+elif has_cmd(hooks.setdefault("PostToolUse", []), nudge):
     changes.append("PostToolUse nudge hook already present")
 else:
+    groups = hooks["PostToolUse"]
     groups.append({"matcher": "*", "hooks": [{"type": "command", "command": nudge, "timeout": 5}]})
     changes.append("add PostToolUse nudge hook (matcher *, timeout 5)")
 
@@ -389,6 +412,16 @@ for f in $FILES; do
     case "$f" in *.json) chmod 644 "$target" ;; *) chmod 755 "$target" ;; esac
   fi
 done
+
+# --no-nudge: remove a nudge file left by an earlier install
+if [ "$NONUDGE" = 1 ]; then
+  if [ -e "$HOOKS_DIR/handoff-nudge.py" ]; then
+    say "remove hook: $HOOKS_DIR/handoff-nudge.py (--no-nudge)"
+    [ "$DRY" = 1 ] || rm -f "$HOOKS_DIR/handoff-nudge.py"
+  else
+    say "nudge hook: skipped (--no-nudge)"
+  fi
+fi
 
 # manifest: a hash per installed hook file; the session-start `postcompact-inject.py --check` compares it
 if [ "$DRY" = 1 ]; then say "write manifest: $MANIFEST"; else

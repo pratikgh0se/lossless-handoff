@@ -4,6 +4,7 @@ Lossless Handoff, formerly claude-handoff.
 
 ## Unreleased
 
+- `install.sh --no-nudge` does not install the context nudge (`handoff-nudge.py` and its PostToolUse entry) and removes one left by an earlier install. New F50 in `docs/spec.md`, ACs 208-211.
 - CI runs the code-blind acceptance tests from the new repository [lossless-handoff-tests](https://github.com/pratikgh0se/lossless-handoff-tests) on Ubuntu and macOS, pinned by `tests.ref`. The tests moved there from bento-mods-tests with their history, and were ported to this repository's layout (`LOSSLESS_HANDOFF_REPO`, `install.sh` in a temporary HOME).
 - `docs/spec.md`: the canary plist runs the `hooks/handoff-canary.sh` wrapper (AC 71 amended); the machine-setup `--launchd`, `--render-only`, `LABEL_PREFIX` and `deps.tsv` statements are withdrawn; new F49 uninstall ACs 202-207.
 - README: a Tests part (the three CI layers, the code-blind rule, `tests.ref`, how to run the acceptance tests locally).

@@ -732,3 +732,15 @@ Why: public numbers were typed by hand and one ("0 hook errors") overstated what
 - 205. Canary removed. After `install.sh --no-nightly --canary`, then running the canary once (so Python can write a `handoff-canary/__pycache__/`), `uninstall.sh` removes `~/.claude/hooks/handoff-canary/` (the whole folder), `~/.claude/hooks/handoff-canary.sh` and, on macOS, `~/Library/LaunchAgents/com.lossless-handoff.handoff-canary.plist`. It keeps `~/.local/state/handoff-canary/`.
 - 206. LaunchAgents removed (macOS). After `install.sh` with the nightly jobs, the plists `com.lossless-handoff.recall-index` and `com.lossless-handoff.handoff-reconcile` exist in `~/Library/LaunchAgents/`; after `uninstall.sh` neither exists.
 - 207. No launchctl in test mode. Put a fake `launchctl` first on PATH that appends its arguments to a file. With `LOSSLESS_HANDOFF_NO_LAUNCHCTL=1`, `install.sh --canary` (nightly jobs on) and then `uninstall.sh` never call it (the file stays absent or empty), and on macOS the plist files are still written and then removed. Without the variable, on macOS, the same install calls it with `bootstrap` at least once.
+
+## F50 Install without the nudge (2026-11-17)
+
+Why: some users already have a context nudge from another tool (for example a Claude Code plugin). Two nudges are noise. `install.sh --no-nudge` installs everything except the nudge.
+
+- `install.sh --no-nudge` does not copy `handoff-nudge.py` and does not add the PostToolUse entry `python3 <hooks>/handoff-nudge.py`. If an earlier install left that file or entry, `--no-nudge` removes both. All other steps are unchanged.
+- `--help` lists `--no-nudge`. `--dry-run --no-nudge` prints what it would do and changes nothing.
+- Acceptance (temp HOME, `LOSSLESS_HANDOFF_NO_LAUNCHCTL=1`, `RECALL_EMBED_URL=http://127.0.0.1:9`):
+  - 208. `install.sh --no-nightly --no-nudge`: `~/.claude/hooks/handoff-nudge.py` does not exist. No hook command in `~/.claude/settings.json` contains `handoff-nudge.py`. The PreCompact entry, the SessionStart compact, startup and resume entries and the SessionEnd entry are present as with a plain install. `postcompact-inject.py --check` (stdin `{}`, same HOME) prints nothing.
+  - 209. A plain `install.sh --no-nightly`, then `install.sh --no-nightly --no-nudge`: after the second run, the nudge file and the nudge entry are gone. Every other entry is still there exactly once, and `--check` prints nothing.
+  - 210. `install.sh --no-nightly --no-nudge`, then `uninstall.sh`: exits 0, and the settings file equals (as parsed JSON) the file before the install.
+  - 211. `install.sh --dry-run --no-nudge` on a temp HOME with a settings file: the settings file is byte-identical afterwards, and no file is created under `~/.claude/hooks/`.

@@ -503,6 +503,22 @@ assert a + b == want, (len(a), len(b))
 PY
 ok "recall: a 50,000-char message reassembles byte-exactly from open --full + --from 40000"
 
+# --no-nudge (F50): no nudge file or entry, --check is silent, and a later --no-nudge run removes an earlier nudge
+(
+  export HOME="$T/home-nn"; mkdir -p "$HOME/.claude"
+  "$ROOT/install.sh" --no-nightly --no-nudge >/dev/null
+  [ ! -e "$HOME/.claude/hooks/handoff-nudge.py" ] || fail "--no-nudge copied the nudge file"
+  ! grep -q handoff-nudge "$HOME/.claude/settings.json" "$HOME/.claude/hooks/.handoff-manifest.json" || fail "--no-nudge left a nudge entry"
+  [ -z "$(echo '{}' | python3 "$HOME/.claude/hooks/postcompact-inject.py" --check)" ] || fail "--check not silent after --no-nudge"
+  export HOME="$T/home-nn2"; mkdir -p "$HOME/.claude"
+  "$ROOT/install.sh" --no-nightly >/dev/null
+  grep -q handoff-nudge "$HOME/.claude/settings.json" || fail "plain install has no nudge entry"
+  "$ROOT/install.sh" --no-nightly --no-nudge >/dev/null
+  [ ! -e "$HOME/.claude/hooks/handoff-nudge.py" ] && ! grep -q handoff-nudge "$HOME/.claude/settings.json" || fail "--no-nudge did not remove the nudge"
+  [ -z "$(echo '{}' | python3 "$HOME/.claude/hooks/postcompact-inject.py" --check)" ] || fail "--check not silent after nudge removal"
+)
+ok "--no-nudge: no nudge file or entry, --check silent, an earlier nudge is removed"
+
 "$ROOT/uninstall.sh" >"$T/un.out"
 python3 - "$S" "$T/original.json" <<'PY'
 import json, sys
