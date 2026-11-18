@@ -2,6 +2,15 @@
 
 Lossless Handoff, formerly claude-handoff.
 
+## [0.12.1] - 2026-11-18
+
+llm_map: faster, a fixed label set, progress (hooks 1.14.1). New F61 in `docs/spec.md`, ACs 281-286.
+
+- Defaults are now `--batch 100` and `--jobs 8`. 3,000 items no longer pass the 2-minute Bash limit.
+- New `--labels "a|b|c"`: the model must answer with one label. Replies map to a label by exact match or a word-boundary prefix. Invalid replies are retried once, then fail with `error: "label: ..."`.
+- Each finished batch prints `llm_map: <done> of <n> items done` to stderr.
+- The skill text tells the model to use `--labels`, a 600000 ms timeout, a foreground wait and no `pgrep`.
+
 ## [0.12.0] - 2026-11-18
 
 Label many items with a small model (hooks 1.14.0). New F60 in `docs/spec.md`, ACs 274-280.

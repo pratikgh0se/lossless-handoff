@@ -2,13 +2,13 @@
 # Lossless Handoff installer (formerly claude-handoff): copies the hooks and merges them into ~/.claude/settings.json.
 set -euo pipefail
 
-VERSION="0.12.0"
+VERSION="0.12.1"
 usage() {
   cat <<EOF
 Lossless Handoff $VERSION (formerly claude-handoff)
 Copies the hooks (three handoff hooks plus the recall command) into ~/.claude/hooks and merges them into ~/.claude/settings.json.
 Also sets up automatic recall indexing: an end-of-chat hook, an optional bge-m3 model pull, a nightly job (macOS) and a first index.
-Hooks 1.14.0 keep the chat store: handoff files live 365 days, and --keep-transcripts raises Claude Code's transcript retention.
+Hooks 1.14.1 keep the chat store: handoff files live 365 days, and --keep-transcripts raises Claude Code's transcript retention.
 The PreCompact hook also gives Claude Code guidance for its own summary.
 A SubagentStart hook gives each new subagent the standing rules of the project.
 It also installs the recall subagent (~/.claude/agents/recall.md), unless a file of that name that is not ours is there.

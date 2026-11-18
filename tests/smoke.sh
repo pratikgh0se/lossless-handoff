@@ -74,7 +74,7 @@ python3 - "$H" <<'PY'
 import hashlib, json, sys
 h = sys.argv[1]
 m = json.load(open(h + "/.handoff-manifest.json"))
-assert m["version"] == "1.14.0" and m["installed_at"], m
+assert m["version"] == "1.14.1" and m["installed_at"], m
 assert sorted(m["files"]) == ["claims.json", "handoff-nudge.py", "postcompact-inject.py", "precompact-handoff.py", "recall.py"], m
 for n, want in m["files"].items():
     assert hashlib.sha256(open(h + "/" + n, "rb").read()).hexdigest() == want, n
@@ -877,6 +877,44 @@ PY
   "$ROOT/uninstall.sh" >/dev/null; [ -f "$SK" ] || fail "F60 280: uninstall removed a foreign skill"
   rm "$SK"; "$ROOT/install.sh" --no-nightly >/dev/null
   "$ROOT/uninstall.sh" >/dev/null; [ ! -e "$SK" ] && [ ! -e "$HOME/.claude/hooks/llm_map.py" ] || fail "F60 280: uninstall left our files"
+  # F61: AC 281 (default batch 100, 3 batches for 250 items) and AC 285 (progress on stderr)
+  seq 1 250 | sed 's/^/item /' > "$T/f61-in.txt"
+  : > "$FAKE_LOG"
+  python3 "$LM" --in "$T/f61-in.txt" --prompt "label" --out "$T/f61-out.jsonl" 2>"$T/f61.err" >/dev/null || fail "F61 281: exit"
+  [ "$(wc -l < "$FAKE_LOG" | tr -d ' ')" = 3 ] || fail "F61 281: call count"
+  python3 - "$FAKE_LOG" <<'PY' || fail "F61 281: batch sizes"
+import json, re, sys
+n = sorted(len(re.findall(r"^\d+: ", (lambda a: a[a.index("-p") + 1])(json.loads(l)["argv"]), re.M)) for l in open(sys.argv[1]))
+assert n == [50, 100, 100], n
+PY
+  [ "$(grep -c '^llm_map: [0-9]* of 250 items done$' "$T/f61.err")" = 3 ] && tail -n 1 "$T/f61.err" | grep -qx 'llm_map: 250 of 250 items done' || fail "F61 285: progress: $(cat "$T/f61.err")"
+  # F61: AC 282 (label mapping and one resend)
+  FK2="$T/fake-claude2.py"
+  cat > "$FK2" <<'PY'
+import json, re, sys
+a = sys.argv[1:]
+prompt = a[a.index("-p") + 1]
+rep = ["numeric", "Human Being", "location", "1790"]
+lines = [json.dumps({"i": int(m.group(1)), "out": rep[(int(m.group(1)) - 1) % 4]}) for m in re.finditer(r"^(\d+): ", prompt, re.M)]
+print(json.dumps({"type": "result", "result": "\n".join(lines), "total_cost_usd": 0.01}))
+PY
+  seq 1 4 | sed 's/^/q /' > "$T/f61-l.txt"
+  set +e
+  LLM_MAP_CLAUDE="python3 $FK2" python3 "$LM" --in "$T/f61-l.txt" --prompt "label" --labels "numeric value|human being|location" --out "$T/f61-lo.jsonl" >"$T/f61-l.out" 2>/dev/null; rc=$?
+  set -e
+  python3 - "$T/f61-lo.jsonl" <<'PY' || fail "F61 282: label mapping"
+import json, sys
+r = [json.loads(l) for l in open(sys.argv[1])]
+assert [x["out"] for x in r[:3]] == ["numeric value", "human being", "location"], r
+assert r[3]["out"] is None and r[3]["error"].startswith("label:"), r[3]
+PY
+  [ "$rc" = 3 ] && grep -q ' 1 failed, 2 batches,' "$T/f61-l.out" || fail "F61 282: rc=$rc $(cat "$T/f61-l.out")"
+  # F61: AC 284 (usage errors, no out file)
+  set +e
+  python3 "$LM" --in "$T/f61-l.txt" --prompt x --labels "a" --out "$T/f61-u1.jsonl" 2>/dev/null; r1=$?
+  python3 "$LM" --in "$T/f61-l.txt" --prompt x --labels "a|b" --json-out --out "$T/f61-u2.jsonl" 2>/dev/null; r2=$?
+  set -e
+  [ "$r1" = 2 ] && [ "$r2" = 2 ] && [ ! -e "$T/f61-u1.jsonl" ] && [ ! -e "$T/f61-u2.jsonl" ] || fail "F61 284: ($r1 $r2)"
 )
 ok "F60: llm_map batches, retry, failures, usage errors, call flags, skill install and uninstall"
 ok "F55: agent file install, foreign file kept, replace when marked, uninstall, recall-line sentence"
@@ -907,7 +945,7 @@ rows = {json.loads(x)["sid"]: json.loads(x) for x in open(sys.argv[1]) if x.stri
 a, b = rows["f56a"], rows["f56b"]
 assert a["excerpt_chars"] > 0 and a["excerpt_dropped"] == 0, a
 assert b["excerpt_dropped"] > 0 and 0 < b["excerpt_chars"] <= 120000, b
-assert a["hook_version"] == "1.14.0"
+assert a["hook_version"] == "1.14.1"
 PY
   p="$(python3 "$ROOT/hooks/precompact-handoff.py" --prove --days 1; echo "rc=$?")"
   grep -qE "^excerpt cut: 1 of 2 compactions, median dropped [0-9]+ chars$" <<<"$p" || fail "F56.b: prove line: $p"
@@ -1072,7 +1110,7 @@ PY
 import json, sys
 rows = [json.loads(x) for x in open(sys.argv[1]) if x.strip()]
 r = [x for x in rows if x.get("event") == "subagent_start"][-1]
-assert r["rules"] == 2 and r["chars"] > 0 and r["hook_version"] == "1.14.0" and r["agent_type"] == "general-purpose", r
+assert r["rules"] == 2 and r["chars"] > 0 and r["hook_version"] == "1.14.1" and r["agent_type"] == "general-purpose", r
 PY
   # AC 262: no handoff text, no agent notes
   printf '# Handoff\n- cwd: %s\nLATESTTOKEN\n' "$PROJ" > "$STF/s58-latest.md"; printf 'AGENTTOKEN\n' > "$STF/s58-agent.md"
