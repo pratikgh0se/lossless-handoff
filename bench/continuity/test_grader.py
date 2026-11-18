@@ -142,7 +142,7 @@ class OrderType(Base):
         text = " ".join(e["prompt"] for e in ev if e["epoch"] == 0)
         self.assertNotIn(it["plants"][1], text)                               # others come in later epochs
         self.assertNotIn(it["order"][2], text)
-        self.assertEqual(gen.GEN_VERSION, "4")
+        self.assertEqual(gen.GEN_VERSION, "5")
 
 
 class V4Design(Base):
@@ -421,6 +421,123 @@ class OracleSize(unittest.TestCase):
         fpt, _, est = runner.o_plan(400000, planted, None, None)
         self.assertLess(est, 0.60 * 400000)
         self.assertGreater(fpt, runner.o_plan(200000, planted, None, None)[0])
+
+
+class FillerV5(unittest.TestCase):
+    def lines(self, txt):
+        return txt.count("\n")
+
+    def test_line_counts_vary_and_stay_in_range(self):
+        ns = [self.lines(gen.filler_file(3, t, j)[1]) for t in range(30) for j in range(3)]
+        self.assertGreater(len(set(ns)), 20)
+        self.assertTrue(all(280 <= n <= 380 for n in ns))
+        self.assertLess(abs(sum(ns) / len(ns) - 330), 15)
+
+    def test_deterministic_per_seed(self):
+        self.assertEqual(gen.filler_file(3, 5, 1), gen.filler_file(3, 5, 1))
+        a = [self.lines(gen.filler_file(3, t, 0)[1]) for t in range(20)]
+        b = [self.lines(gen.filler_file(4, t, 0)[1]) for t in range(20)]
+        self.assertNotEqual(a, b)
+
+    def test_count_not_in_name_or_header(self):
+        name, txt = gen.filler_file(3, 7, 0)
+        n = self.lines(txt)
+        self.assertNotIn(str(n), name)
+        self.assertTrue(txt.startswith("1.0001 "))      # first line is a data row, not a header
+
+    def test_v4_unchanged(self):
+        for t in range(5):
+            self.assertEqual(self.lines(gen.filler_file(3, t, 0, version="4")[1]), 330)
+
+
+class V5SameFactsAsV4(unittest.TestCase):
+    def test_scripts_equal_except_version_field(self):
+        for seed in range(1000, 1005):
+            a, b = gen.build(seed, "4"), gen.build(seed, "5")
+            self.assertEqual(a["gen_version"], "4")
+            self.assertEqual(b["gen_version"], "5")
+            a.pop("gen_version"); b.pop("gen_version")
+            self.assertEqual(a, b)          # items, answers, events, fresh, secrets, noise
+
+    def test_probes_and_filler_prompts_equal(self):
+        for seed in range(1000, 1005):
+            a, b = gen.build(seed, "4"), gen.build(seed, "5")
+            for n in (1, 3, 10, 30):
+                for t in gen.TYPES + ["F"]:
+                    if t == "F":
+                        items = a["fresh"].get(str(n))
+                        if not items:
+                            continue
+                    else:
+                        items = gen.select(a, t, n - 1)
+                        if not items:
+                            continue
+                    self.assertEqual(gen.probe_prompt(t, a, "M", n, items=items), gen.probe_prompt(t, b, "M", n, items=gen.select(b, t, n - 1) if t != "F" else b["fresh"][str(n)]))
+                names = ["pad-%03d-%d.txt" % (n, j) for j in range(2)]
+                self.assertEqual(gen.filler_prompt(a, n, names), gen.filler_prompt(b, n, names))
+
+    def test_filler_differs_only_in_line_count(self):
+        for seed in range(1000, 1005):
+            for t in range(6):
+                na, ta = gen.filler_file(seed, t, 0, version="4")
+                nb, tb = gen.filler_file(seed, t, 0, version="5")
+                self.assertEqual(na, nb)
+                la, lb = ta.splitlines(), tb.splitlines()
+                k = min(len(la), len(lb))
+                self.assertEqual(la[:k], lb[:k])      # same stream, one is a prefix of the other
+
+    def test_other_streams_do_not_use_line_count(self):
+        # filler_lines has its own Random; scripts do not depend on it
+        gen.filler_lines(1000, "pad-000-0.txt")
+        self.assertEqual(gen.build(1000, "5")["items"], gen.build(1000, "4")["items"])
+
+
+class NoReadGuard(unittest.TestCase):
+    class FakeSS:
+        """A session whose turns write fake transcript lines. reads: Read calls per turn, in order."""
+        def __init__(self, path, reads):
+            self.st, self.path, self.reads, self.prompts = {"sid": "x"}, path, list(reads), []
+
+        def transcript(self, sid):
+            return self.path
+
+        def turn(self, prompt):
+            self.prompts.append(prompt)
+            with open(self.path, "a") as f:
+                for _ in range(self.reads.pop(0)):
+                    f.write(json.dumps({"message": {"role": "assistant", "content": [
+                        {"type": "tool_use", "name": "Read", "input": {"file_path": "/p/pad-001-0.txt"}}]}}) + "\n")
+
+    def run_it(self, reads):
+        import tempfile
+        d = tempfile.mkdtemp()
+        ss = self.FakeSS(os.path.join(d, "t.jsonl"), reads)
+        runner.run_filler_turn(ss, "go")
+        return ss
+
+    def test_reads_present_no_retry(self):
+        ss = self.run_it([2])
+        self.assertEqual(ss.prompts, ["go"])
+        self.assertEqual(ss.st.get("filler_retries", 0), 0)
+
+    def test_no_read_sends_one_retry(self):
+        ss = self.run_it([0, 2])
+        self.assertEqual(ss.prompts, ["go", runner.RETRY_PROMPT])
+        self.assertEqual((ss.st["filler_no_read_turns"], ss.st["filler_retries"]), (1, 1))
+        self.assertNotIn("filler_retry_no_read", ss.st)
+
+    def test_retry_without_read_is_recorded_not_repeated(self):
+        ss = self.run_it([0, 0])
+        self.assertEqual(len(ss.prompts), 2)
+        self.assertEqual(ss.st["filler_retry_no_read"], 1)
+
+    def test_other_tool_or_file_is_not_a_read(self):
+        import tempfile
+        p = os.path.join(tempfile.mkdtemp(), "t.jsonl")
+        with open(p, "w") as f:
+            f.write(json.dumps({"message": {"content": [{"type": "tool_use", "name": "Read", "input": {"file_path": "/p/other.txt"}}]}}) + "\n")
+            f.write(json.dumps({"message": {"content": [{"type": "tool_use", "name": "Bash", "input": {"command": "cat pad-1"}}]}}) + "\n")
+        self.assertEqual(runner.count_reads(p), 0)
 
 
 if __name__ == "__main__":

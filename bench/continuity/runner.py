@@ -117,6 +117,48 @@ def sh(cmd, cwd=None):
         return ""
 
 
+def count_reads(path):
+    """Count of Read tool calls on filler files (pad-*) in a main transcript."""
+    n = 0
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            for line in f:
+                if '"Read"' not in line or "pad-" not in line:
+                    continue
+                try:
+                    r = json.loads(line)
+                except ValueError:
+                    continue
+                m = r.get("message") if isinstance(r, dict) else None
+                if isinstance(m, dict) and isinstance(m.get("content"), list):
+                    for b in m["content"]:
+                        if isinstance(b, dict) and b.get("type") == "tool_use" and b.get("name") == "Read" \
+                                and "pad-" in json.dumps(b.get("input")):
+                            n += 1
+    except OSError:
+        pass
+    return n
+
+
+RETRY_PROMPT = "Use the Read tool on each file; do not answer from memory."
+
+
+def run_filler_turn(ss, prompt):
+    """One filler turn. If it has no Read call, send one retry turn. Same rule for every arm.
+    Counts go to the session state: filler_no_read_turns, filler_retries."""
+    st = ss.st
+    path = ss.transcript(st["sid"])
+    r0 = count_reads(path)
+    ss.turn(prompt)
+    if count_reads(path) == r0:
+        st["filler_no_read_turns"] = st.get("filler_no_read_turns", 0) + 1
+        st["filler_retries"] = st.get("filler_retries", 0) + 1
+        r1 = count_reads(path)
+        ss.turn(RETRY_PROMPT)
+        if count_reads(path) == r1:
+            st["filler_retry_no_read"] = st.get("filler_retry_no_read", 0) + 1
+
+
 # ------------------------------------------------------------------ run context
 class Ctx:
     def __init__(self, run_dir, cfg):
@@ -231,7 +273,8 @@ class Session:
             if self.st["next_turn"] > 0 or not self.st["first"]:
                 # the folder is gone: the old session cannot continue. Start again from turn 0.
                 self.st.update({"next_turn": 0, "ckpt_i": 0, "boundaries": 0, "last_cost": 0.0, "done_forks": [],
-                                "f_planted": [], "missed": [], "first": True, "sid": None, "events_done": 0, "fill_done": 0})
+                                "f_planted": [], "missed": [], "first": True, "sid": None, "events_done": 0, "fill_done": 0,
+                                "filler_no_read_turns": 0, "filler_retries": 0, "filler_retry_no_read": 0})
         self.proj = os.path.realpath(self.proj)
         if not self.st.get("sid"):
             self.st["sid"] = str(uuid.uuid4())
@@ -447,7 +490,7 @@ def run_main_session(ctx, ss):
             with open(os.path.join(ss.proj, name), "w", encoding="utf-8") as f:
                 f.write(text)
             names.append(name)
-        ss.turn(gen.filler_prompt(script, ft, names))
+        run_filler_turn(ss, gen.filler_prompt(script, ft, names))
         quiet = quiet + 1 if st["boundaries"] == before else 0
         if quiet >= MAX_NO_BOUNDARY:
             st["status"], st["reason"] = "invalid", "no compaction in %d filler turns" % MAX_NO_BOUNDARY
@@ -497,7 +540,9 @@ def session_summary(ctx, ss):
     st = ss.st
     out = {"name": ss.name, "seed": ss.seed, "arm": ss.arm, "status": st["status"], "turns": st["turns"],
            "boundaries": st["boundaries"], "precomputed": st.get("precomputed", 0), "missed": st["missed"],
-           "fork_leaks": st["fork_leaks"], "boundaries_at_plant_end": st.get("boundaries_at_plant_end"), "cost_usd": round(st.get("cost", 0.0), 4), "reason": st.get("reason")}
+           "fork_leaks": st["fork_leaks"], "boundaries_at_plant_end": st.get("boundaries_at_plant_end"), "cost_usd": round(st.get("cost", 0.0), 4), "reason": st.get("reason"),
+           "filler_no_read_turns": st.get("filler_no_read_turns", 0), "filler_retries": st.get("filler_retries", 0),
+           "filler_retry_no_read": st.get("filler_retry_no_read", 0)}
     if ss.arm != "Z" and st.get("sid"):
         main = ss.transcript(st["sid"])
         reads = 0

@@ -231,3 +231,17 @@ If `<lh-path>/agents/recall.md` exists, the runner copies it into the project fo
 6. Plan: `events` (sorted by epoch) replace `plant_turns` in the script.
 
 Slice 2 numbers for v3 must not be mixed with v4 numbers in one table.
+
+## 15. v5 changes and why (GEN_VERSION "5", 2026-11-18)
+
+**Why.** In run 20261118T190206-full (Opus, sessions s1001-A and s1001-B), the model answered some filler turns with `name=330` and no Read call. Every file had 330 lines, so the answer was always right. The context stopped growing (about 150k of a 400k window). The session was marked invalid: "no compaction in 10 filler turns".
+
+**Changes.**
+
+1. **Line count per file.** `gen.filler_lines(seed, name, version)` gives each filler file a count of 280 to 380 lines, from `random.Random("<seed>:<name>")`. The mean is 330, so the size of a file (about 20 KB, about 6k tokens) and `files_per_turn` stay valid on average. The count is in no name and no header. For gen v4 and older the count stays 330, so old scripts and regrade do not change.
+2. **No-read guard.** `runner.run_filler_turn` counts Read calls on `pad-*` files in the main transcript. If a filler turn has none, the runner sends one retry turn: "Use the Read tool on each file; do not answer from memory." The retry happens before the quiet counter counts the turn. Same rule for every arm. A retry that also has no Read call is recorded in `filler_retry_no_read` and not repeated.
+3. **Records.** Each session in `sessions.jsonl` has `filler_no_read_turns`, `filler_retries` and `filler_retry_no_read`. The report has a table with the totals per arm.
+
+4. **Same facts as v4.** `gen.stream_version` maps every version 4 or newer to the v4 seed text. For one seed, v5 and v4 scripts are equal except the `gen_version` field. The probes and filler prompts are equal too. Only the filler line counts differ. A test proves it for seeds 1000-1004 and N 1, 3, 10, 30.
+
+**Limit.** The guard sends extra turns, so the turn count and cost of a v5 run can be a little higher than v4. Arm O has fewer files, so its size estimate can differ a little from the real size (the 60% margin covers this).

@@ -57,6 +57,15 @@ bench/continuity/run.sh slice --seeds 1 --arms A,B --n 1 --types R,X
 bench/continuity/run.sh cleanup
 ```
 
+## Generator v5 change (2026-11-18)
+
+- Each filler file has its own line count, 280 to 380 (mean 330), from the seed and the file name. The count is in no file name and no header. The model must read the file to know it.
+- Why: on Opus, after some compactions, the model answered the filler question from memory with no Read call. The context stopped growing and the session went invalid ("no compaction in 10 filler turns").
+- Guard: if a filler turn has no Read call on a `pad-*` file, the runner sends one retry turn ("Use the Read tool on each file; do not answer from memory.") before the quiet counter counts it. Same rule for every arm.
+- `sessions.jsonl` has `filler_no_read_turns`, `filler_retries` and `filler_retry_no_read` for each session. `summary.md` shows the totals per arm.
+- Old runs (gen v4 and older) keep 330 lines. `run.sh regrade` and `report` still work on them (the new fields show 0).
+- Same facts as v4: the RNG streams of v4 and v5 share one seed text (`gen.stream_version`). For a seed, v5 plants the same items, answers, probes and prompts as v4. Only the filler line counts differ. A test checks seeds 1000-1004 and N 1, 3, 10, 30. So the N curve 1, 3, 10 (v4) to 30 (v5) compares the same facts.
+
 ## Generator v4 in short
 
 - S (exact string) and E (dead-end code) facts live in tool output only (a file that the agent reads). R, D, X, C are user-stated. Each item has 2 look-alike decoys.

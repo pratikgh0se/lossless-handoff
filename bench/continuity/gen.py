@@ -8,7 +8,7 @@ Usage: gen.py --seed S [--out FILE]
 """
 import argparse, json, random, re, sys
 
-GEN_VERSION = "4"
+GEN_VERSION = "5"
 K = 3                                   # instances of each probe type for each seed
 TYPES = ["R", "D", "X", "S", "E", "U", "C", "M"]
 CHECKPOINTS = [1, 3, 10, 30]
@@ -25,9 +25,18 @@ APPROACHES = ("shard-merge delta-replay lazy-flush ring-rebuild tiered-spill bli
 CONS, VOW = "bcdfghjklmnprstvz", "aeiou"
 
 
+def stream_version(version):
+    """Version text in the RNG seeds. Gen v4 and newer share the v4 streams, so v5 plants the same items,
+    answers and probes as v4 for a seed. Only filler_lines differs. Older versions keep their own streams."""
+    try:
+        return "4" if int(version) >= 4 else str(version)
+    except ValueError:
+        return str(version)
+
+
 class Gen:
     def __init__(self, seed, version=GEN_VERSION):
-        self.r = random.Random("lhbench-%s-%d" % (version, seed))
+        self.r = random.Random("lhbench-%s-%d" % (stream_version(version), seed))
         self.used = set()
 
     def _uniq(self, make):
@@ -119,7 +128,7 @@ def sibs(g, tp, taken, n):
 
 def build(seed, version=GEN_VERSION):
     g = Gen(seed, version)
-    pr = random.Random("lhbench-prose-%s-%d" % (version, seed))
+    pr = random.Random("lhbench-prose-%s-%d" % (stream_version(version), seed))
     taken = set()
     items = {t: [] for t in TYPES}
     events = []                                  # plant events: {"epoch", "seq", "kind", "prompt", "files", "delete_after"}
@@ -258,10 +267,28 @@ def secrets(script):
 TOKEN_ANY = re.compile(r"[A-HJ-NP-Z2-9]{4}-\d{4}-[A-HJ-NP-Z2-9]{4}")
 
 
-def filler_file(seed, t, j, lines=330, version=GEN_VERSION):
-    """File j of filler turn t. About 20 KB, about 6k tokens. Random words and noise tokens."""
-    r = random.Random("lhbench-filler-%s-%d-%d-%d" % (version, seed, t, j))
+FILLER_LINES_V4 = 330           # gen v4 and older: every filler file has this many lines
+FILLER_LINES_RANGE = (280, 380)  # gen v5: lines of a file, from the seed and the file name. Mean 330, as in v4.
+
+
+def filler_lines(seed, name, version=GEN_VERSION):
+    """Line count of a filler file. v4: fixed. v5: random in FILLER_LINES_RANGE, from the seed and the name only.
+    The count is in no file name and in no header, so a model has to read the file to know it."""
+    try:
+        old = int(version) < 5
+    except ValueError:
+        old = False
+    if old:
+        return FILLER_LINES_V4
+    return random.Random("%s:%s" % (seed, name)).randint(*FILLER_LINES_RANGE)
+
+
+def filler_file(seed, t, j, lines=None, version=GEN_VERSION):
+    """File j of filler turn t. About 20 KB, about 6k tokens on average. Random words and noise tokens."""
+    r = random.Random("lhbench-filler-%s-%d-%d-%d" % (stream_version(version), seed, t, j))
     name = "pad-%03d-%d.txt" % (t, j)
+    if lines is None:
+        lines = filler_lines(seed, name, version)
     out = []
     for ln in range(1, lines + 1):
         row = "%d.%04d " % (j + 1, ln) + " ".join(r.choice(WORDS) for _ in range(8))
@@ -278,7 +305,7 @@ def filler_prompt(script, t, names):
     if t > 0 and t % ne == 0:
         pre = "Note for later: " + script["filler_noise"][(t // ne - 1) % len(script["filler_noise"])] + " "
     files = " and ".join("`%s`" % n for n in names)
-    r = random.Random("lhbench-fprose-%s-%d-%d" % (script["gen_version"], script["seed"], t))
+    r = random.Random("lhbench-fprose-%s-%d-%d" % (stream_version(script["gen_version"]), script["seed"], t))
     pre = prose(r) + " " + pre      # long, realistic user text (600 to 1200 characters), so the user-message list of a summary is long too
     return (pre + "Read %s completely with the Read tool. Then reply only with the number of lines of each file, like `name=count`." % files)
 
