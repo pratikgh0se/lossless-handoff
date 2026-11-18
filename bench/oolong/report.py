@@ -143,6 +143,9 @@ def main():
         cfg["model"], cfg["claude_version"], cfg["window"], cfg["bench_commit"], cfg["decision_commit"], cfg["lh_commit"]))
     P("- Data: %s, split validation (trec_coarse is a validation task), Hugging Face revision %s, OOLONG repo commit %s." % (
         cfg["dataset"], cfg["hf_revision"], cfg["oolong_commit"]))
+    acc = cfg.get("loose_tmp_accepted")
+    if acc is not None:
+        P("- Shared temp folder: the run started with %d loose item(s) of other sessions accepted in /tmp/claude-<uid> (list with sha256 of small files in config.json, `loose_tmp_accepted`). Units are kept out by the sandbox (denyWrite) and by the shared_tmp_refs check." % len(acc))
     P("- Scorer: bench/oolong/scorer.py, a port of src/eval/eval_helpers.py of the OOLONG repo (commit above). Code only, no model grader.")
     P("- Config records: one per unit in config_records.json. The harness checked before the run that only the intended setting differs.")
     P("- The Claude Code version differs from the one in the LCM paper (v2.1.4), so these numbers are not a copy of the paper's run.")

@@ -792,6 +792,7 @@ def parse_common(r):
     r.add_argument("--jobs", type=int, default=2)
     r.add_argument("--quarantine-tmp", action="store_true", help="move loose files of the shared temp folder away first (see tmpcheck)")
     r.add_argument("--tmp-root", help=argparse.SUPPRESS)
+    r.add_argument("--accept-loose-tmp", action="store_true", help="do not refuse because of loose items in /tmp/claude-<uid> (other chats); record them in config.json")
     r.add_argument("--budget-usd", type=float, default=None, help="pause cleanly: no new unit starts when the total reaches this value minus the largest unit cost seen so far")
 
 
@@ -942,7 +943,22 @@ def tmp_busy(path):
     return bool(r.stdout.strip())
 
 
-def tmp_guard(root, quarantine, list_file=None):
+def loose_tmp_record(root):
+    """The loose items as a list of dicts: name, bytes, mtime, sha256 (files under 1 MB; folders and larger files have none)."""
+    out = []
+    for n, sz, mt in loose_tmp_items(root):
+        p = os.path.join(root, n)
+        h = None
+        if os.path.isfile(p) and not os.path.islink(p) and sz < 1024 * 1024:
+            try:
+                h = hashlib.sha256(open(p, "rb").read()).hexdigest()
+            except OSError:
+                pass
+        out.append({"name": n, "bytes": sz, "mtime": datetime.datetime.fromtimestamp(mt).strftime("%Y-%m-%d %H:%M:%S"), "sha256": h})
+    return out
+
+
+def tmp_guard(root, quarantine, list_file=None, accept=False):
     """Return (ok, messages). Loose items make it not ok. With quarantine they are MOVED (never deleted) to <root>-quarantine-<time>,
     after an lsof check; an item that a process has open stays and keeps the result not ok."""
     items = loose_tmp_items(root)
@@ -952,9 +968,12 @@ def tmp_guard(root, quarantine, list_file=None):
                 f.write("%s\t%d\t%s\n" % (n, sz, datetime.datetime.fromtimestamp(mt).strftime("%Y-%m-%d %H:%M")))
     if not items:
         return True, ["shared temp folder %s: no loose items" % root]
+    if accept and not quarantine:
+        return True, ["WARNING --accept-loose-tmp: %d loose item(s) of other sessions stay in %s. Units are kept out of them by the sandbox "
+                      "(denyWrite) and by the shared_tmp_refs check of the report. The list is recorded in config.json." % (len(items), root)]
     if not quarantine:
         return False, ["%d loose item(s) directly in %s (names not starting with '-'; first: %s). Parallel units could share them. "
-                       "Run: run.sh tmpcheck --quarantine-tmp (it moves them, it deletes nothing)." % (len(items), root, ", ".join(n for n, _s, _m in items[:5]))]
+                       "Run: run.sh tmpcheck --quarantine-tmp (it moves them, it deletes nothing), or pass --accept-loose-tmp." % (len(items), root, ", ".join(n for n, _s, _m in items[:5]))]
     dest = "%s-quarantine-%s" % (os.path.realpath(root), datetime.datetime.now().strftime("%Y%m%dT%H%M%S"))
     os.makedirs(dest, exist_ok=True)
     moved, busy = 0, []
@@ -978,11 +997,14 @@ def cmd_tmpcheck(a):
 
 
 def cmd_run(a):
-    ok, msgs = tmp_guard(a.tmp_root or tmp_root_default(), a.quarantine_tmp)
+    root = a.tmp_root or tmp_root_default()
+    ok, msgs = tmp_guard(root, a.quarantine_tmp, accept=a.accept_loose_tmp)
     print("\n".join(msgs), file=sys.stdout if ok else sys.stderr)
     if not ok:
         return 2
     cfg = build_cfg(a)
+    if a.accept_loose_tmp:
+        cfg["loose_tmp_accepted"] = loose_tmp_record(root)
     tasks, arms, recs = plan(cfg)
     run_dir = os.path.join(RESULTS, cfg["run_id"])
     os.makedirs(run_dir)
@@ -1033,10 +1055,14 @@ def cmd_resume(a):
         print("refuse to resume %s:\n  %s\nStart a new run instead." % (a.run_id, "\n  ".join(probs)), file=sys.stderr)
         return 2
     cont.write_json(os.path.join(run_dir, "config.json"), cfg)
-    ok, msgs = tmp_guard(a.tmp_root or tmp_root_default(), a.quarantine_tmp)
+    root = a.tmp_root or tmp_root_default()
+    ok, msgs = tmp_guard(root, a.quarantine_tmp, accept=a.accept_loose_tmp)
     print("\n".join(msgs), file=sys.stdout if ok else sys.stderr)
     if not ok:
         return 2
+    if a.accept_loose_tmp:
+        cfg["loose_tmp_accepted_resume"] = loose_tmp_record(root)
+    cont.write_json(os.path.join(run_dir, "config.json"), cfg)
     ctx = Ctx(run_dir, cfg)
     if a.reset_guard:
         ctx.state.pop("bash_window", None)
@@ -1309,6 +1335,7 @@ def main():
     rs.add_argument("--reset-guard", action="store_true", help="clear the saved Bash window of the stop rule (only after you fixed the cause of a window-rule stop)")
     rs.add_argument("--quarantine-tmp", action="store_true", help="move loose files of the shared temp folder away first (see tmpcheck)")
     rs.add_argument("--tmp-root", help=argparse.SUPPRESS)
+    rs.add_argument("--accept-loose-tmp", action="store_true", help="do not refuse because of loose items in /tmp/claude-<uid>; record them in config.json")
     tc_ = sp.add_parser("tmpcheck")
     tc_.add_argument("--quarantine-tmp", action="store_true", help="MOVE (not delete) loose items to /private/tmp/claude-<uid>-quarantine-<time>/")
     tc_.add_argument("--tmp-root", help="folder to check (default /tmp/claude-<uid>); for tests")

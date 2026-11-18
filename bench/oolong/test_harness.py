@@ -386,6 +386,35 @@ def test_shared_tmp_refs():
     assert harness.shared_tmp_refs(recs[4:6], ("/private/tmp/claude-501/unitbase",)) == []
 
 
+def test_shared_tmp_refs_cover_reads():
+    """Read tool inputs and Bash commands that only READ a shared path count, in main and in subagent records alike."""
+    def use(name, inp, i="i"):
+        return {"type": "assistant", "message": {"content": [{"type": "tool_use", "id": i, "name": name, "input": inp}]}}
+    main = [use("Bash", {"command": "cat /tmp/claude-501/x"}), use("Read", {"file_path": "/tmp/claude-501/y.txt"})]
+    sub = [use("Bash", {"command": "grep a /private/tmp/claude-501/z && cat ${TMPDIR}/w"})]
+    assert len(harness.shared_tmp_refs(main)) == 2
+    assert len(harness.shared_tmp_refs(main + sub)) == 4
+    assert len(harness.shared_tmp_refs(sub)) == 2
+
+
+def test_accept_loose_tmp():
+    tmp = tempfile.mkdtemp(prefix="lhoo-test-")
+    try:
+        root = os.path.join(tmp, "claude-501")
+        os.makedirs(root)
+        open(os.path.join(root, "q.txt"), "w").write("a")
+        os.makedirs(os.path.join(root, "d"))
+        ok, msgs = harness.tmp_guard(root, False)
+        assert not ok and "--accept-loose-tmp" in msgs[0]
+        ok, msgs = harness.tmp_guard(root, False, accept=True)
+        assert ok and msgs[0].startswith("WARNING")
+        rec = {r["name"]: r for r in harness.loose_tmp_record(root)}
+        assert len(rec["q.txt"]["sha256"]) == 64 and rec["d"]["sha256"] is None and rec["q.txt"]["bytes"] == 1 and rec["q.txt"]["mtime"]
+        assert os.path.exists(os.path.join(root, "q.txt")), "nothing is moved"
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def test_spent_includes_llm_map():
     code, ctx, rows, _t = run_stub("llm", n_tasks=2)
     assert code == 0, code
