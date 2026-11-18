@@ -185,6 +185,18 @@ def lh_settings(hooks_dir):
     }}
 
 
+def deny_rules(base):
+    """Permission deny rules for every arm. They block direct reads of any transcript and of bench state folders.
+    A project's own filler files stay readable, because they are in the cwd and not under these patterns."""
+    proj = os.path.join(HOME, ".claude", "projects")
+    rules = []
+    for tool in ("Read", "Grep", "Glob"):
+        rules += ["%s(~/.claude/projects/**)" % tool, "%s(/%s/**)" % (tool, proj),
+                  "%s(/%s/lhbench-*-state/**)" % (tool, base)]
+    rules += ["Bash(*.claude/projects*)", "Bash(*.claude*projects*)", "Bash(*lhbench*)", "Bash(*-state*)"]
+    return rules
+
+
 class Session:
     def __init__(self, ctx, name, seed, arm, st):
         self.ctx, self.name, self.seed, self.arm, self.st = ctx, name, seed, arm, st
@@ -207,7 +219,10 @@ class Session:
             os.makedirs(os.path.join(self.proj, ".claude"))
             os.makedirs(self.statedir, exist_ok=True)
             settings = lh_settings(os.path.join(self.ctx.cfg["lh_path"], "hooks")) if self.arm == "B" else {}
+            settings["permissions"] = {"deny": deny_rules(work_base(self.ctx.cfg["work_base"]))}
             write_json(os.path.join(self.proj, ".claude", "settings.json"), settings)
+            # make the folder its own git root, so that recall.py cannot search outside it
+            subprocess.run(["git", "init", "-q", self.proj], capture_output=True, timeout=30)
             if self.st["next_turn"] > 0 or not self.st["first"]:
                 # the folder is gone: the old session cannot continue. Start again from turn 0.
                 self.st.update({"next_turn": 0, "ckpt_i": 0, "boundaries": 0, "last_cost": 0.0, "done_forks": [],
@@ -322,6 +337,13 @@ class Session:
         items = script["fresh"][str(ckpt)] if ptype == "F" else script["items"][ptype]
         graded = grade.grade(ptype, items, raw)
         used = grade.lookup_used(read_jsonl(self.transcript(fsid)), marker) if fsid else False
+        if fsid:    # a later recall must not find this answer: delete the probe transcript
+            ft = self.transcript(fsid)
+            for pth in (ft, ft[:-6]):
+                if os.path.isfile(pth):
+                    os.remove(pth)
+                elif os.path.isdir(pth) and not os.path.islink(pth):
+                    shutil.rmtree(pth)
         u = o.get("usage") if isinstance(o.get("usage"), dict) else {}
         n_actual, pre = (st["boundaries"], st.get("precomputed", 0)) if self.arm != "Z" else (0, 0)
         for g in graded:
@@ -655,6 +677,51 @@ def cmd_cleanup(a):
     return 0
 
 
+def cmd_selfcheck(a):
+    """Tiny live check of the transcript deny rules, in arm A and arm B (and recall scope in arm B). A few cents."""
+    cfg = {"run_id": "selfcheck", "model": a.model, "window": 30000, "work_base": work_base(a.work_base), "call_cap_usd": 0.5,
+           "turn_timeout_s": 300, "lh_path": os.path.realpath(a.lh_path or REPO), "budget_usd": None, "gen_version": gen.GEN_VERSION,
+           "o_window": 200000, "claude_version": ""}
+    d = tempfile.mkdtemp(prefix="selfcheck-")
+    ctx = Ctx(d, cfg)
+    ok_all = True
+    tokA, tokO = "DENYTOK-" + uuid.uuid4().hex[:10].upper(), "OTHERTOK-" + uuid.uuid4().hex[:10].upper()
+    for arm in ("A", "B"):
+        ss = Session(ctx, "chk-" + arm, 1, arm, ctx.sess("chk-" + arm))
+        ss.prepare()
+        sid = ss.st["sid"]
+        tdir = os.path.dirname(ss.transcript(sid))
+        os.makedirs(tdir, exist_ok=True)
+        decoy = os.path.join(tdir, "decoy.jsonl")
+        open(decoy, "w").write(json.dumps({"cwd": ss.proj, "note": tokA}) + "\n")
+        other = os.path.join(cfg["work_base"], PREFIX + "selfcheck-other")        # another bench folder with a secret
+        os.makedirs(other, exist_ok=True)
+        subprocess.run(["git", "init", "-q", other], capture_output=True)
+        odir = os.path.join(PROJECTS, slug(os.path.realpath(other)))
+        os.makedirs(odir, exist_ok=True)
+        open(os.path.join(odir, str(uuid.uuid4()) + ".jsonl"), "w").write(json.dumps(
+            {"type": "user", "cwd": os.path.realpath(other), "timestamp": "2026-11-18T10:00:00Z", "sessionId": "x",
+             "message": {"role": "user", "content": "other folder secret " + tokO}}) + "\n")
+        o = ss.call("Remember the word ZEBRAQUARTZ. Reply only `ok`.", "turn", sid=sid, first=True)
+        prompt = ("Do these four things, each in its own tool call, and report each result in one short line. "
+                  "1) Read the file %s with the Read tool. 2) Run `cat %s` with Bash. 3) Use Grep for `note` in %s. "
+                  "4) Run `python3 %s/hooks/recall.py search --fixed ZEBRAQUARTZ` with Bash. Then run "
+                  "`python3 %s/hooks/recall.py search --fixed OTHERTOK-` with Bash. Report the output of each, and say DENIED if a tool was denied."
+                  % (decoy, decoy, tdir, cfg["lh_path"], cfg["lh_path"]))
+        o = ss.call(prompt, "turn", sid=sid)
+        res = o.get("result") or ""
+        denials = o.get("permission_denials") or []
+        names = sorted({x.get("tool_name") for x in denials if isinstance(x, dict)})
+        leaked = tokA in res or tokO in res
+        print("arm %s: denied tools %s; secret in reply: %s" % (arm, names, leaked))
+        print("  reply:", res.replace("\n", " | ")[:600])
+        good = leaked is False and "Read" in names and "Bash" in names
+        ok_all = ok_all and good
+    shutil.rmtree(d, ignore_errors=True)
+    print("selfcheck:", "PASS" if ok_all else "FAIL", "(clean up with: run.sh cleanup)")
+    return 0 if ok_all else 1
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sp = ap.add_subparsers(dest="cmd", required=True)
@@ -665,12 +732,16 @@ def main():
     rs.add_argument("run_id")
     rs.add_argument("--budget-usd", type=float, default=None)
     rs.add_argument("--jobs", type=int, default=None)
+    sc = sp.add_parser("selfcheck")
+    sc.add_argument("--model", default="haiku")
+    sc.add_argument("--lh-path")
+    sc.add_argument("--work-base")
     c = sp.add_parser("cleanup")
     c.add_argument("--all", action="store_true", help="also delete folders of paused runs")
     c.add_argument("--dry-run", action="store_true")
     c.add_argument("--work-base")
     a = ap.parse_args()
-    return {"run": cmd_run, "resume": cmd_resume, "cleanup": cmd_cleanup}[a.cmd](a)
+    return {"run": cmd_run, "resume": cmd_resume, "cleanup": cmd_cleanup, "selfcheck": cmd_selfcheck}[a.cmd](a)
 
 
 if __name__ == "__main__":

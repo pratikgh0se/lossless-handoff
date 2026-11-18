@@ -4,6 +4,8 @@
 #   run.sh full    [options]      full run: sonnet, window 400000, report seeds
 #   run.sh resume  <run-id> [--budget-usd X] [--jobs N]
 #   run.sh report  <run-id> [--publish] [--draws N]
+#   run.sh aa      <run-id-1> <run-id-2> [--arm A|B] [--draws N]   (A/A noise floor)
+#   run.sh selfcheck [--model M] [--lh-path P]   (live check of the transcript deny rules)
 #   run.sh cleanup [--all] [--dry-run] [--work-base DIR]
 # Options of slice and full: run `python3 runner.py run slice --help`.
 # Exit: 0 finished, 1 a session or a control gate failed, 2 usage error, 3 paused (budget).
@@ -31,7 +33,9 @@ case "$cmd" in
       echo "report: $D/results/$id/summary.md"
     fi
     exit "$rc" ;;
+  aa)      exec python3 "$D/report.py" aa "$@" ;;
+  selfcheck) exec python3 "$D/runner.py" selfcheck "$@" ;;
   report)  exec python3 "$D/report.py" "$@" ;;
   cleanup) exec python3 "$D/runner.py" cleanup "$@" ;;
-  *) sed -n 2,9p "$0" >&2; exit 2 ;;
+  *) sed -n 2,11p "$0" >&2; exit 2 ;;
 esac

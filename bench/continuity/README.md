@@ -19,6 +19,8 @@ bench/continuity/run.sh slice   [options]    # haiku, window 30000, dev seeds, N
 bench/continuity/run.sh full    [options]    # sonnet, window 400000, report seeds, N=1,3,10,30
 bench/continuity/run.sh resume  <run-id> [--budget-usd X] [--jobs N]
 bench/continuity/run.sh report  <run-id> [--publish] [--draws N]
+bench/continuity/run.sh aa      <run-id-1> <run-id-2> [--arm A|B]   # A/A noise floor
+bench/continuity/run.sh selfcheck                           # live check of the transcript deny rules (a few cents)
 bench/continuity/run.sh cleanup [--all] [--dry-run] [--work-base DIR]
 python3 bench/continuity/test_grader.py      # grader self-test, no model, no cost
 ```
@@ -66,6 +68,10 @@ bench/continuity/run.sh cleanup
 - The real `~/.claude` settings and hooks, `~/.local/state/claude-handoffs` and launchd are not touched. The runner hashes `~/.claude/settings.json` before and after and warns if it changed (another chat can change it).
 - The transcripts land in `~/.claude/projects/<temp-folder-slug>/`. The slug is the folder path with each non-alphanumeric character replaced by `-`. It starts with `-private-...-lhbench-`.
 - `cleanup` deletes only `<temp>/lhbench-*` and `~/.claude/projects/<slug of temp>-lhbench-*`. The prefix is exact. Folders of a paused run stay, so that it can resume. Use `--all` to delete those too. Use `--dry-run` to see the list first.
+- Transcript lookup is blocked in every arm. Each project has permission deny rules: `Read`, `Grep` and `Glob` of `~/.claude/projects/**` and of the bench state folders, and `Bash` commands whose text holds `.claude/projects`, `lhbench` or `-state`. The agent cannot read any transcript, its own or another run's, with a direct tool call. Run `run.sh selfcheck` before a scored run. It asks the agent to read a decoy file in its own transcript folder. It passes when the Read, Grep and Bash calls are denied and the secret is not in the reply.
+- The deny rules match tool input text. A `python3` call that builds the path in code is not blocked. The runner logs it as `used_lookup` when the input names `.claude/projects`, `.jsonl` or `recall.py`. The report shows accuracy with and without lookup. Read it before a claim.
+- `recall.py` (arm B) reads the files inside Python, so the Bash deny does not block it. This is intended: it is the product feature. Its scope is the git root of the cwd. Each project folder is its own git root (`git init`), so recall cannot search other bench folders. The selfcheck confirms that a secret in another bench folder is not found.
+- After each probe, the runner deletes the fork transcript, so a later recall cannot find an earlier probe answer.
 - The tools of the agent: `Read`, `Grep`, `Task`, and `Bash` limited to `grep`, `cat`, `ls`, `head`, `tail`, `python3`. The agent can search its own transcript. The runner logs this as `used_lookup`.
 - The U files (`led-*.txt`) are deleted after the subagent turn, so the key lives in the transcript only.
 
@@ -74,7 +80,12 @@ bench/continuity/run.sh cleanup
 - `claude -p` reports `total_cost_usd`. It is cumulative for a session, and a fork reports its parent's total plus its own. The runner keeps deltas. `calls.jsonl` has the raw value and the delta of each call.
 - The smoke run (haiku, 1 seed, arms A and B, N=1, types R and X) used 22 calls, cost $0.146 and took 2 minutes 7 seconds. It made 1 compaction in each arm. Plant turns cost most (the subagent turn is the largest).
 - The estimates in `SPEC.md` section 7 are not measured. Run a slice first and read the real cost per compaction.
+- The report has a cost table: turns per compaction, main-turn cost per compaction and cost per fork for each arm. Use a pilot at the same model and window to predict the cost of a full run.
 - Memory: each session is one short-lived `claude -p` process at a time. `--jobs 2` is the default for a laptop with many chats open.
+
+## A/A noise floor
+
+Run the same arm on the same seeds twice, with two run ids. Then run `run.sh aa <run-id-1> <run-id-2>`. It prints run 2 minus run 1 with the paired 95% CI for all N and for each N. The check passes when the CI holds 0. The width is the noise floor. Print it in each report. Example: `run.sh slice --arms A --seeds 5` two times.
 
 ## Where results go
 

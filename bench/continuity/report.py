@@ -283,6 +283,45 @@ def build(run_id, draws=None):
         out["gain"].append({"name": pc["name"], "point": point, "lo": lo, "hi": hi, "pairs": pairs, "verdict": verdict})
     md.append("\nA result with no gain is stored and shown in the same way as a gain.\n")
 
+    # ---- lookup split
+    md.append("### Accuracy with and without lookup (items where the probe used a transcript search or recall.py)\n")
+    md.append("| Arm | no lookup | with lookup |")
+    md.append("|---|---|---|")
+    for a in ("A", "B", "O"):
+        rr = [r for r in rows if r["arm"] == a and r["type"] in TYPES and (a == "O" or r["n_actual"] == r["n_target"])]
+        if not rr:
+            continue
+        cells = []
+        for flag in (False, True):
+            x = [r for r in rr if bool(r.get("used_lookup")) is flag]
+            cells.append("%s (%d/%d)" % (pct(sum(1 for r in x if r["correct"]) / len(x)), sum(1 for r in x if r["correct"]), len(x)) if x else "no data")
+        md.append("| %s | %s |" % (names[a], " | ".join(cells)))
+    md.append("")
+
+    # ---- cost and turns per compaction
+    calls = load_jsonl(os.path.join(rd, "calls.jsonl"))
+    md.append("### Cost per compaction (to predict the cost of a full run)\n")
+    md.append("| Arm | Sessions | Main turns | Compactions | Turns per compaction | Main-turn cost per compaction | Cost per fork | Total cost |")
+    md.append("|---|---|---|---|---|---|---|---|")
+    cost_tab = {}
+    for a in ("A", "B", "O", "Z"):
+        ss = [s for s in sess if s["arm"] == a]
+        if not ss:
+            continue
+        names_a = {s["name"] for s in ss}
+        cl = [c for c in calls if c["name"] in names_a]
+        turns = sum(s["turns"] for s in ss)
+        comp = sum(s["boundaries"] for s in ss)
+        mcost = sum(c["delta_usd"] for c in cl if c["kind"] == "turn")
+        fk = [c["delta_usd"] for c in cl if c["kind"] in ("fork", "z")]
+        tot = sum(c["delta_usd"] for c in cl)
+        cost_tab[a] = {"sessions": len(ss), "turns": turns, "compactions": comp, "main_cost": mcost, "forks": len(fk), "fork_cost": sum(fk), "total": tot}
+        md.append("| %s | %d | %d | %d | %s | %s | %s | $%.4f |" % (
+            names[a], len(ss), turns, comp, "%.1f" % (turns / comp) if comp else "n/a",
+            "$%.4f" % (mcost / comp) if comp else "n/a", "$%.4f" % (sum(fk) / len(fk)) if fk else "n/a", tot))
+    out["cost"] = cost_tab
+    md.append("\nThe plant turns (epoch 0) are part of the main-turn cost, so a short run overstates the cost per compaction. Predict a full run as: sessions x (plant cost + compactions x cost per compaction + forks x cost per fork). Take the numbers from a pilot at the same model and window.\n")
+
     # ---- head
     results = [g["result"] for g in out["gates"] if "(info)" not in g["gate"]]
     controls = "FAIL" if "FAIL" in results else ("NO DATA" if "NO DATA" in results else "PASS")
@@ -296,7 +335,47 @@ def build(run_id, draws=None):
     return out, text
 
 
+def aa(id1, id2, arm, draws):
+    """A/A noise floor: the same arm and the same seeds in two runs. Prints run2 minus run1 and its 95% CI."""
+    th = json.load(open(os.path.join(HERE, "thresholds.json"), encoding="utf-8"))
+    ag = []
+    for rid in (id1, id2):
+        rows = [r for r in load_jsonl(os.path.join(RESULTS, rid, "results.jsonl")) if r["arm"] == arm]
+        for r in rows:
+            r["arm"] = "X%s" % (1 if rid == id1 else 2)     # relabel so that one Agg holds both runs
+        ag.append(rows)
+    both = Agg(ag[0] + ag[1])
+    S = len(both.seeds)
+    if not S:
+        print("no data")
+        return 1
+    boot = Boot(S, draws or th["bootstrap_draws"], th["bootstrap_rng_seed"], th["ci_level"])
+    lines = ["A/A noise floor, arm %s: run %s (1) against run %s (2)" % (arm, id1, id2), "| N | run 2 minus run 1 | seeds | CI holds 0 |", "|---|---|---|---|"]
+    ok_all = True
+    for n in [None] + sorted({r["n_target"] for r in ag[0] + ag[1] if r["n_target"] > 0}):
+        (c2, t2), (c1, t1) = both.vec("X2", TYPES, n), both.vec("X1", TYPES, n)
+        point, lo, hi, k = boot.diff(c2, t2, c1, t1)
+        if point is None:
+            lines.append("| %s | no data | 0 | n/a |" % ("all" if n is None else n))
+            continue
+        holds = lo <= 0 <= hi
+        ok_all = ok_all and holds
+        lines.append("| %s | %+.1f pts [%+.1f, %+.1f] | %d | %s |" % ("all" if n is None else "N=%d" % n, 100 * point, 100 * lo, 100 * hi, k, "yes" if holds else "NO"))
+    lines.append("The width of this interval is the noise floor. Pass: the CI holds 0 (verification plan, P1-3). With few seeds the interval is wide and weak.")
+    print("\n".join(lines))
+    return 0 if ok_all else 1
+
+
 def main():
+    if len(sys.argv) > 1 and sys.argv[1] == "aa":
+        ap = argparse.ArgumentParser(prog="report.py aa")
+        ap.add_argument("cmd")
+        ap.add_argument("run1")
+        ap.add_argument("run2")
+        ap.add_argument("--arm", default="A")
+        ap.add_argument("--draws", type=int)
+        x = ap.parse_args()
+        return aa(x.run1, x.run2, x.arm, x.draws)
     ap = argparse.ArgumentParser()
     ap.add_argument("run_id")
     ap.add_argument("--publish", action="store_true")

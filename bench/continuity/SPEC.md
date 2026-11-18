@@ -53,7 +53,7 @@ All arms use the same Claude Code version, model, window, tools, permission mode
 Rules:
 
 - Arms A and B get the same script for a seed.
-- The agent can search its own transcript with `grep` or `recall.py`. This is real behaviour. The runner logs `used_lookup` for each probe. The report shows the lookup rate for each arm.
+- Direct reads of transcripts are denied in every arm (permission deny rules, section 8). Arm B keeps `recall.py`, scoped to the run's own folder. The runner logs `used_lookup` for each probe. The report shows the lookup rate and the accuracy with and without lookup, for each arm.
 - Arms run in the same batch, in seed order, so a change in the model or the service hits all arms the same way.
 - Later arms (one new feature on or off each time) use the same seeds and the same install with one switch.
 
@@ -163,6 +163,7 @@ Three primary comparisons: B minus A at N=10, at N=30, and type X at N=10. The f
 - A fresh temp project folder for each session, named `lhbench-<run-id>-s<seed>-<arm>`. Project-level settings only (`--setting-sources project`, no MCP, no slash commands).
 - Arm B hooks come from the pinned checkout. `HANDOFF_STATE_DIR` is a temp folder. `RECALL_EMBED_URL` points to a dead port, so no embedding call goes out.
 - The transcripts land in `~/.claude/projects/<temp-folder-slug>/`.
+- Deny rules in every project: `Read`, `Grep`, `Glob` of `~/.claude/projects/**` and of `lhbench-*-state` folders; `Bash` text with `.claude/projects`, `lhbench` or `-state`. Each project folder is a git root, so `recall.py` (arm B) searches only that folder. Probe fork transcripts are deleted after grading. `run.sh selfcheck` proves the deny rules live.
 - `run.sh cleanup` deletes only `<temp>/lhbench-*` and `~/.claude/projects/<slug>-lhbench-*` (exact prefix). It keeps folders of paused runs, unless `--all`.
 - The runner never touches the real `~/.claude` settings or hooks, the real handoff state or launchd. It hashes `~/.claude/settings.json` before and after, and warns if it changed.
 
@@ -186,8 +187,8 @@ Three primary comparisons: B minus A at N=10, at N=30, and type X at N=10. The f
 - Claude Code changes behaviour between versions (for example precomputed compactions). The version is in every table label.
 - Arm B might gain only because the handoff quotes the planted turns word for word. A second kind of plant (long, wandering instruction) is planned for generator version 2.
 - Fork effect: not measured. A later check can ask the same probes in the live session (in a copy of the project folder) for 2 seeds and compare.
-- Bash is limited to `grep`, `cat`, `ls`, `head`, `tail`, `python3`. The agent can still read other bench transcripts under `~/.claude/projects`. The runner logs lookups. Review `used_lookup` before a claim.
-- The code does not yet run the A/A repeat (the noise floor). Run arm A twice on the same seeds with two run ids, and compare by hand, until a flag exists.
+- The deny rules match tool input text. A `python3` call that builds a transcript path in code is not blocked. The runner logs lookups. Review `used_lookup` before a claim.
+- A/A noise floor: run arm A twice on the same seeds, then `run.sh aa <id1> <id2>`.
 - Cost estimates in older drafts were off by large factors. Use measured costs.
 
 ## 12. Decisions by the user (binding)
