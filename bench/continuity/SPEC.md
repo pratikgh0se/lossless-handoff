@@ -78,7 +78,7 @@ K = 3 instances of each type for each seed. One fork asks the 3 instances of one
 | R | standing rule | "every commit message in repo X ends with `TAG-<tok>`" | `answer` equals `<tok>` (or `TAG-<tok>`) |
 | D | decision | "the X queue is `<tok>`" | `answer` equals `<tok>` |
 | X | decision, later replaced | decision `<old>`, 3 turns later "use `<new>` instead" | `current` equals `<new>`, `replaced` holds `<old>`, `current` is not `<old>` |
-| S | exact string | a deploy command, an output path or an env line | `answer` equals the string after trim (case kept) |
+| S | exact string | a deploy command, an output path or an env line | `answer` equals the string after trim (case kept), or ends with the exact value after the last ` = ` or `: ` (a label form; a longer text after the label is wrong) |
 | E | dead end | "we tried approach P. It failed with code `<ecode>`. Do not try it again." | `proceed` is false and `reason_code` equals `<ecode>` |
 | U | subagent-only fact | a subagent reads a file with `ledger-key: <tok>` and replies with the line count only. The runner deletes the file. | `answer` equals `<tok>` |
 | C | user contradiction | a decision as in D. The probe states a different value. | `conflict` is true and `earlier` equals the planted value |
@@ -130,8 +130,10 @@ Notes:
 
 ### 5.2 Result file
 
-`results/<run-id>/results.jsonl`: one line for each probe item with `seed`, `arm`, `n_target`, `n_actual`, `precomputed_boundaries`, `type`, `item`, `fork_sid`, `raw`, `parsed`, `parse_ok`, `correct`, `used_lookup`, `tokens`, `fork_cost_usd`, `claude_version`, `model`, `window`, `commit`, `turn_index`.
-Other files: `config.json` (all settings, versions, commits), `state.json` (running total and session progress), `sessions.jsonl` (one line for each finished session), `calls.jsonl` (every call with cost), `scripts/`.
+`results/<run-id>/results.jsonl`: one line for each probe item with `seed`, `arm`, `n_target`, `n_actual`, `precomputed_boundaries`, `type`, `item`, `fork_sid`, `raw`, `parsed`, `parse_ok`, `correct`, `used_lookup`, `lookup_calls`, `tokens`, `fork_cost_usd`, `claude_version`, `model`, `window`, `commit`, `turn_index`.
+Other files: `config.json` (all settings, versions, commits), `state.json` (running total and session progress), `sessions.jsonl` (one line for each finished session), `calls.jsonl` (every call with cost), `retention.jsonl` (one line for each A, B or O session: summary retention), `scripts/`.
+`lookup_calls` is the list of tool calls of the fork after the probe message (`tool`, and `input` cut to 300 characters). The runner keeps it because it deletes the fork transcript after grading.
+`retention.jsonl` has `found` (planted answers in each `isCompactSummary` record of the main transcript, in order), `last`, `total`, `by_type_last` and `collapse`. The runner writes it when a session ends, before cleanup. The planted answers are the single values of types R, D, S, X (new value), C (earlier token) and U.
 
 ### 5.3 Report (`report.py`)
 
@@ -140,6 +142,10 @@ Other files: `config.json` (all settings, versions, commits), `state.json` (runn
 - Every table has a label: window size, model, Claude Code version, seed count, generator version, hooks commit.
 - Gain verdict words: GAIN (point at least 5 points, CI lower bound above 0, at least 20 pairs), NO GAIN PROVEN, SMALL SAMPLE (fewer than 20 pairs: no claim), NO DATA.
 - A cell with 0 items is "no data", never a pass.
+- Seed spread: for each arm and N, the pooled rate, the min-max over seeds and each seed. A pooled number alone can hide a seed that fails for a random reason.
+- Planted answers in the last summary: for each arm and seed, found/total in the last compaction summary, and the found count of each summary in order. The line `SUMMARY COLLAPSE` appears when the last summary keeps fewer than half of the answers that the previous summary kept. Read it before a claim: a collapse is a random summary failure, not an effect of the arm. It prints "no data" when `retention.jsonl` is missing or empty.
+- Type U lookup trace (information only): for each arm, how many U forks made any tool call and how many called recall, and the first 3 recall commands. It prints "no data" for rows with no `lookup_calls`.
+- `run.sh regrade` applies the S label rule to stored replies. If `retention.jsonl` is missing, it counts from the live transcripts in `~/.claude/projects` when they exist, and prints "no data" when they do not.
 
 ## 6. Pre-registered thresholds (`thresholds.json`)
 

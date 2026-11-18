@@ -4,7 +4,7 @@ Usage: regrade.py <run-id | path of the run folder>
 It keeps the old file as results.jsonl.pre-regrade (only the first time), rewrites results.jsonl,
 and builds the report again with report.py.
 """
-import collections, json, os, shutil, subprocess, sys
+import collections, json, os, re, shutil, subprocess, sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
@@ -14,6 +14,37 @@ import gen, grade
 def need_epoch(cfg, arm, target):
     """Same rule as runner.need_epoch: items of epochs up to this value are planted before the probe."""
     return (max(cfg["n"]) - 1) if arm == "O" else target - 1
+
+
+def compute_retention(rd, cfg, script):
+    """Build retention.jsonl from live transcripts when the run has none. Returns the row count."""
+    out = os.path.join(rd, "retention.jsonl")
+    if os.path.isfile(out) and os.path.getsize(out) > 0:
+        return -1
+    import runner
+    try:
+        state = json.load(open(os.path.join(rd, "state.json"), encoding="utf-8"))
+    except (OSError, ValueError):
+        return 0
+    base = runner.work_base(cfg.get("work_base"))
+    rows = []
+    for name, st in sorted(state.get("sessions", {}).items()):
+        m = re.match(r"s(\d+)-([A-Z])$", name)
+        if not m or m.group(2) == "Z" or not st.get("sid"):
+            continue
+        seed, arm = int(m.group(1)), m.group(2)
+        proj = os.path.realpath(os.path.join(base, "%s%s-s%d-%s" % (runner.PREFIX, cfg["run_id"], seed, arm)))
+        tp = os.path.join(runner.PROJECTS, runner.slug(proj), st["sid"] + ".jsonl")
+        if not os.path.isfile(tp):
+            continue
+        ret = grade.retention(runner.read_jsonl(tp), script(seed))
+        ret.update({"run": cfg["run_id"], "seed": seed, "arm": arm})
+        rows.append(ret)
+    if rows:
+        with open(out, "w", encoding="utf-8") as f:
+            for r in rows:
+                f.write(json.dumps(r, sort_keys=True) + "\n")
+    return len(rows)
 
 
 def main():
@@ -67,6 +98,11 @@ def main():
             if (r["parse_ok"], r["correct"], r.get("abstained", False)) != (g["parse_ok"], g["correct"], g["abstained"]):
                 changed += 1
             r["parsed"], r["parse_ok"], r["correct"], r["abstained"] = g["parsed"], g["parse_ok"], g["correct"], g["abstained"]
+    nret = compute_retention(rd, cfg, script)
+    if nret == 0:
+        print("retention: no data (no transcripts of this run found)", file=sys.stderr)
+    elif nret > 0:
+        print("retention: %d sessions counted from live transcripts" % nret, file=sys.stderr)
     bak = path + ".pre-regrade"
     if not os.path.exists(bak):
         shutil.copyfile(path, bak)

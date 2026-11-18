@@ -58,8 +58,10 @@ bench/continuity/run.sh cleanup
 - 4 items for each scored type, planted in epochs 0, 1, 2 and 4. The probe at N asks about items of epochs up to N-1, oldest first. The JSONL has `epoch` and `age`.
 - Long user text (600 to 1,200 characters) in plant and filler turns.
 - The report has a headroom table (oracle minus arm A at N, 15 points minimum, from `thresholds.json`), an accuracy-by-age table, and prints "BENCHMARK TOO EASY at this N: no claim either way" when the headroom is too small.
+- Diagnostics: the report shows the seed spread (per-seed accuracy and min-max range for each arm), the planted answers found in the last compaction summary (found/total, with a `SUMMARY COLLAPSE` flag), and a U lookup trace (forks that called recall, first 3 recall commands). The summary count is stored in `retention.jsonl`, the fork tool calls in the `lookup_calls` field of each row.
+- S grader: an S answer is right if it equals the value, or ends with the exact value after the last ` = ` or `: `. All other types stay exact.
 - Arm Z parse rate is info only. `SPEC.md` section 14 has the reasons.
-- A reply with an explicit `null` in the main field is an abstention. It counts as parsed and wrong. The report shows the abstain rate (INFO). `run.sh regrade <run-id>` grades stored replies again with no model call.
+- A reply with an explicit `null` in the main field is an abstention. It counts as parsed and wrong. The report shows the abstain rate (INFO). `run.sh regrade <run-id>` grades stored replies again with no model call. It also builds `retention.jsonl` from the live transcripts in `~/.claude/projects` if the file is missing and the transcripts exist. If they do not, the report prints "no data".
 
 ## Seeds and thresholds
 
@@ -98,7 +100,7 @@ Run the same arm on the same seeds twice, with two run ids. Then run `run.sh aa 
 
 ## Where results go
 
-- Each run writes `results/<run-id>/` (gitignored): `config.json`, `state.json`, `results.jsonl`, `sessions.jsonl`, `calls.jsonl`, `scripts/`, `summary.md`, `summary.json`.
+- Each run writes `results/<run-id>/` (gitignored): `config.json`, `state.json`, `results.jsonl`, `sessions.jsonl`, `retention.jsonl`, `calls.jsonl`, `scripts/`, `summary.md`, `summary.json`.
 - To publish: `run.sh report <run-id> --publish`. It writes `docs/proof/<date>-continuity-<sha>.md` and the matching `.jsonl`.
 - The tokens are random and synthetic. The raw JSONL holds no chat content, so it can be committed. Transcripts and work folders never go in git.
 - A README line may cite a result only with date, commit, model, window, Claude Code version and seed count.
