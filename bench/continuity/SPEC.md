@@ -86,7 +86,8 @@ K = 3 instances of each type for each seed. One fork asks the 3 instances of one
 
 Notes:
 
-- Type U is hard for B in the current release: subagent transcripts are not in search (gap review, Gap 4). That sets the "before" number for Gap 4. The report counts main-agent reads of the U files and subagent files, to show that the plant went through a subagent.
+- Type U is outside the score and the gates. The key lives in a subagent transcript only. The main agent sees the line count only (checked: the key is in no main transcript). So no arm can answer U today, not even arm O. Probe replies say "not in this session's history". The report shows U in its own row, "U needs subagent search (Phase 3)", and leaves it out of the pooled score, the oracle gate, the amnesia gate and the gain verdicts. Phase 3 adds subagent-transcript search. Then U gets a gate again.
+- Type E probe text asks for the exact error code text. Without that sentence the model gave a label such as `dead_end_do_not_retry` instead of the code (slice 1: E scored 0/6 in every arm, even arm O). The report counts main-agent reads of the U files and subagent files, to show that the plant went through a subagent.
 - Type C needs the flag and the earlier value. A flag with no earlier value is wrong.
 
 ### 3.3 Timeline
@@ -143,12 +144,13 @@ Other files: `config.json` (all settings, versions, commits), `state.json` (runn
 | Gate | Pass |
 |---|---|
 | Amnesia (arm Z, all types) | 2% or less |
-| Oracle (arm O) | 95% or more |
+| Oracle (arm O, types R D X S E C) | 95% or more |
 | Fresh control F, each arm | 95% or more |
 | Parse rate, each arm | 98% or more |
 | Missed checkpoints (A, B) | 5% or less |
 | Invalid pairs | 20% or less |
 | Probe leaks | 0 |
+| Items planted before compaction 1 | 0 compactions at the end of the plant turns |
 | Gain B minus A | 5 points or more, 95% CI lower bound above 0, 20 pairs or more |
 
 Three primary comparisons: B minus A at N=10, at N=30, and type X at N=10. The file is committed before any run and does not change after a run.

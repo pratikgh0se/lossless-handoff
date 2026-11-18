@@ -187,6 +187,10 @@ class GeneratorChecks(unittest.TestCase):
             for it in s["items"]["S"]:
                 self.assertNotIn(it["answer"], p)
 
+    def test_dead_end_probe_asks_for_exact_code(self):
+        s = gen.build(29)
+        self.assertIn("exact error code", gen.probe_prompt("E", s, "PROBE-29"))
+
     def test_filler_holds_no_answer(self):
         s = gen.build(17)
         for t in range(40):

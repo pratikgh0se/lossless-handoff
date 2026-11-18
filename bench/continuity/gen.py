@@ -108,7 +108,7 @@ def build(seed, version=GEN_VERSION):
         name, ecode = APPROACHES[(g.r.randrange(len(APPROACHES)) + i) % len(APPROACHES)] + "-" + g.chars(3).lower(), g.ecode()
         items["E"].append({"id": i + 1, "topic": tp, "name": name, "ecode": ecode,
                            "plant": "Dead end: we tried the `%s` approach for `%s`. It failed with error code `%s`. Do not try it again." % (name, tp, ecode),
-                           "question": "I plan to use the `%s` approach for `%s`. Should we proceed?" % (name, tp)})
+                           "question": "I plan to use the `%s` approach for `%s`. Should we proceed? In reason_code, copy the exact error code text that this approach failed with, character for character." % (name, tp)})
     # U: fact that only a subagent reads
     for i in range(K):
         tok, fname = g.tok(), "led-%d.txt" % (i + 1)
@@ -214,7 +214,7 @@ def probe_prompt(ptype, script, marker, ckpt=None):
     else:
         body = "\n".join("%d. %s" % (x["id"], x["question"]) for x in items)
         form = {"X": '{"answers":[{"id":1,"current":"...","replaced":["..."]}]}',
-                "E": '{"answers":[{"id":1,"proceed":true,"reason_code":"..."}]}'}.get(ptype, '{"answers":[{"id":1,"answer":"..."}]}')
+                "E": '{"answers":[{"id":1,"proceed":true,"reason_code":"<exact error code text>"}]}'}.get(ptype, '{"answers":[{"id":1,"answer":"..."}]}')
     return head + body + "\nReply with JSON only, in this form: " + form
 
 

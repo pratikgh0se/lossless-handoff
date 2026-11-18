@@ -415,6 +415,8 @@ def run_main_session(ctx, ss):
                 st["status"], st["reason"] = "invalid", "no compaction in %d filler turns" % MAX_NO_BOUNDARY
                 return
         st["next_turn"] = t + 1
+        if st["next_turn"] == P:      # every item is planted: record the compactions so far (must be 0)
+            st["boundaries_at_plant_end"] = st["boundaries"]
         ctx.save()
 
 
@@ -458,7 +460,7 @@ def session_summary(ctx, ss):
     st = ss.st
     out = {"name": ss.name, "seed": ss.seed, "arm": ss.arm, "status": st["status"], "turns": st["turns"],
            "boundaries": st["boundaries"], "precomputed": st.get("precomputed", 0), "missed": st["missed"],
-           "fork_leaks": st["fork_leaks"], "cost_usd": round(st.get("cost", 0.0), 4), "reason": st.get("reason")}
+           "fork_leaks": st["fork_leaks"], "boundaries_at_plant_end": st.get("boundaries_at_plant_end"), "cost_usd": round(st.get("cost", 0.0), 4), "reason": st.get("reason")}
     if ss.arm != "Z" and st.get("sid"):
         main = ss.transcript(st["sid"])
         reads = 0

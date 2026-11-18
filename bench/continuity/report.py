@@ -14,7 +14,9 @@ import argparse, datetime, json, os, random, shutil, sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.realpath(os.path.join(HERE, "..", ".."))
 RESULTS = os.path.join(HERE, "results")
-TYPES = ["R", "D", "X", "S", "E", "U", "C"]       # the scored types; F is a gate, not a score
+ALL_TYPES = ["R", "D", "X", "S", "E", "U", "C"]
+TYPES = ["R", "D", "X", "S", "E", "C"]            # scored and gated types. F is a gate. U is reported apart:
+U_LABEL = "U needs subagent search (Phase 3)"      # its key lives in a subagent transcript only, so no arm can answer it today
 
 
 def load_jsonl(path):
@@ -153,7 +155,7 @@ def build(run_id, draws=None):
         return ag.vec(arm, TYPES, n)
 
     # ---- table 1
-    md.append("### Table 1: accuracy by arm and compaction count (types R D X S E U C pooled)\n")
+    md.append("### Table 1: accuracy by arm and compaction count (types R D X S E C pooled; U is in its own row in Table 2)\n")
     md.append("Label: %s. Exploratory unless the pair count passes the threshold. Interval: 95%% bootstrap over seeds.\n" % label)
     md.append("| Arm | " + " | ".join("N=%d" % n for n in ns) + " |")
     md.append("|---|" + "---|" * len(ns))
@@ -180,7 +182,7 @@ def build(run_id, draws=None):
         md.append("**N = %d**\n" % n)
         md.append("| Type | " + " | ".join(names[a] for a in arms) + (" | B minus A |" if len(arms) == 2 else " |"))
         md.append("|---|" + "---|" * (len(arms) + (1 if len(arms) == 2 else 0)))
-        for ty in TYPES:
+        for ty in ALL_TYPES:
             cells = []
             for a in arms:
                 cs, ts = ag.vec(a, [ty], n)
@@ -189,7 +191,7 @@ def build(run_id, draws=None):
             if len(arms) == 2:
                 (bc, bt), (ac, at) = ag.vec("B", [ty], n), ag.vec("A", [ty], n)
                 cells.append(fmt_diff(boot.diff(bc, bt, ac, at)))
-            md.append("| %s | %s |" % (ty, " | ".join(cells)))
+            md.append("| %s | %s |" % (U_LABEL if ty == "U" else ty, " | ".join(cells)))
         md.append("")
     out["tables"]["t2"] = t2
 
@@ -237,6 +239,10 @@ def build(run_id, draws=None):
                 pairs_bad += 0 if all(have) else 1
         gate("Invalid pairs (seed x N)", "<= %s" % pct(th["invalid_pair_rate_max"]), "%s (%d/%d)" % (pct(pairs_bad / pairs_total), pairs_bad, pairs_total) if pairs_total else "0/0",
              "NO DATA" if not pairs_total else ("PASS" if pairs_bad / pairs_total <= th["invalid_pair_rate_max"] else "FAIL"))
+    pe = [x.get("boundaries_at_plant_end") for x in sess if x["arm"] in ("A", "B", "O")]
+    pe = [x for x in pe if x is not None]
+    gate("Items planted before compaction 1", "0 compactions at plant end", "%d of %d sessions with 0" % (sum(1 for x in pe if x == 0), len(pe)),
+         "NO DATA" if not pe else ("PASS" if all(x == 0 for x in pe) else "FAIL"))
     leaks = sum(s.get("fork_leaks", 0) for s in sess)
     gate("Probe leaks into the main timeline", "0", str(leaks), "PASS" if leaks == 0 else "FAIL")
     bsess = [s for s in sess if s["arm"] == "B" and s["status"] == "done"]

@@ -8,7 +8,7 @@ This benchmark measures one claim: after many compactions, the agent still holds
 - A seeded generator plants items with random answers at the start of a long scripted session (epoch 0).
 - Filler turns (file reads) force compactions. Code counts the `compact_boundary` records in the main transcript.
 - After N = 1, 3, 10 and 30 compactions, the runner forks the session and asks probes. Code grades the answers. No model grades anything.
-- Probe types: R rule, D decision, X decision that was replaced, S exact string, E dead end, U subagent-only fact, C user contradiction. F is a fresh control (a gate, not a score).
+- Probe types: R rule, D decision, X decision that was replaced, S exact string, E dead end, C user contradiction. F is a fresh control (a gate, not a score). U (subagent-only fact) is reported in its own row, "needs subagent search (Phase 3)", and is not in the pooled score or the gates: no arm can answer it until subagent transcripts are searchable.
 - Arms: A plain Claude Code (no hooks). B Lossless Handoff. Z no history (amnesia control). O no compaction (oracle control).
 - Output: one JSONL line per probe item, and a table by arm, type and N with seed-level bootstrap intervals. B minus A is paired by seed.
 
