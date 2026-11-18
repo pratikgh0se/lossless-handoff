@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "registered": "2026-11-18",
+  "note": "Pass thresholds. They come from the verification plan. Commit this file before any scored run. Do not change it after a run to make a result pass.",
+  "amnesia_max_accuracy": 0.02,
+  "oracle_min_accuracy": 0.95,
+  "fresh_min_accuracy": 0.95,
+  "parse_rate_min": 0.98,
+  "missed_checkpoint_rate_max": 0.05,
+  "invalid_pair_rate_max": 0.20,
+  "gain_min_points": 5,
+  "gain_ci_lower_bound_above": 0,
+  "min_pairs": 20,
+  "bootstrap_draws": 10000,
+  "bootstrap_rng_seed": 20261118,
+  "ci_level": 0.95,
+  "primary_comparisons": [
+    {"name": "B minus A at N=10, all types", "n": 10, "type": null},
+    {"name": "B minus A at N=30, all types", "n": 30, "type": null},
+    {"name": "B minus A at N=10, type X", "n": 10, "type": "X"}
+  ]
+}
