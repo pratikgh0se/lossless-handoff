@@ -6,6 +6,7 @@ T="$(mktemp -d)"
 trap 'python3 -c "import shutil,sys; shutil.rmtree(sys.argv[1], ignore_errors=True)" "$T"' EXIT
 export HOME="$T/home"; mkdir -p "$HOME/.claude"
 export HANDOFF_HAIKU_FALLBACK=0
+export LOSSLESS_HANDOFF_MANAGED_SETTINGS="$T/no-managed.json"   # never read the real managed settings file
 export LOSSLESS_HANDOFF_NO_LAUNCHCTL=1   # never load or unload jobs in the real launchd from a temp HOME
 export RECALL_EMBED_URL="http://127.0.0.1:9"   # closed port: recall and the detached indexer stay keyword-only
 # no ollama on PATH: drop any PATH entry that holds one, so the install never pulls a model
@@ -20,6 +21,7 @@ ok() { echo "ok: $*"; }
 cat > "$S" <<'JSON'
 {
   "model": "opus",
+  "cleanupPeriodDays": 365,
   "note": "café ☃",
   "env": {"FOO": "1"},
   "permissions": {"allow": ["Bash(ls:*)"]},
@@ -72,7 +74,7 @@ python3 - "$H" <<'PY'
 import hashlib, json, sys
 h = sys.argv[1]
 m = json.load(open(h + "/.handoff-manifest.json"))
-assert m["version"] == "1.10.1" and m["installed_at"], m
+assert m["version"] == "1.11.0" and m["installed_at"], m
 assert sorted(m["files"]) == ["claims.json", "handoff-nudge.py", "postcompact-inject.py", "precompact-handoff.py", "recall.py"], m
 for n, want in m["files"].items():
     assert hashlib.sha256(open(h + "/" + n, "rb").read()).hexdigest() == want, n
@@ -141,7 +143,7 @@ open(sys.argv[1], "w").write("\n".join(json.dumps(r) for r in rows) + "\n")
 PY
 printf '{"session_id":"smoke1","cwd":"%s","transcript_path":"%s","trigger":"manual"}' "$T" "$TR" \
   | HANDOFF_LEDGER=0 python3 "$H/precompact-handoff.py" >"$T/pre.out" 2>"$T/pre.err"
-[ ! -s "$T/pre.out" ] && [ ! -s "$T/pre.err" ] || fail "precompact printed output"
+[ "$(head -1 "$T/pre.out")" = "Lossless Handoff guidance for this summary:" ] && [ ! -s "$T/pre.err" ] || fail "precompact: expected the F53 block on stdout and nothing on stderr"
 [ -s "$ST/smoke1-latest.md" ] || fail "no latest handoff"
 grep -q "Please refactor the parser" "$ST/smoke1-latest.md" || fail "user message missing from handoff"
 [ "$(wc -l < "$ST/health.jsonl")" -eq 1 ] || fail "expected one health line"
@@ -406,7 +408,7 @@ printf '%s' "$mainin" | HANDOFF_LEDGER=0 python3 "$H/precompact-handoff.py" >/de
 [ -s "$ST/subsess-latest.md" ] || fail "main handoff not written"
 grep -q "MAINMARK" "$ST/subsess-latest.md" || fail "main handoff lacks its own message"
 ( cd "$ST" && cksum subsess-latest.md; ls subsess-* | sort ) > "$T/main.before"
-printf '%s' "$subin" | HANDOFF_LEDGER=0 python3 "$H/precompact-handoff.py" >"$T/sub.out" 2>"$T/sub.err" || fail "subagent precompact exited non-zero"
+printf '%s' "$subin" | HANDOFF_COMPACT_STEER=0 HANDOFF_LEDGER=0 python3 "$H/precompact-handoff.py" >"$T/sub.out" 2>"$T/sub.err" || fail "subagent precompact exited non-zero"
 [ ! -s "$T/sub.out" ] && [ ! -s "$T/sub.err" ] || fail "subagent precompact printed output"
 [ -s "$ST/subsess-a-ag7-latest.md" ] || fail "no subagent handoff subsess-a-ag7-latest.md (have: $(ls "$ST" | tr '\n' ' '))"
 grep -q "SUBMARK" "$ST/subsess-a-ag7-latest.md" || fail "subagent handoff lacks the subagent's own message"
@@ -419,7 +421,7 @@ ok "subagent PreCompact writes <sid>-a-<agent_id> files, main files untouched"
 # --managed-hooks: stages a file, prints the sudo command, runs no sudo, changes no settings
 cp "$S" "$T/before-managed.json"
 printf '{"allowedMcpServers": []}' > "$T/ms-sys.json"; cp "$T/ms-sys.json" "$T/ms-sys.orig"
-HANDOFF_MANAGED_SETTINGS_PATH="$T/ms-sys.json" "$ROOT/install.sh" --managed-hooks >"$T/mh.out" || fail "--managed-hooks failed"
+LOSSLESS_HANDOFF_MANAGED_SETTINGS="$T/ms-sys.json" "$ROOT/install.sh" --managed-hooks >"$T/mh.out" || fail "--managed-hooks failed"
 grep -q "^sudo install -m 644 .*managed-settings.json\" \"$T/ms-sys.json\"" "$T/mh.out" || fail "--managed-hooks did not print the sudo install command: $(cat "$T/mh.out")"
 grep -q "Restart open Claude Code sessions: hooks load when a session starts." "$T/mh.out" || fail "--managed-hooks lacks the restart line"
 cmp -s "$T/ms-sys.json" "$T/ms-sys.orig" || fail "--managed-hooks wrote the system file"
@@ -530,12 +532,12 @@ ok "recall: a 50,000-char message reassembles byte-exactly from open --full + --
 
 # --no-nudge (F50): no nudge file or entry, --check is silent, and a later --no-nudge run removes an earlier nudge
 (
-  export HOME="$T/home-nn"; mkdir -p "$HOME/.claude"
+  export HOME="$T/home-nn"; mkdir -p "$HOME/.claude"; echo '{"cleanupPeriodDays": 365}' > "$HOME/.claude/settings.json"
   "$ROOT/install.sh" --no-nightly --no-nudge >/dev/null
   [ ! -e "$HOME/.claude/hooks/handoff-nudge.py" ] || fail "--no-nudge copied the nudge file"
   ! grep -q handoff-nudge "$HOME/.claude/settings.json" "$HOME/.claude/hooks/.handoff-manifest.json" || fail "--no-nudge left a nudge entry"
   [ -z "$(echo '{}' | python3 "$HOME/.claude/hooks/postcompact-inject.py" --check)" ] || fail "--check not silent after --no-nudge"
-  export HOME="$T/home-nn2"; mkdir -p "$HOME/.claude"
+  export HOME="$T/home-nn2"; mkdir -p "$HOME/.claude"; echo '{"cleanupPeriodDays": 365}' > "$HOME/.claude/settings.json"
   "$ROOT/install.sh" --no-nightly >/dev/null
   grep -q handoff-nudge "$HOME/.claude/settings.json" || fail "plain install has no nudge entry"
   "$ROOT/install.sh" --no-nightly --no-nudge >/dev/null
@@ -543,6 +545,106 @@ ok "recall: a 50,000-char message reassembles byte-exactly from open --full + --
   [ -z "$(echo '{}' | python3 "$HOME/.claude/hooks/postcompact-inject.py" --check)" ] || fail "--check not silent after nudge removal"
 )
 ok "--no-nudge: no nudge file or entry, --check silent, an earlier nudge is removed"
+
+# F52: protect the store. --check line, --keep-transcripts, handoff retention.
+F52LINE_FMT='HANDOFF CHECK: Claude Code deletes chat transcripts after %s days (cleanupPeriodDays), so recall loses older messages. Set "cleanupPeriodDays": 365 in ~/.claude/settings.json, or run ./install.sh --keep-transcripts.'
+(
+  export HOME="$T/home-f52"; mkdir -p "$HOME/.claude"
+  PC="$ROOT/hooks/postcompact-inject.py"
+  pcheck() { python3 "$PC" --check 2>&1 | grep "^HANDOFF CHECK: Claude Code deletes" || true; }   # other lines: the bare HOME has no hooks
+  want30="$(printf "$F52LINE_FMT" 30)"
+  echo '{"cleanupPeriodDays": 30}' > "$HOME/.claude/settings.json"
+  python3 "$PC" --check >/dev/null 2>&1 || fail "F52 --check exit non-zero"
+  o="$(pcheck)"
+  [ "$o" = "$want30" ] || fail "F52.b line wrong: $o"
+  rm "$HOME/.claude/settings.json"
+  [ "$(pcheck)" = "$want30" ] || fail "F52: no settings file should give 30"
+  for v in 90 365; do
+    echo "{\"cleanupPeriodDays\": $v}" > "$HOME/.claude/settings.json"
+    [ -z "$(pcheck)" ] || fail "F52: $v should print no line"
+  done
+  for v in '"abc"' -5 1.5 true; do
+    echo "{\"cleanupPeriodDays\": $v}" > "$HOME/.claude/settings.json"
+    [ "$(pcheck)" = "$want30" ] || fail "F52: value $v should count as 30"
+  done
+  echo 'not json' > "$HOME/.claude/settings.json"
+  o="$(python3 "$PC" --check 2>&1)"; grep -qF "$want30" <<<"$o" && ! grep -q Traceback <<<"$o" || fail "F52: invalid settings: $o"
+  # managed settings file wins over the user value
+  echo '{"cleanupPeriodDays": 365}' > "$HOME/.claude/settings.json"; echo '{"cleanupPeriodDays": 7}' > "$T/ms-f52.json"
+  [ "$(LOSSLESS_HANDOFF_MANAGED_SETTINGS="$T/ms-f52.json" pcheck)" = "$(printf "$F52LINE_FMT" 7)" ] || fail "F52: managed value not used"
+  # installer: --keep-transcripts
+  echo '{"cleanupPeriodDays": 30, "model": "opus"}' > "$HOME/.claude/settings.json"
+  "$ROOT/install.sh" --no-nightly --keep-transcripts >/dev/null
+  python3 -c "import json,sys; d=json.load(open(sys.argv[1])); assert d['cleanupPeriodDays']==365 and d['model']=='opus', d" "$HOME/.claude/settings.json" || fail "F52: --keep-transcripts did not set 365"
+  cp "$HOME/.claude/settings.json" "$T/f52.after"
+  "$ROOT/install.sh" --no-nightly --keep-transcripts >/dev/null
+  cmp -s "$HOME/.claude/settings.json" "$T/f52.after" || fail "F52: second --keep-transcripts run changed settings"
+  "$ROOT/uninstall.sh" >"$T/f52.un"
+  grep -q "cleanupPeriodDays was left at 365" "$T/f52.un" || fail "F52: uninstall line missing: $(cat "$T/f52.un")"
+  python3 -c "import json,sys; assert json.load(open(sys.argv[1]))['cleanupPeriodDays']==365" "$HOME/.claude/settings.json" || fail "F52: uninstall changed the value"
+  echo '{"cleanupPeriodDays": 400}' > "$HOME/.claude/settings.json"
+  "$ROOT/install.sh" --no-nightly --keep-transcripts=120 >/dev/null
+  python3 -c "import json,sys; assert json.load(open(sys.argv[1]))['cleanupPeriodDays']==400" "$HOME/.claude/settings.json" || fail "F52: a higher value was lowered"
+  echo '{"cleanupPeriodDays": 30}' > "$HOME/.claude/settings.json"; cp "$HOME/.claude/settings.json" "$T/f52.orig"
+  for a in --keep-transcripts=10 --keep-transcripts=abc --keep-transcripts=; do
+    rc=0; "$ROOT/install.sh" --no-nightly "$a" >/dev/null 2>&1 || rc=$?
+    [ "$rc" -eq 2 ] && cmp -s "$HOME/.claude/settings.json" "$T/f52.orig" || fail "F52: $a should exit 2 and change nothing (rc $rc)"
+  done
+  o="$("$ROOT/install.sh" --no-nightly --keep-transcripts --dry-run)"
+  cmp -s "$HOME/.claude/settings.json" "$T/f52.orig" || fail "F52: --dry-run changed settings"
+  grep -q "cleanupPeriodDays = 365" <<<"$o" || fail "F52: --dry-run does not name the change: $o"
+  o="$("$ROOT/install.sh" --no-nightly </dev/null)"
+  python3 -c "import json,sys; assert json.load(open(sys.argv[1]))['cleanupPeriodDays']==30" "$HOME/.claude/settings.json" || fail "F52: non-interactive install changed the value"
+  grep -qF "$want30" <<<"$o" || fail "F52: non-interactive install lacks the F52.b text"
+  # managed value: --keep-transcripts does not override
+  o="$(LOSSLESS_HANDOFF_MANAGED_SETTINGS="$T/ms-f52.json" "$ROOT/install.sh" --no-nightly --keep-transcripts)"
+  python3 -c "import json,sys; assert json.load(open(sys.argv[1]))['cleanupPeriodDays']==30" "$HOME/.claude/settings.json" || fail "F52: managed file was overridden"
+  grep -q "managed settings file sets cleanupPeriodDays" <<<"$o" || fail "F52: no managed note"
+  # handoff retention
+  export HANDOFF_STATE_DIR="$T/f52state"; mkdir -p "$HANDOFF_STATE_DIR"
+  mkold() { touch -t "$(python3 -c "import time,sys; print(time.strftime('%Y%m%d%H%M', time.localtime(time.time()-int(sys.argv[1])*86400)))" "$2")" "$HANDOFF_STATE_DIR/$1"; }
+  seed() { rm -f "$HANDOFF_STATE_DIR"/old-* ; for f in old-20.md old-400.md old-20-pending.json old-20-degraded.json old-20-last-health.json; do echo x > "$HANDOFF_STATE_DIR/$f"; done
+    mkold old-20.md 20; mkold old-400.md 400; mkold old-20-pending.json 20; mkold old-20-degraded.json 20; mkold old-20-last-health.json 20; }
+  pin='{"session_id":"f52sess","cwd":"/tmp","transcript_path":"/nonexistent","trigger":"manual"}'
+  seed; printf '%s' "$pin" | HANDOFF_COMPACT_STEER=0 HANDOFF_LEDGER=0 python3 "$ROOT/hooks/precompact-handoff.py" >/dev/null
+  [ -e "$HANDOFF_STATE_DIR/old-20.md" ] && [ ! -e "$HANDOFF_STATE_DIR/old-400.md" ] || fail "F52.d: default retention wrong"
+  [ ! -e "$HANDOFF_STATE_DIR/old-20-pending.json" ] && [ ! -e "$HANDOFF_STATE_DIR/old-20-degraded.json" ] && [ ! -e "$HANDOFF_STATE_DIR/old-20-last-health.json" ] || fail "F52.d: json files must keep the 14-day rule"
+  seed; printf '%s' "$pin" | HANDOFF_RETENTION_DAYS=0 HANDOFF_COMPACT_STEER=0 HANDOFF_LEDGER=0 python3 "$ROOT/hooks/precompact-handoff.py" >/dev/null
+  [ -e "$HANDOFF_STATE_DIR/old-20.md" ] && [ -e "$HANDOFF_STATE_DIR/old-400.md" ] && [ ! -e "$HANDOFF_STATE_DIR/old-20-pending.json" ] || fail "F52.d: HANDOFF_RETENTION_DAYS=0 wrong"
+  seed; printf '%s' "$pin" | HANDOFF_RETENTION_DAYS=abc HANDOFF_COMPACT_STEER=0 HANDOFF_LEDGER=0 python3 "$ROOT/hooks/precompact-handoff.py" >/dev/null
+  [ -e "$HANDOFF_STATE_DIR/old-20.md" ] && [ ! -e "$HANDOFF_STATE_DIR/old-400.md" ] || fail "F52.d: invalid value should count as 365"
+)
+ok "F52: --check line, --keep-transcripts, uninstall note, managed value, handoff retention"
+
+# F53: the PreCompact stdout block
+(
+  export HOME="$T/home-f53"; mkdir -p "$HOME/.claude"; export HANDOFF_STATE_DIR="$T/f53state"; export HANDOFF_LEDGER=0
+  PRE="$ROOT/hooks/precompact-handoff.py"
+  steer="$(sed -n '/^STEER_TEXT = """/,/^"""$/p' "$PRE" | sed '1s/^STEER_TEXT = """//;$d')"
+  [ "$(head -1 <<<"$steer")" = "Lossless Handoff guidance for this summary:" ] && [ "$(wc -l <<<"$steer")" -eq 6 ] || fail "F53: cannot read the block from the hook"
+  run() { printf '%s' "$1" | env "${@:2}" python3 "$PRE" 2>"$T/f53.err"; }
+  o="$(run '{"trigger":"auto","session_id":"f53a","cwd":"/tmp","transcript_path":"/nonexistent"}' X=1)"
+  [ "$o" = "$steer" ] || fail "F53: auto output differs from the block"
+  [ ! -s "$T/f53.err" ] || fail "F53: stderr not empty"
+  [ -s "$HANDOFF_STATE_DIR/f53a-latest.md" ] || fail "F53: handoff not written"
+  o="$(run '{"trigger":"manual","custom_instructions":"keep the API notes","session_id":"f53b","cwd":"/tmp","transcript_path":"/nonexistent"}' X=1)"
+  [ -z "$o" ] && [ -s "$HANDOFF_STATE_DIR/f53b-latest.md" ] || fail "F53: custom_instructions must give empty stdout and a handoff"
+  o="$(run '{"trigger":"manual","custom_instructions":"","session_id":"f53c","cwd":"/tmp","transcript_path":"/nonexistent"}' X=1)"
+  [ "$o" = "$steer" ] || fail "F53: empty custom_instructions should print the block"
+  o="$(run '{"trigger":"auto","session_id":"f53d","cwd":"/tmp","transcript_path":"/nonexistent"}' HANDOFF_COMPACT_STEER=0)"
+  [ -z "$o" ] || fail "F53: HANDOFF_COMPACT_STEER=0 should print nothing"
+  o="$(run '{"trigger":"auto","session_id":"f53e","agent_id":"agx","cwd":"/tmp","transcript_path":"/nonexistent"}' X=1)"
+  [ "$o" = "$steer" ] || fail "F53: subagent event should print the block"
+  for m in "--check" "--reconcile --days 1" "--prove --days 1"; do
+    # shellcheck disable=SC2086
+    o="$(python3 "$PRE" $m </dev/null 2>&1)"; ! grep -q "Lossless Handoff guidance" <<<"$o" || fail "F53: block printed in mode $m"
+  done
+  o="$(python3 "$ROOT/hooks/postcompact-inject.py" --check 2>&1 </dev/null)"; ! grep -q "Lossless Handoff guidance" <<<"$o" || fail "F53: block in --check"
+  for pair in f53a:printed f53b:custom f53d:off; do
+    grep '"sid": *"'"${pair%%:*}"'"' "$HANDOFF_STATE_DIR/health.jsonl" | tail -1 | grep -q '"steer": *"'"${pair##*:}"'"' || fail "F53.e: ${pair%%:*} should have steer ${pair##*:}"
+  done
+)
+ok "F53: block on auto, subagent and empty custom_instructions; silent for custom text, STEER=0 and CLI modes"
 
 "$ROOT/uninstall.sh" >"$T/un.out"
 python3 - "$S" "$T/original.json" <<'PY'

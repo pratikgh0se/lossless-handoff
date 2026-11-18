@@ -10,7 +10,7 @@ if os.environ.get("HANDOFF_HOOK_CHILD"):  # spawned by our own summary call: nev
     sys.exit(0)
 
 _T0 = time.monotonic()
-HOOK_VERSION = "1.10.1"
+HOOK_VERSION = "1.11.0"
 HOME = os.path.expanduser("~")
 HANDOFFS_DIR = (os.environ.get("HANDOFF_STATE_DIR") or "").strip() or os.path.join(HOME, ".local", "state", "claude-handoffs")
 HEALTH_FILE = os.path.join(HANDOFFS_DIR, "health.jsonl")
@@ -1487,6 +1487,38 @@ def write_handoff_files(sid, p, body):
     write_atomic(os.path.join(HANDOFFS_DIR, f"{sid}-latest.md"), body)
 
 
+STEER_TEXT = """Lossless Handoff guidance for this summary:
+- Quote the user's own words for every decision, rule and correction, with the date if known.
+- Keep exact commands, file paths, numbers, ids and error text. Do not paraphrase them.
+- List work that is still running (agents, jobs, background commands) with its ids and state.
+- End with the exact next step.
+- A structured handoff and the project decisions list are injected after this compaction, and the full transcript stays searchable with recall, so keep old history short and keep the current state complete.
+"""
+
+
+_STEER = [None]  # F53.e: "printed", "custom" or "off"; None when this run is not a PreCompact event
+
+
+def steer_summary(d):
+    """F53: Claude Code uses PreCompact stdout as instructions for its own summary. Print the guidance once,
+    flushed, before any model call. Print nothing if the user gave /compact text (F53.b) or HANDOFF_COMPACT_STEER=0."""
+    try:
+        if any(a.startswith("--") for a in sys.argv[1:]):  # a CLI mode, not a PreCompact event
+            return
+        if (os.environ.get("HANDOFF_COMPACT_STEER") or "").strip() == "0":
+            _STEER[0] = "off"
+            return
+        ci = d.get("custom_instructions")
+        if isinstance(ci, str) and ci.strip():
+            _STEER[0] = "custom"
+            return
+        sys.stdout.buffer.write(STEER_TEXT.encode("utf-8"))
+        sys.stdout.buffer.flush()
+        _STEER[0] = "printed"
+    except Exception:
+        pass
+
+
 def main():
     try:
         d = json.load(sys.stdin)
@@ -1494,6 +1526,7 @@ def main():
             d = {}
     except Exception:
         d = {}
+    steer_summary(d)
     sid_raw = d.get("session_id")
     sid = str(sid_raw or "unknown").replace("/", "_")
     av = agent_view(d)
@@ -1561,8 +1594,16 @@ def main():
     if body and av is None:
         start_indexer(d, sid)
     try:
-        cutoff = time.time() - 14 * 86400
-        for pat in ("*.md", "*-degraded.json", "*-last-health.json", "*-pending.json"):
+        keep_days = 365  # F52.d: handoff .md files live 365 days by default; 0 keeps them forever
+        raw = (os.environ.get("HANDOFF_RETENTION_DAYS") or "").strip()
+        if re.fullmatch(r"[0-9]+", raw):
+            keep_days = int(raw)
+        now_t = time.time()
+        for pat, days in (("*.md", keep_days), ("*-degraded.json", 14), ("*-last-health.json", 14),
+                          ("*-pending.json", 14)):
+            if days == 0:
+                continue
+            cutoff = now_t - days * 86400
             for old in glob.glob(os.path.join(HANDOFFS_DIR, pat)):
                 try:
                     if os.path.isfile(old) and os.path.getmtime(old) < cutoff:
@@ -1606,6 +1647,8 @@ def write_health(d, sid, info, body, status_override=None, sidecar=True, reasons
         "hook_version": HOOK_VERSION,
         "canary_child": bool(os.environ.get("HANDOFF_CANARY")),
     }
+    if _STEER[0]:
+        line["steer"] = _STEER[0]
     if isinstance(info.get("ledger_ids"), dict):
         line.update(info["ledger_ids"])
     if agent_id_of(d):  # F46.b

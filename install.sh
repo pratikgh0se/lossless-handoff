@@ -2,15 +2,16 @@
 # Lossless Handoff installer (formerly claude-handoff): copies the hooks and merges them into ~/.claude/settings.json.
 set -euo pipefail
 
-VERSION="0.8.1"
+VERSION="0.9.0"
 usage() {
   cat <<EOF
 Lossless Handoff $VERSION (formerly claude-handoff)
 Copies the hooks (three handoff hooks plus the recall command) into ~/.claude/hooks and merges them into ~/.claude/settings.json.
 Also sets up automatic recall indexing: an end-of-chat hook, an optional bge-m3 model pull, a nightly job (macOS) and a first index.
-Hooks 1.10.0 add: an install check at session start, a nightly reconcile and proof job (macOS), and an install manifest.
+Hooks 1.11.0 keep the chat store: handoff files live 365 days, and --keep-transcripts raises Claude Code's transcript retention.
+The PreCompact hook also gives Claude Code guidance for its own summary.
 
-Usage: ./install.sh [--dry-run] [--force] [--window N] [--no-window] [--yes] [--no-nightly] [--no-nudge] [--canary] [--managed-hooks] [--version] [-h|--help]
+Usage: ./install.sh [--dry-run] [--force] [--window N] [--no-window] [--yes] [--no-nightly] [--no-nudge] [--canary] [--managed-hooks] [--keep-transcripts[=DAYS]] [--version] [-h|--help]
 
   --dry-run     show what would change, change nothing
   --window N    set CLAUDE_CODE_AUTO_COMPACT_WINDOW to N tokens (default 400000;
@@ -30,6 +31,11 @@ Usage: ./install.sh [--dry-run] [--force] [--window N] [--no-window] [--yes] [--
                 standalone mode: write a managed-settings file with the handoff hook
                 entries (so headless runs keep them) and PRINT the sudo command that
                 installs it; nothing else is changed and sudo is never run
+  --keep-transcripts[=DAYS]
+                set cleanupPeriodDays to DAYS (default 365, 90 or more) in ~/.claude/settings.json,
+                only when the value is missing or lower. It never lowers a value and never
+                overrides the managed settings file. Without this flag, an interactive run asks
+                y/N when Claude Code would delete transcripts after less than 90 days
   --force       install even if the same hooks are already registered from another
                 path (they would then run twice); default is to stop with exit 2
   --version     print the version and exit
@@ -40,7 +46,7 @@ search still works (https://ollama.com/download). Ollama itself is never install
 EOF
 }
 
-DRY=0; FORCE=0; WINDOW=400000; SETWINDOW=1; YES=0; NONIGHTLY=0; MANAGED=0; CANARY=0; NONUDGE=0
+DRY=0; FORCE=0; WINDOW=400000; SETWINDOW=1; YES=0; NONIGHTLY=0; MANAGED=0; CANARY=0; NONUDGE=0; KEEP=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --dry-run) DRY=1 ;;
@@ -52,6 +58,11 @@ while [ $# -gt 0 ]; do
     --no-nudge) NONUDGE=1 ;;
     --managed-hooks) MANAGED=1 ;;
     --canary) CANARY=1 ;;
+    --keep-transcripts) KEEP=365 ;;
+    --keep-transcripts=*)
+      KEEP="${1#--keep-transcripts=}"
+      case "$KEEP" in ''|*[!0-9]*) echo "--keep-transcripts needs a whole number of 90 or more" >&2; exit 2 ;; esac
+      if [ "$KEEP" -lt 90 ]; then echo "--keep-transcripts needs a whole number of 90 or more" >&2; exit 2; fi ;;
     --version) echo "Lossless Handoff $VERSION"; exit 0 ;;
     -h|--help) usage; exit 0 ;;
     *) echo "unknown option: $1" >&2; exit 2 ;;
@@ -105,6 +116,7 @@ if [ "$MANAGED" = 1 ]; then
     *) MS_SYS="/etc/claude-code/managed-settings.json" ;;
   esac
   [ -n "${HANDOFF_MANAGED_SETTINGS_PATH:-}" ] && MS_SYS="$HANDOFF_MANAGED_SETTINGS_PATH"
+  [ -n "${LOSSLESS_HANDOFF_MANAGED_SETTINGS:-}" ] && MS_SYS="$LOSSLESS_HANDOFF_MANAGED_SETTINGS"
   if [ "$DRY" = 1 ]; then
     say "write $MS_OUT (the handoff hook entries, merged with $MS_SYS if it exists; that file is only read)"
   else
@@ -156,8 +168,57 @@ PY
   exit 0
 fi
 
+# F52: Claude Code deletes transcripts after cleanupPeriodDays; recall needs them. Find the effective value first.
+CLEANUP_LINE_FMT='HANDOFF CHECK: Claude Code deletes chat transcripts after %s days (cleanupPeriodDays), so recall loses older messages. Set "cleanupPeriodDays": 365 in ~/.claude/settings.json, or run ./install.sh --keep-transcripts.'
+MS_FOR_CLEANUP="${LOSSLESS_HANDOFF_MANAGED_SETTINGS:-${HANDOFF_MANAGED_SETTINGS_PATH:-}}"
+if [ -z "$MS_FOR_CLEANUP" ]; then
+  case "$(uname -s)" in
+    Darwin) MS_FOR_CLEANUP="/Library/Application Support/ClaudeCode/managed-settings.json" ;;
+    *) MS_FOR_CLEANUP="/etc/claude-code/managed-settings.json" ;;
+  esac
+fi
+EFF_LINE="$(HC_SETTINGS="$SETTINGS" HC_MS="$MS_FOR_CLEANUP" python3 - <<'PY'
+import json, os
+def load(p):
+    try:
+        with open(p, encoding="utf-8") as f:
+            d = json.load(f)
+        return d if isinstance(d, dict) else {}
+    except Exception:
+        return {}
+ms, us = load(os.environ["HC_MS"]), load(os.environ["HC_SETTINGS"])
+src, raw = "default", 30
+if "cleanupPeriodDays" in ms:
+    src, raw = "managed", ms["cleanupPeriodDays"]
+elif "cleanupPeriodDays" in us:
+    src, raw = "user", us["cleanupPeriodDays"]
+if isinstance(raw, bool) or not isinstance(raw, int) or raw < 0:
+    raw = 30
+print(raw, src)
+PY
+)"
+EFF_DAYS="${EFF_LINE% *}"; EFF_SRC="${EFF_LINE#* }"
+CLEANUP_WARN=0
+if [ "$EFF_SRC" = managed ]; then
+  if [ -n "$KEEP" ]; then
+    echo "settings: the managed settings file sets cleanupPeriodDays to $EFF_DAYS; --keep-transcripts does not override it"
+    KEEP=""
+  fi
+  if [ "$EFF_DAYS" -lt 90 ]; then CLEANUP_WARN=1; fi
+elif [ -z "$KEEP" ] && [ "$EFF_DAYS" -lt 90 ]; then
+  if [ "$DRY" = 0 ] && [ -t 0 ] && [ -t 1 ]; then
+    printf "Claude Code deletes chat transcripts after %s days. Keep them for 365 days so recall can find older messages? [y/N] " "$EFF_DAYS"
+    read -r ans || ans=""
+    case "$ans" in y|Y) KEEP=365 ;; *) CLEANUP_WARN=1 ;; esac
+  else
+    CLEANUP_WARN=1
+  fi
+fi
+# shellcheck disable=SC2059
+if [ "$CLEANUP_WARN" = 1 ]; then printf "warning: $CLEANUP_LINE_FMT\n" "$EFF_DAYS"; fi
+
 # 3. settings merge
-HC_NONUDGE="$NONUDGE" HC_DRY="$DRY" HC_FORCE="$FORCE" HC_WINDOW="$WINDOW" HC_SETWINDOW="$SETWINDOW" HC_SETTINGS="$SETTINGS" \
+HC_KEEP="$KEEP" HC_NONUDGE="$NONUDGE" HC_DRY="$DRY" HC_FORCE="$FORCE" HC_WINDOW="$WINDOW" HC_SETWINDOW="$SETWINDOW" HC_SETTINGS="$SETTINGS" \
 HC_HOOKS="$HOOKS_DIR" HC_TS="$TS" python3 - <<'PY'
 import json, os, shutil, sys
 dry = os.environ["HC_DRY"] == "1"
@@ -333,6 +394,18 @@ else:
     recall_added = True
     changes.append("add permissions.allow %s" % recall_rule)
 
+cleanup_raised = None
+keep = os.environ.get("HC_KEEP", "")
+if keep:  # F52.c: raise cleanupPeriodDays when it is missing or lower; never lower it
+    keep_n = int(keep)
+    cur_v = data.get("cleanupPeriodDays")
+    if isinstance(cur_v, bool) or not isinstance(cur_v, int) or cur_v < 0 or cur_v < keep_n:
+        data["cleanupPeriodDays"] = keep_n
+        cleanup_raised = keep_n
+        changes.append("set cleanupPeriodDays = %d (--keep-transcripts; Claude Code keeps chat transcripts longer)" % keep_n)
+    else:
+        changes.append("cleanupPeriodDays already %d, left alone" % cur_v)
+
 window_set = None
 if os.environ["HC_SETWINDOW"] == "1":
     env = data.setdefault("env", {})
@@ -387,6 +460,8 @@ if session_end_added:
     marker["session_end_added"] = True
 if check_added:
     marker["check_added"] = True
+if cleanup_raised is not None:
+    marker["cleanup_raised_to"] = cleanup_raised
 marker.setdefault("session_end_added", False)
 marker.setdefault("check_added", False)
 marker.setdefault("recall_allow_added", False)

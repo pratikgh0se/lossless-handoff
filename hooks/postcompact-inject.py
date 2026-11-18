@@ -77,7 +77,7 @@ HARD_MAX = 9900    # each part's total output (warning + header + content + cont
 INLINE_MAX = 9700  # content target per part
 NAMES_MAX = 150    # the section-name list in a continuation line is cut to this many chars
 MAX_PARTS = 3      # F37.6
-HOOK_VERSION = "1.10.1"
+HOOK_VERSION = "1.11.0"
 _SID = ["unknown"]
 
 
@@ -545,6 +545,19 @@ def _vers(path):
         return None
 
 
+def effective_cleanup_days(user, managed):
+    """F52.a: the managed value if that file has the key, else the user value, else 30. A value that is not an
+    integer or is below 0 counts as 30."""
+    raw = 30
+    if isinstance(managed, dict) and "cleanupPeriodDays" in managed:
+        raw = managed["cleanupPeriodDays"]
+    elif isinstance(user, dict) and "cleanupPeriodDays" in user:
+        raw = user["cleanupPeriodDays"]
+    if isinstance(raw, bool) or not isinstance(raw, int) or raw < 0:
+        return 30
+    return raw
+
+
 def check_mode():
     """F45.d: one line `HANDOFF CHECK: ...` when the install is wrong, nothing when it is fine."""
     import hashlib
@@ -561,7 +574,8 @@ def check_mode():
         problems.append("settings.json unreadable")
     managed = None  # F46.g: managed settings (system level) count as well as user settings
     try:
-        mpath = (os.environ.get("HANDOFF_MANAGED_SETTINGS_PATH") or "").strip() or (
+        mpath = (os.environ.get("LOSSLESS_HANDOFF_MANAGED_SETTINGS") or "").strip() or (
+            os.environ.get("HANDOFF_MANAGED_SETTINGS_PATH") or "").strip() or (
             "/Library/Application Support/ClaudeCode/managed-settings.json" if sys.platform == "darwin"
             else "/etc/claude-code/managed-settings.json")
         if os.path.isfile(mpath):
@@ -667,6 +681,14 @@ def check_mode():
         log_error(e)
     if problems:
         sys.stdout.write("HANDOFF CHECK: " + "; ".join(problems) + ". Run the installer again, then restart Claude Code.\n")
+    try:  # F52.b: Claude Code deletes old transcripts; recall needs them
+        days = effective_cleanup_days(st, managed)
+        if days < 90:
+            sys.stdout.write(f"HANDOFF CHECK: Claude Code deletes chat transcripts after {days} days (cleanupPeriodDays), "
+                             "so recall loses older messages. Set \"cleanupPeriodDays\": 365 in ~/.claude/settings.json, "
+                             "or run ./install.sh --keep-transcripts.\n")
+    except Exception as e:
+        log_error(e)
 
 
 if "--check" in sys.argv[1:]:

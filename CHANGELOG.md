@@ -4,6 +4,14 @@ Lossless Handoff, formerly claude-handoff.
 
 ## Unreleased
 
+Protect the store; steer Claude Code's summary (hooks 1.11.0, release 0.9.0). New F52 and F53 in `docs/spec.md`, ACs 218-235.
+
+- Handoff `*.md` files are kept 365 days (was 14). `HANDOFF_RETENTION_DAYS` changes it; `0` keeps them forever. The status JSON files keep the 14-day rule.
+- `postcompact-inject.py --check` warns when `cleanupPeriodDays` is below 90 (managed settings first, then user settings, then 30).
+- `install.sh --keep-transcripts[=DAYS]` raises `cleanupPeriodDays` (default 365). It never lowers it. An interactive install asks y/N. `uninstall.sh` never changes it and says so.
+- The PreCompact hook prints guidance for Claude Code's own summary. It prints nothing for `/compact <text>` or `HANDOFF_COMPACT_STEER=0`. The health row has a `steer` field.
+- Test env `LOSSLESS_HANDOFF_MANAGED_SETTINGS` sets the managed settings path.
+
 ## [0.8.1] - 2026-11-17
 
 Precomputed compactions (hooks 1.10.1).

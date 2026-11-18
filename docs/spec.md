@@ -821,4 +821,7 @@ ACs:
 - 233. `--check`, `--reconcile --days 1`, `--prove --days 1`: no F53.a text in their output.
 - 234. A subagent PreCompact (`agent_id` set): as 229.
 
+**F53.e Proof field.** Each PreCompact health row (the row the hook already writes) gets `"steer"` with one of: `"printed"` (the F53.a block was written), `"custom"` (skipped because `custom_instructions` was non-empty), `"off"` (`HANDOFF_COMPACT_STEER=0`). Rows written before 1.11.0 have no field.
+- 235. After AC 229's run, the new health row has `"steer": "printed"`; after 230, `"custom"`; after 232, `"off"`.
+
 Version: hooks 1.11.0; release 0.9.0. `HOOK_VERSION` in both hooks and the `hook_version` in health rows and sidecars is `1.11.0`. This amends the version value in ACs 136, 150, 172, 180, 188 again.
