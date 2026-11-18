@@ -310,7 +310,7 @@ Turn it off with `HANDOFF_LEDGER=0`. Existing lists are never deleted by turning
 When to use it: a task needs a label, class, extracted value or check for each of hundreds of items or more. A pre-registered OOLONG test (`bench/oolong/`) showed that plain Claude Code filters with a regex, reads a sample and estimates the count.
 
 ```
-python3 ~/.claude/hooks/llm_map.py --in items.txt --prompt "Label each question as ABBR, ENTY, DESC, HUM, LOC or NUM." --out labels.jsonl [--model haiku] [--batch 40] [--jobs 4] [--max-usd 2.00] [--json-out]
+python3 ~/.claude/hooks/llm_map.py --in reviews.txt --prompt "Label each review as positive, negative or mixed." --out labels.jsonl [--model haiku] [--batch 40] [--jobs 4] [--max-usd 2.00] [--json-out]
 ```
 
 - `--in` is a text file with one item per line, or a `.jsonl` file with `text` and an optional `id`.
