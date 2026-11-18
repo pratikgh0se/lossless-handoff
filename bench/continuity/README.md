@@ -63,7 +63,8 @@ bench/continuity/run.sh cleanup
 - Why: on Opus, after some compactions, the model answered the filler question from memory with no Read call. The context stopped growing and the session went invalid ("no compaction in 10 filler turns").
 - Guard: if a filler turn has no Read call on a `pad-*` file, the runner sends one retry turn ("Use the Read tool on each file; do not answer from memory.") before the quiet counter counts it. Same rule for every arm.
 - `sessions.jsonl` has `filler_no_read_turns`, `filler_retries` and `filler_retry_no_read` for each session. `summary.md` shows the totals per arm.
-- Old runs (gen v4 and older) keep 330 lines. `run.sh regrade` and `report` still work on them (the new fields show 0). Do not mix v5 numbers with v4 numbers in one table without the filler change in mind.
+- Old runs (gen v4 and older) keep 330 lines. `run.sh regrade` and `report` still work on them (the new fields show 0).
+- Same facts as v4: the RNG streams of v4 and v5 share one seed text (`gen.stream_version`). For a seed, v5 plants the same items, answers, probes and prompts as v4. Only the filler line counts differ. A test checks seeds 1000-1004 and N 1, 3, 10, 30. So the N curve 1, 3, 10 (v4) to 30 (v5) compares the same facts.
 
 ## Generator v4 in short
 

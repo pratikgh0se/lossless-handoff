@@ -25,9 +25,18 @@ APPROACHES = ("shard-merge delta-replay lazy-flush ring-rebuild tiered-spill bli
 CONS, VOW = "bcdfghjklmnprstvz", "aeiou"
 
 
+def stream_version(version):
+    """Version text in the RNG seeds. Gen v4 and newer share the v4 streams, so v5 plants the same items,
+    answers and probes as v4 for a seed. Only filler_lines differs. Older versions keep their own streams."""
+    try:
+        return "4" if int(version) >= 4 else str(version)
+    except ValueError:
+        return str(version)
+
+
 class Gen:
     def __init__(self, seed, version=GEN_VERSION):
-        self.r = random.Random("lhbench-%s-%d" % (version, seed))
+        self.r = random.Random("lhbench-%s-%d" % (stream_version(version), seed))
         self.used = set()
 
     def _uniq(self, make):
@@ -119,7 +128,7 @@ def sibs(g, tp, taken, n):
 
 def build(seed, version=GEN_VERSION):
     g = Gen(seed, version)
-    pr = random.Random("lhbench-prose-%s-%d" % (version, seed))
+    pr = random.Random("lhbench-prose-%s-%d" % (stream_version(version), seed))
     taken = set()
     items = {t: [] for t in TYPES}
     events = []                                  # plant events: {"epoch", "seq", "kind", "prompt", "files", "delete_after"}
@@ -276,7 +285,7 @@ def filler_lines(seed, name, version=GEN_VERSION):
 
 def filler_file(seed, t, j, lines=None, version=GEN_VERSION):
     """File j of filler turn t. About 20 KB, about 6k tokens on average. Random words and noise tokens."""
-    r = random.Random("lhbench-filler-%s-%d-%d-%d" % (version, seed, t, j))
+    r = random.Random("lhbench-filler-%s-%d-%d-%d" % (stream_version(version), seed, t, j))
     name = "pad-%03d-%d.txt" % (t, j)
     if lines is None:
         lines = filler_lines(seed, name, version)
@@ -296,7 +305,7 @@ def filler_prompt(script, t, names):
     if t > 0 and t % ne == 0:
         pre = "Note for later: " + script["filler_noise"][(t // ne - 1) % len(script["filler_noise"])] + " "
     files = " and ".join("`%s`" % n for n in names)
-    r = random.Random("lhbench-fprose-%s-%d-%d" % (script["gen_version"], script["seed"], t))
+    r = random.Random("lhbench-fprose-%s-%d-%d" % (stream_version(script["gen_version"]), script["seed"], t))
     pre = prose(r) + " " + pre      # long, realistic user text (600 to 1200 characters), so the user-message list of a summary is long too
     return (pre + "Read %s completely with the Read tool. Then reply only with the number of lines of each file, like `name=count`." % files)
 
