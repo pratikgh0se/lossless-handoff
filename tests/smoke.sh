@@ -907,7 +907,7 @@ s.serve_forever()
 PY
   EPID=$!; disown "$EPID"
   for _i in $(seq 1 40); do [ -s "$T/f57-embed.port" ] && break; sleep 0.25; done
-  export RECALL_EMBED_URL="http://127.0.0.1:$(cat "$T/f57-embed.port")"
+  F57PORT="$(cat "$T/f57-embed.port")"; export RECALL_EMBED_URL="http://127.0.0.1:$F57PORT"
   i1="$(R index)"
   m="$(R search Quokkasub --meaning)"
   i2="$(R index)"
