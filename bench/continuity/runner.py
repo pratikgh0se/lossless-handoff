@@ -348,7 +348,9 @@ class Session:
         fsid = o.get("session_id")
         graded = grade.grade(ptype, items, raw)
         epochs = {x["id"]: x.get("epoch") for x in items}
-        used = grade.lookup_used(read_jsonl(self.transcript(fsid)), marker) if fsid else False
+        frecs = read_jsonl(self.transcript(fsid)) if fsid else []
+        used = grade.lookup_used(frecs, marker) if fsid else False
+        calls_after = grade.lookup_calls(frecs, marker) if fsid else []   # kept: the fork transcript is deleted below
         if fsid:    # a later recall must not find this answer: delete the probe transcript
             ft = self.transcript(fsid)
             for pth in (ft, ft[:-6]):
@@ -365,7 +367,7 @@ class Session:
                 "epoch": epochs.get(g["id"]), "age": (ckpt - epochs[g["id"]] if self.arm in ("A", "B") and epochs.get(g["id"]) is not None else None),
                 "fork_sid": fsid, "raw": raw, "parsed": g["parsed"], "parse_ok": g["parse_ok"], "correct": g["correct"],
                 "abstained": g["abstained"],
-                "used_lookup": used, "tokens": {"in": u.get("input_tokens"), "out": u.get("output_tokens")},
+                "used_lookup": used, "lookup_calls": calls_after, "tokens": {"in": u.get("input_tokens"), "out": u.get("output_tokens")},
                 "fork_cost_usd": round(o["_delta"], 6), "claude_version": cfg["claude_version"], "model": cfg["model"],
                 "window": self.window, "commit": cfg["lh_commit"], "turn_index": st["turns"]})
         st["done_forks"].append("%d:%s" % (ckpt, ptype))
@@ -514,6 +516,19 @@ def session_summary(ctx, ss):
     return out
 
 
+def write_retention(ctx, ss):
+    """Count the planted answers in each compaction summary of the main transcript. Runs before cleanup."""
+    if ss.arm == "Z" or not ss.st.get("sid"):
+        return
+    try:
+        ret = grade.retention(read_jsonl(ss.transcript(ss.st["sid"])), ss.script)
+    except Exception as e:      # a diagnostic must never fail a run
+        print("warning: retention failed for %s: %s" % (ss.name, e), file=sys.stderr)
+        return
+    ret.update({"run": ctx.cfg["run_id"], "seed": ss.seed, "arm": ss.arm})
+    ctx.append("retention.jsonl", ret)
+
+
 def run_unit(ctx, seed, arm):
     name = "s%d-%s" % (seed, arm)
     st = ctx.sess(name)
@@ -532,6 +547,7 @@ def run_unit(ctx, seed, arm):
             st["status"] = "done"
         ctx.save()
         ctx.append("sessions.jsonl", session_summary(ctx, ss))
+        write_retention(ctx, ss)
     except Pause:
         st["status"] = "paused"
         ctx.save()
@@ -539,6 +555,7 @@ def run_unit(ctx, seed, arm):
         st["status"], st["reason"] = "failed", str(e)
         ctx.save()
         ctx.append("sessions.jsonl", session_summary(ctx, ss))
+        write_retention(ctx, ss)
     except Fatal as e:
         st["status"], st["reason"] = "failed", str(e)
         ctx.save()

@@ -353,6 +353,85 @@ def build(run_id, draws=None):
         md.append("| %s | %s |" % (names[a], " | ".join(cells)))
     md.append("")
 
+    # ---- seed spread
+    md.append("### Seed spread (types R D X S E C M pooled; pooled rate, min-max over seeds, each seed)\n")
+    md.append("| Arm | N | Pooled | Min-max over seeds | Per seed |")
+    md.append("|---|---|---|---|---|")
+    spread = {}
+    for a in arms:
+        for n in ns:
+            cs, ts = pooled(a, n)
+            rates = [(sd, c / t) for sd, c, t in zip(ag.seeds, cs, ts) if t]
+            if not rates:
+                md.append("| %s | %d | no data | no data | no data |" % (names[a], n))
+                continue
+            lo, hi = min(r for _, r in rates), max(r for _, r in rates)
+            md.append("| %s | %d | %s | %s-%s | %s |" % (names[a], n, pct(sum(cs) / sum(ts)), pct(lo), pct(hi),
+                                                      ", ".join("s%d %s" % (sd, pct(r)) for sd, r in rates)))
+            spread["%s/%d" % (a, n)] = {"pooled": sum(cs) / sum(ts), "min": lo, "max": hi, "per_seed": {str(sd): r for sd, r in rates}}
+    out["tables"]["seed_spread"] = spread
+    md.append("")
+
+    # ---- summary retention
+    md.append("### Planted answers in the last summary (found/total; types R D S X C U; answer values only)\n")
+    ret = [x for x in load_jsonl(os.path.join(rd, "retention.jsonl")) if x.get("summaries")]     # arm O has no summary
+    out["tables"]["retention"] = ret
+    if not ret:
+        md.append("no data (no retention.jsonl, or no summary in it: the transcripts of this run were already deleted)")
+    else:
+        rarms = [a for a in ("A", "B", "O") if any(x["arm"] == a for x in ret)]
+        md.append("| Seed | " + " | ".join(names[a] for a in rarms) + " |")
+        md.append("|---|" + "---|" * len(rarms))
+        for sd in sorted({x["seed"] for x in ret}):
+            cells = []
+            for a in rarms:
+                x = next((y for y in ret if y["arm"] == a and y["seed"] == sd), None)
+                cells.append("no data" if x is None or x["last"] is None else "%d/%d (%d summaries)" % (x["last"], x["total"], x["summaries"]))
+            md.append("| %d | %s |" % (sd, " | ".join(cells)))
+        md.append("")
+        md.append("Found in each summary, in order:\n")
+        for x in sorted(ret, key=lambda y: (y["arm"], y["seed"])):
+            md.append("- arm %s seed %d: %s of %d" % (x["arm"], x["seed"], ", ".join(map(str, x["found"])) or "no summary", x["total"]))
+        md.append("")
+        flags = [x for x in ret if len(x.get("found") or []) >= 2 and max(x["found"][:-1]) > 0
+                 and x["found"][-1] < max(x["found"][:-1]) / 2]     # recomputed, so old retention.jsonl files use the current rule
+        for x in sorted(flags, key=lambda y: (y["arm"], y["seed"])):
+            md.append("SUMMARY COLLAPSE: arm %s seed %d: the last summary keeps %d of %d answers, the best earlier one kept %d." % (
+                x["arm"], x["seed"], x["last"], x["total"], max(x["found"][:-1])))
+        if not flags:
+            md.append("No summary collapse (a collapse = the last summary keeps fewer than half of the answers that the best earlier summary kept).")
+    md.append("")
+
+    # ---- U lookup trace
+    md.append("### Type U lookup trace (information only: tool calls of the fork after the probe)\n")
+    urows = [r for r in rows if r["type"] == "U" and r["arm"] in ("A", "B", "O")]
+    if not urows or not any("lookup_calls" in r for r in urows):
+        md.append("no data (the result rows hold no lookup_calls)")
+    else:
+        md.append("| Arm | U forks | Forks with any tool call | Forks that called recall |")
+        md.append("|---|---|---|---|")
+        cmds = {}
+        for a in ("A", "B", "O"):
+            forks = {}
+            for r in urows:
+                if r["arm"] == a:
+                    forks[(r["seed"], r["n_target"], r["fork_sid"])] = r.get("lookup_calls")
+            if not forks:
+                continue
+            have = [c for c in forks.values() if c is not None]
+            anyc = sum(1 for c in have if c)
+            rec = [[x for x in c if "recall" in (x.get("input") or "").lower() or "recall" in (x.get("tool") or "").lower()] for c in have]
+            md.append("| %s | %d | %s | %s |" % (names[a], len(forks), "%d/%d" % (anyc, len(have)) if have else "no data",
+                                                "%d/%d" % (sum(1 for x in rec if x), len(have)) if have else "no data"))
+            cmds[a] = [x for lst in rec for x in lst][:3]
+        md.append("")
+        for a, lst in cmds.items():
+            md.append("First recall commands, arm %s: %s" % (a, "none" if not lst else ""))
+            for x in lst:
+                md.append("- `%s` %s" % (x.get("tool"), (x.get("input") or "").replace("\n", " ").replace("`", "'")))
+        out["tables"]["u_recall_cmds"] = cmds
+    md.append("")
+
     # ---- cost and turns per compaction
     calls = load_jsonl(os.path.join(rd, "calls.jsonl"))
     md.append("### Cost per compaction (to predict the cost of a full run)\n")

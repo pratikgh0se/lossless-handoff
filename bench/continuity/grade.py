@@ -39,6 +39,17 @@ def norm(v):
     return s
 
 
+def s_label_match(a, want):
+    """Type S only: the reply is `<anything> = <value>` or `<anything>: <value>`.
+    The value must be the whole text after the last ` = ` or `: `. A longer text after the label is wrong."""
+    cuts = [(a.rfind(sep), len(sep)) for sep in (" = ", ": ")]
+    cuts = [c for c in cuts if c[0] != -1]
+    if not cuts:
+        return False
+    i, n = max(cuts)
+    return norm(a[i + n:]) == want
+
+
 def as_bool(v):
     if isinstance(v, bool):
         return v
@@ -71,7 +82,7 @@ def check(ptype, item, e):
         if a is None:
             return False, False
         want = item["answer"]
-        ok = a == want or (ptype == "R" and a == "TAG-" + want)
+        ok = a == want or (ptype == "R" and a == "TAG-" + want) or (ptype == "S" and s_label_match(a, want))
         return True, ok
     if ptype == "X":
         cur = norm(e.get("current"))
@@ -146,3 +157,73 @@ def lookup_used(records, marker):
                     if ".claude/projects" in s or ".jsonl" in s or "recall.py" in s:
                         return True
     return False
+
+
+def lookup_calls(records, marker, limit=300):
+    """Tool calls after the probe message (the one with the marker), in order:
+    [{"tool": name, "input": input as JSON text cut to `limit` characters}]. Information only."""
+    out = []
+    seen = False
+    for r in records:
+        m = r.get("message") if isinstance(r, dict) else None
+        if not isinstance(m, dict) or not isinstance(m.get("content"), (list, str)):
+            continue
+        c = m["content"]
+        if not seen:
+            txt = c if isinstance(c, str) else " ".join(b.get("text", "") for b in c if isinstance(b, dict) and b.get("type") == "text")
+            if marker in txt and r.get("type") == "user":
+                seen = True
+            continue
+        if isinstance(c, list):
+            for b in c:
+                if isinstance(b, dict) and b.get("type") == "tool_use":
+                    out.append({"tool": b.get("name"), "input": json.dumps(b.get("input"), ensure_ascii=False)[:limit]})
+    return out
+
+
+# ---- summary retention: how many planted answers a compaction summary still holds
+RETAIN_TYPES = ("R", "D", "S", "X", "C", "U")
+RETAIN_FIELD = {"R": "answer", "D": "answer", "S": "answer", "U": "answer", "X": "new", "C": "tok1"}
+
+
+def planted_answers(script):
+    """[(type, item id, value)] for every probe answer with one value: R, D, S, X new value, C, U."""
+    out = []
+    for t in RETAIN_TYPES:
+        for it in script["items"].get(t, []):
+            v = it.get(RETAIN_FIELD[t])
+            if isinstance(v, str) and v:
+                out.append((t, it["id"], v))
+    return out
+
+
+def summary_texts(records):
+    """Text of each isCompactSummary record, in order."""
+    out = []
+    for r in records:
+        if not (isinstance(r, dict) and r.get("isCompactSummary")):
+            continue
+        m = r.get("message")
+        c = m.get("content") if isinstance(m, dict) else None
+        if isinstance(c, list):
+            c = "\n".join(b.get("text", "") for b in c if isinstance(b, dict) and isinstance(b.get("text"), str))
+        out.append(c if isinstance(c, str) else json.dumps(m, ensure_ascii=False))
+    return out
+
+
+def retention(records, script):
+    """Count the planted answers found in each summary. Returns
+    {"total", "summaries", "found" (per summary, in order), "last", "by_type_last", "collapse"}.
+    collapse is True when the last summary keeps fewer than half of what the best earlier summary kept."""
+    ans = planted_answers(script)
+    texts = summary_texts(records)
+    found = [sum(1 for (_t, _i, v) in ans if v in tx) for tx in texts]
+    by_type = {}
+    if texts:
+        for (t, _i, v) in ans:
+            c = by_type.setdefault(t, [0, 0])
+            c[1] += 1
+            c[0] += 1 if v in texts[-1] else 0
+    collapse = len(found) >= 2 and max(found[:-1]) > 0 and found[-1] < max(found[:-1]) / 2
+    return {"total": len(ans), "summaries": len(texts), "found": found, "last": found[-1] if found else None,
+            "by_type_last": by_type, "collapse": collapse}

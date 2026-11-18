@@ -339,5 +339,60 @@ class GeneratorChecks(unittest.TestCase):
             self.assertTrue(any(it["ecode"] in c for c in files.values()))
 
 
+class SLabel(Base):
+    def grade_s(self, answer):
+        it = self.I["S"][0]
+        r = grade.grade("S", [it], js([{"id": it["id"], "answer": answer}]))[0]
+        return it, r["correct"]
+
+    def test_accept_label_forms(self):
+        it = self.I["S"][0]
+        v = it["answer"]
+        for a in (v, "config: deploy command for x = " + v, "deploy: " + v, "label = " + v, "`" + v + "`", "a: b = " + v, "a = b: " + v):
+            self.assertTrue(self.grade_s(a)[1], a)
+
+    def test_reject_label_forms(self):
+        it = self.I["S"][0]
+        v = it["answer"]
+        for a in ("config: x = " + v + "z", "config: x = other-value", "config: x = " + v + " and more", "see " + v + " in the file",
+                  "x = " + v + ": extra", v + "z", "x=" + v, "x:" + v):
+            self.assertFalse(self.grade_s(a)[1], a)
+
+    def test_other_types_stay_exact(self):
+        it = self.I["R"][0]
+        for a in ("rule = " + it["answer"], "rule: " + it["answer"]):
+            r = grade.grade("R", [it], js([{"id": it["id"], "answer": a}]))[0]
+            self.assertFalse(r["correct"], a)
+
+
+class Diagnostics(Base):
+    def test_lookup_calls_cut_and_order(self):
+        recs = [{"type": "user", "message": {"content": "hello PROBE-1-A-1-U"}},
+                {"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "Agent", "input": {"subagent_type": "recall", "prompt": "x" * 500}},
+                                                               {"type": "tool_use", "name": "Bash", "input": {"command": "ls"}}]}}]
+        before = [{"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "Read", "input": {"p": 1}}]}}]
+        got = grade.lookup_calls(before + recs, "PROBE-1-A-1-U")
+        self.assertEqual([c["tool"] for c in got], ["Agent", "Bash"])
+        self.assertEqual(len(got[0]["input"]), 300)
+        self.assertEqual(grade.lookup_calls(before, "PROBE-1-A-1-U"), [])
+
+    def test_retention_counts_and_collapse(self):
+        ans = grade.planted_answers(self.s)
+        self.assertEqual({t for t, _, _ in ans}, set("RDSXCU"))
+        vals = [v for _, _, v in ans]
+
+        def summ(vs):
+            return {"type": "user", "isCompactSummary": True, "message": {"content": [{"type": "text", "text": "notes " + " ".join(vs)}]}}
+        recs = [{"type": "user", "message": {"content": "plain"}}, summ(vals[:10]), summ(vals[:3])]
+        r = grade.retention(recs, self.s)
+        self.assertEqual((r["found"], r["total"], r["last"], r["summaries"]), ([10, 3], len(vals), 3, 2))
+        self.assertTrue(r["collapse"])
+        r2 = grade.retention([summ(vals[:10]), summ(vals[:5])], self.s)
+        self.assertFalse(r2["collapse"])
+        r3 = grade.retention([summ(vals[:10]), summ(vals[:2]), summ(vals[:2])], self.s)
+        self.assertTrue(r3["collapse"])  # the drop came before the last step; the best earlier summary counts
+        self.assertIsNone(grade.retention([], self.s)["last"])
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=1)
