@@ -2,6 +2,14 @@
 
 Lossless Handoff, formerly claude-handoff.
 
+## [0.11.1] - 2026-11-18
+
+Find what a subagent read (hooks 1.13.1). New F59 in `docs/spec.md`, ACs 268-273.
+
+- In keyword search, a plain pattern with a space, `-` or `_` matches any run of these characters, so `ledger key` finds `ledger-key`. `--fixed` stays exact. Other patterns keep their meaning.
+- A hit line from a tool call ends with ` -> result <id>` when the same chat holds the tool result. `open <id>` prints that result.
+- `agents/recall.md` and the recall line tell the model to open that id.
+
 ## [0.11.0] - 2026-11-18
 
 Subagent work in search, and rules at subagent start (hooks 1.13.0). New F57 and F58 in `docs/spec.md`, ACs 255-267.

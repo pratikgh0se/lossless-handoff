@@ -77,7 +77,7 @@ HARD_MAX = 9900    # each part's total output (warning + header + content + cont
 INLINE_MAX = 9700  # content target per part
 NAMES_MAX = 150    # the section-name list in a continuation line is cut to this many chars
 MAX_PARTS = 3      # F37.6
-HOOK_VERSION = "1.13.0"
+HOOK_VERSION = "1.13.1"
 _SID = ["unknown"]
 
 
@@ -184,7 +184,8 @@ RECALL_LINE = ("- recall: earlier chats in this project are searchable word for 
                "anything vague here (exact commands, numbers, paths, names, the user's wording) and whenever the user "
                "refers to something said earlier; quote what you find instead of guessing. "
                "If recall and the decisions list disagree, the decisions list and the user's latest words win: "
-               "recall shows history, not current rules.\n")
+               "recall shows history, not current rules. "
+               "If a hit is a tool call that shows `-> result <id>`, open that id to see what the tool returned.\n")
 
 
 RECALL_AGENT_MARK = "<!-- lossless-handoff:recall-agent -->"

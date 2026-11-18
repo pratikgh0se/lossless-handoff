@@ -74,7 +74,7 @@ python3 - "$H" <<'PY'
 import hashlib, json, sys
 h = sys.argv[1]
 m = json.load(open(h + "/.handoff-manifest.json"))
-assert m["version"] == "1.13.0" and m["installed_at"], m
+assert m["version"] == "1.13.1" and m["installed_at"], m
 assert sorted(m["files"]) == ["claims.json", "handoff-nudge.py", "postcompact-inject.py", "precompact-handoff.py", "recall.py"], m
 for n, want in m["files"].items():
     assert hashlib.sha256(open(h + "/" + n, "rb").read()).hexdigest() == want, n
@@ -832,7 +832,7 @@ rows = {json.loads(x)["sid"]: json.loads(x) for x in open(sys.argv[1]) if x.stri
 a, b = rows["f56a"], rows["f56b"]
 assert a["excerpt_chars"] > 0 and a["excerpt_dropped"] == 0, a
 assert b["excerpt_dropped"] > 0 and 0 < b["excerpt_chars"] <= 120000, b
-assert a["hook_version"] == "1.13.0"
+assert a["hook_version"] == "1.13.1"
 PY
   p="$(python3 "$ROOT/hooks/precompact-handoff.py" --prove --days 1; echo "rc=$?")"
   grep -qE "^excerpt cut: 1 of 2 compactions, median dropped [0-9]+ chars$" <<<"$p" || fail "F56.b: prove line: $p"
@@ -918,6 +918,49 @@ PY
 )
 ok "F57: subagent hits by default, ids and tags, --no-subagents, open, user, meaning index"
 
+# F59: loose separators and the result pointer (ACs 268, 270, 271; 269 and 272 as extra checks)
+(
+  export HOME="$T/home-f59"; mkdir -p "$HOME/.claude"; export HANDOFF_LEDGER=0
+  RC="$ROOT/hooks/recall.py"
+  python3 - "$HOME" <<'PY'
+import json, os, subprocess, sys
+home = sys.argv[1]
+proj = os.path.join(home, "proj"); os.makedirs(proj)
+subprocess.run(["git", "-C", proj, "init", "-q"], check=True)
+proj = os.path.realpath(proj)
+sid = "cccccccc-1111-2222-3333-444444444444"
+aid = "ag98765432abcdef"
+pdir = os.path.join(home, ".claude", "projects", proj.replace("/", "-")); os.makedirs(os.path.join(pdir, sid, "subagents"))
+def w(path, rows):
+    open(path, "w").write("\n".join(json.dumps(r) for r in rows) + "\n")
+def rec(t, content, n):
+    return {"type": t, "uuid": "u%d" % n, "timestamp": "2026-11-18T10:00:%02d.000Z" % n, "cwd": proj,
+            "isSidechain": True, "agentId": aid, "message": {"role": t, "content": content}}
+w(os.path.join(pdir, sid + ".jsonl"), [{"type": "user", "uuid": "m1", "timestamp": "2026-11-18T10:00:01.000Z", "cwd": proj,
+                                         "message": {"role": "user", "content": "typed F59MAIN words"}}])
+w(os.path.join(pdir, sid, "subagents", "agent-%s.jsonl" % aid), [
+    rec("user", "SUBPROMPT read the file", 2),
+    rec("assistant", [{"type": "tool_use", "id": "toolu_led1", "name": "Read", "input": {"file_path": "led-1.txt"}}], 3),
+    rec("user", [{"type": "tool_result", "tool_use_id": "toolu_led1", "content": "ledger-key: AH8X-2548-MJ8D"}], 4)])
+open(os.path.join(home, "ids"), "w").write("%s\n" % proj)
+PY
+  PROJ="$(sed -n 1p "$HOME/ids")"
+  R() { (cd "$PROJ" && python3 "$RC" "$@"); }
+  out="$(R search "ledger key" --keyword)"
+  grep -qE "^cccccccc/ag987654:3 .*AH8X-2548-MJ8D" <<<"$out" || fail "F59: AC 268, loose separators: $out"
+  out="$(R search "ledger key" --keyword --fixed)"
+  ! grep -q "AH8X-2548-MJ8D" <<<"$out" || fail "F59: --fixed must stay exact: $out"
+  out="$(R search "led-1.txt" --keyword)"
+  grep -qE "^cccccccc/ag987654:2 .* -> result cccccccc/ag987654:3$" <<<"$out" || fail "F59: AC 270, result pointer: $out"
+  o="$(R open cccccccc/ag987654:3 --around 0)"
+  grep -q "AH8X-2548-MJ8D" <<<"$o" || fail "F59: AC 271, open of the result id: $o"
+  grep -q "AH8X-2548-MJ8D" <<<"$(R search 'ledger.key' --keyword)" || fail "F59: regex ledger.key"
+  grep -q "AH8X-2548-MJ8D" <<<"$(R search 'zzz|ledger-key' --keyword)" || fail "F59: regex with |"
+  grep -q -- "-> result" "$ROOT/agents/recall.md" && grep -q -- "-> result" "$ROOT/hooks/postcompact-inject.py" \
+    && grep -q -- "-> result" "$ROOT/hooks/precompact-handoff.py" || fail "F59: AC 273, text"
+)
+ok "F59: loose separators find ledger-key; a tool call hit points to its result"
+
 # F58: rules at subagent start
 (
   export HOME="$T/home-f58"; mkdir -p "$HOME/.claude/hooks"
@@ -954,7 +997,7 @@ PY
 import json, sys
 rows = [json.loads(x) for x in open(sys.argv[1]) if x.strip()]
 r = [x for x in rows if x.get("event") == "subagent_start"][-1]
-assert r["rules"] == 2 and r["chars"] > 0 and r["hook_version"] == "1.13.0" and r["agent_type"] == "general-purpose", r
+assert r["rules"] == 2 and r["chars"] > 0 and r["hook_version"] == "1.13.1" and r["agent_type"] == "general-purpose", r
 PY
   # AC 262: no handoff text, no agent notes
   printf '# Handoff\n- cwd: %s\nLATESTTOKEN\n' "$PROJ" > "$STF/s58-latest.md"; printf 'AGENTTOKEN\n' > "$STF/s58-agent.md"
