@@ -182,7 +182,7 @@ if [ -e "$HOOKS_DIR/handoff-canary" ] || [ -e "$HOOKS_DIR/handoff-canary.sh" ]; 
   fi
 fi
 
-for f in precompact-handoff.py postcompact-inject.py handoff-nudge.py recall.py claims.json .handoff-manifest.json .claude-handoff-install.json; do
+for f in precompact-handoff.py postcompact-inject.py handoff-nudge.py recall.py llm_map.py claims.json .handoff-manifest.json .claude-handoff-install.json; do
   if [ -e "$HOOKS_DIR/$f" ]; then
     say "remove $HOOKS_DIR/$f"
     [ "$DRY" = 1 ] || rm "$HOOKS_DIR/$f"
@@ -197,6 +197,17 @@ if [ -e "$AGENT_DST" ]; then
     [ "$DRY" = 1 ] || rm "$AGENT_DST"
   else
     echo "kept $AGENT_DST (it is not ours)"
+  fi
+fi
+
+# F60.c: remove the llm-map skill only when it holds our marker line
+SK_DST="$HOME/.claude/skills/llm-map/SKILL.md"
+if [ -e "$SK_DST" ]; then
+  if grep -qF "<!-- lossless-handoff:llm-map-skill -->" "$SK_DST" 2>/dev/null; then
+    say "remove $SK_DST"
+    if [ "$DRY" = 0 ]; then rm "$SK_DST"; rmdir "$(dirname "$SK_DST")" 2>/dev/null || true; fi
+  else
+    echo "kept $SK_DST (it is not ours)"
   fi
 fi
 

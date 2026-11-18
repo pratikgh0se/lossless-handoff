@@ -1,0 +1,15 @@
+Add F60 tests (ACs 274-280) and move the hook version pin to 1.14.0
+
+Add test_f60_llm_map.py with a fake claude set by LLM_MAP_CLAUDE.
+Move every 1.13.1 pin to 1.14.0 (ACs 136, 150, 172, 180, 188, 267).
+
+Red run on the v0.11.1 code (hooks hold 1.13.1, no llm_map.py):
+- test_f60_llm_map: 24 tests, 23 fail, 1 pass.
+  The pass is test_ac280_uninstall_keeps_unmarked_file (the file is kept today).
+- test_f42_lossless_rules: 49 tests, 1 fail (AC 136 version pin).
+- test_f44_recall: 56 tests, 1 fail (AC 150 version pin).
+- test_f45_no_silent_miss: 18 tests, 4 fail (AC 172 and 180 version pins).
+- test_f46_subagent_isolation: 12 tests, 3 fail (AC 188 version pin).
+- test_f58_subagent_start: 36 tests, 2 fail (AC 267 version pin).
+Other files were not run.
+

@@ -957,3 +957,29 @@ ACs (fixture: an in-scope session with one subagent transcript. The subagent has
 - 273. The installed `recall.md` and the SessionStart `compact` recall line both hold the text `-> result`.
 
 Version: hooks 1.13.1; release 0.11.1. `HOOK_VERSION` in both hooks and `hook_version` in health rows and sidecars is `1.13.1`. This amends the version value in ACs 136, 150, 172, 180, 188 and 267 again.
+
+## F60 llm_map: label many items with a small model (2026-11-18)
+Why: the LCM paper's `llm_map` sends each item of a large set through a small model and stores the results, so the main model aggregates exact per-item answers instead of guessing. The pre-registered OOLONG decision (bench/oolong/decision.json, P4-1; run 20261118T132316, Sonnet, Claude Code 2.1.326, trec_coarse 128K, 20 tasks) gave the best plain arm a clean mean of 0.69 (rule: build if 0.70 or less). In the transcripts, plain Claude Code filtered with a regex, read a sample and estimated a count; it never used subagents, even when the prompt allowed them.
+
+**F60.a Command.** `python3 ~/.claude/hooks/llm_map.py --in <file> --prompt <text> --out <file> [--model haiku] [--batch 40] [--jobs 4] [--max-usd 2.00] [--json-out]`
+- `--in`: a text file with one item per line (empty lines are skipped), or a `.jsonl` file whose objects hold `text` (and optionally `id`). Item numbers `i` start at 1, in file order.
+- Items go in batches of `--batch` to the model. Each batch prompt holds the `--prompt` text, then the items as numbered lines `<i>: <text>`, and asks for exactly one JSON line per item: `{"i": <i>, "out": <answer>}`. With `--json-out`, `out` may be any JSON value; else it is a string.
+- Up to `--jobs` batches run at the same time.
+- Items missing from a batch reply, or with lines that do not parse, are sent once more in a new batch. Items that fail again get `"out": null, "error": "<short reason>"`.
+- `--out` gets one JSON line per item, in input order: `{"i", "id" (if given), "text", "out"}` (plus `error` when set). The file is written atomically at the end.
+- stdout ends with one line: `llm_map: <n> items, <ok> ok, <failed> failed, <b> batches, cost $<x.xxxx>` where cost is the sum of `total_cost_usd` the model calls report.
+- `--max-usd`: no new batch starts when the spent total plus the largest batch cost seen so far would pass the cap; unsent items get `error: "budget"`. Exit code 0 when every item has `out`, 3 when some failed, 2 on a usage error (missing file, bad flag, empty input).
+**F60.b Model call.** Each batch runs `claude -p` with the chosen model, JSON output, no tools, no hooks, no MCP servers, no session saved to disk, and a cwd in a new temp folder that is deleted after. The env var `LLM_MAP_CLAUDE` replaces the `claude` command (tests use a fake). Lossless Handoff hooks never run for these calls, so they never write handoffs, ledger rows or health rows.
+**F60.c Skill.** `install.sh` writes `~/.claude/skills/llm-map/SKILL.md` when it is missing or holds the marker line `<!-- lossless-handoff:llm-map-skill -->`; it never overwrites a file without the marker (it prints `~/.claude/skills/llm-map/SKILL.md exists and is not ours; left unchanged.`). `--dry-run` writes nothing; `uninstall.sh` removes it only when it holds the marker. The skill frontmatter has `name: llm-map` and a `description` that says: use it to label, classify, extract or check each item of a large list (hundreds or more) with a small model, instead of estimating from a sample. The body has the marker, the F60.a command with an example (write items to a file with a short script first, run llm_map, then count or aggregate the `out` values with a script), and the rule: report exact counts from the output, and say how many items failed.
+**F60.d Install.** `install.sh` copies `hooks/llm_map.py` with the other hook files. It changes no `settings.json` entry.
+
+ACs (all with a fake `claude` set by `LLM_MAP_CLAUDE`, a script that reads the prompt from its arguments or stdin, answers `{"i": n, "out": "<label>"}` lines, and prints a JSON result object with `result` and `total_cost_usd` like `claude -p --output-format json`):
+- 274. 100 items, `--batch 40`: `--out` has 100 lines in input order with `i` 1..100 and the fake's labels; stdout ends with `llm_map: 100 items, 100 ok, 0 failed, 3 batches, cost $` and the summed fake cost; exit 0.
+- 275. A fake that drops item 7 the first time and answers it on the retry: item 7 has its label, no `error`, exit 0. A fake that never answers item 7: item 7 has `out` null and an `error`, the summary says `1 failed`, exit 3.
+- 276. `.jsonl` input with `id` and `text`: each output line keeps the `id`.
+- 277. `--max-usd` smaller than two batch costs: some items get `error: "budget"`, the summary counts them as failed, exit 3, and the number of fake calls is less than the batch count.
+- 278. A missing `--in` file, or an input with no items: exit 2, a message on stderr, no `--out` file.
+- 279. The fake records its argv and cwd: the call has `-p`, `--model haiku` (default), JSON output, and no-tool and no-hook settings; the cwd is not the user's cwd and is gone after the run. No handoff, ledger or health row appears in the temp HOME.
+- 280. Install in a temp HOME: `~/.claude/skills/llm-map/SKILL.md` exists with the marker, `name: llm-map` and the text `llm_map.py`; `~/.claude/hooks/llm_map.py` exists; `settings.json` hook entries are unchanged by this feature. A SKILL.md without the marker is left unchanged with the F60.c line; uninstall removes only the marked file.
+
+Version: hooks 1.14.0; release 0.12.0. `HOOK_VERSION` in both hooks and `hook_version` in health rows and sidecars is `1.14.0`. This amends the version value in ACs 136, 150, 172, 180, 188 and 267 again.
