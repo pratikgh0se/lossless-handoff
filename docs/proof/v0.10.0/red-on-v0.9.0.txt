@@ -1,0 +1,641 @@
+test_ac240_gist_starts_with_current_work_text (test_f54_nodes.Commands.test_ac240_gist_starts_with_current_work_text) ... FAIL
+test_ac240_map_has_agent_part_for_subagent_nodes (test_f54_nodes.Commands.test_ac240_map_has_agent_part_for_subagent_nodes) ... FAIL
+test_ac240_map_lines_oldest_first (test_f54_nodes.Commands.test_ac240_map_lines_oldest_first) ... FAIL
+test_ac242_describe_node_two (test_f54_nodes.Commands.test_ac242_describe_node_two) ... FAIL
+test_ac242_describe_prev_is_node_one (test_f54_nodes.Commands.test_ac242_describe_prev_is_node_one) ... FAIL
+test_ac243_search_unknown_node (test_f54_nodes.Commands.test_ac243_search_unknown_node) ... FAIL
+test_ac243_unknown_node (test_f54_nodes.Commands.test_ac243_unknown_node) ... FAIL
+test_ac241_no_boundaries (test_f54_nodes.EmptyProject.test_ac241_no_boundaries) ... FAIL
+test_ac245_compact_output_has_node_line (test_f54_nodes.Inject.test_ac245_compact_output_has_node_line) ... FAIL
+test_ac245_node_line_is_right_after_recall_line (test_f54_nodes.Inject.test_ac245_node_line_is_right_after_recall_line) ... FAIL
+test_ac245_startup_and_resume_do_not_get_the_line (test_f54_nodes.Inject.test_ac245_startup_and_resume_do_not_get_the_line) ... ok
+test_ac246_malformed_line_in_nodes_file (test_f54_nodes.Inject.test_ac246_malformed_line_in_nodes_file) ... FAIL
+test_ac246_no_boundary_no_line (test_f54_nodes.Inject.test_ac246_no_boundary_no_line) ... ok
+test_ac247_overlapping_ranges_are_bad_and_fail (test_f54_nodes.Prove.test_ac247_overlapping_ranges_are_bad_and_fail) ... FAIL
+test_ac247_prove_good (test_f54_nodes.Prove.test_ac247_prove_good) ... FAIL
+test_ac247_prove_without_prior_sync (test_f54_nodes.Prove.test_ac247_prove_without_prior_sync) ... FAIL
+test_ac244_hit_after_last_boundary_is_live (test_f54_nodes.SearchNodes.test_ac244_hit_after_last_boundary_is_live) ... FAIL
+test_ac244_hybrid_mode_hits_also_tagged (test_f54_nodes.SearchNodes.test_ac244_hybrid_mode_hits_also_tagged) ... FAIL
+test_ac244_node_filter_node_three (test_f54_nodes.SearchNodes.test_ac244_node_filter_node_three) ... FAIL
+test_ac244_node_filter_shows_only_node_two (test_f54_nodes.SearchNodes.test_ac244_node_filter_shows_only_node_two) ... FAIL
+test_ac244_plain_search_tags_each_hit (test_f54_nodes.SearchNodes.test_ac244_plain_search_tags_each_hit) ... FAIL
+test_ac236_line_ranges_are_the_expected_numbers (test_f54_nodes.Store.test_ac236_line_ranges_are_the_expected_numbers) ... FAIL
+test_ac236_missing_pre_tokens_is_null (test_f54_nodes.Store.test_ac236_missing_pre_tokens_is_null) ... FAIL
+test_ac236_prev_links_and_unique_ids (test_f54_nodes.Store.test_ac236_prev_links_and_unique_ids) ... FAIL
+test_ac236_sync_error_does_not_change_output_or_exit (test_f54_nodes.Store.test_ac236_sync_error_does_not_change_output_or_exit) ... ok
+test_ac236_three_boundaries_three_leaves (test_f54_nodes.Store.test_ac236_three_boundaries_three_leaves) ... FAIL
+test_ac237_backfill_alone_adds_all (test_f54_nodes.Store.test_ac237_backfill_alone_adds_all) ... FAIL
+test_ac237_run_twice_and_backfill_no_duplicates (test_f54_nodes.Store.test_ac237_run_twice_and_backfill_no_duplicates) ... FAIL
+test_ac238_fourth_boundary_appends_only (test_f54_nodes.Store.test_ac238_fourth_boundary_appends_only) ... FAIL
+test_ac238_state_file_next_to_nodes (test_f54_nodes.Store.test_ac238_state_file_next_to_nodes) ... FAIL
+test_ac239_subagent_transcript_leaf (test_f54_nodes.Store.test_ac239_subagent_transcript_leaf) ... FAIL
+test_ac248_fresh_install_writes_agent_file (test_f55_recall_agent.Agent.test_ac248_fresh_install_writes_agent_file) ... FAIL
+test_ac248_frontmatter_and_body_rules (test_f55_recall_agent.Agent.test_ac248_frontmatter_and_body_rules) ... ERROR
+test_ac249_dry_run_keeps_old_file (test_f55_recall_agent.Agent.test_ac249_dry_run_keeps_old_file) ... ok
+test_ac249_dry_run_writes_no_agent_file (test_f55_recall_agent.Agent.test_ac249_dry_run_writes_no_agent_file) ... ok
+test_ac249_foreign_file_left_unchanged (test_f55_recall_agent.Agent.test_ac249_foreign_file_left_unchanged) ... FAIL
+test_ac249_our_file_install_prints_no_not_ours_line (test_f55_recall_agent.Agent.test_ac249_our_file_install_prints_no_not_ours_line) ... ok
+test_ac249_our_old_file_is_replaced (test_f55_recall_agent.Agent.test_ac249_our_old_file_is_replaced) ... FAIL
+test_ac251_no_sentence_for_file_without_marker (test_f55_recall_agent.RecallLine.test_ac251_no_sentence_for_file_without_marker) ... ok
+test_ac251_no_sentence_without_agent_file (test_f55_recall_agent.RecallLine.test_ac251_no_sentence_without_agent_file) ... ok
+test_ac251_sentence_with_agent_file (test_f55_recall_agent.RecallLine.test_ac251_sentence_with_agent_file) ... FAIL
+test_f55c_ledger_part_one_without_agent_file_unchanged (test_f55_recall_agent.RecallLine.test_f55c_ledger_part_one_without_agent_file_unchanged) ... ok
+test_f55c_precompact_handoff_without_agent_file_unchanged (test_f55_recall_agent.RecallLine.test_f55c_precompact_handoff_without_agent_file_unchanged) ... ok
+test_f55c_sentence_in_ledger_part_one (test_f55_recall_agent.RecallLine.test_f55c_sentence_in_ledger_part_one) ... FAIL
+test_f55c_sentence_in_precompact_handoff_file (test_f55_recall_agent.RecallLine.test_f55c_sentence_in_precompact_handoff_file) ... FAIL
+test_ac250_uninstall_keeps_foreign_file (test_f55_recall_agent.Uninstall.test_ac250_uninstall_keeps_foreign_file) ... ok
+test_ac250_uninstall_removes_our_file (test_f55_recall_agent.Uninstall.test_ac250_uninstall_removes_our_file) ... FAIL
+test_ac252_excerpt_chars_is_an_int_not_more_than_transcript (test_f56_excerpt.Excerpt.test_ac252_excerpt_chars_is_an_int_not_more_than_transcript) ... ERROR
+test_ac252_no_model_call_gives_zero_chars (test_f56_excerpt.Excerpt.test_ac252_no_model_call_gives_zero_chars) ... ERROR
+test_ac252_small_transcript_not_cut (test_f56_excerpt.Excerpt.test_ac252_small_transcript_not_cut) ... ERROR
+test_ac253_large_segment_is_cut (test_f56_excerpt.Excerpt.test_ac253_large_segment_is_cut) ... ERROR
+test_ac253_segment_after_boundary_only (test_f56_excerpt.Excerpt.test_ac253_segment_after_boundary_only) ... ERROR
+test_ac254_line_never_fails_the_run (test_f56_excerpt.Excerpt.test_ac254_line_never_fails_the_run) ... FAIL
+test_ac254_median_over_cut_rows (test_f56_excerpt.Excerpt.test_ac254_median_over_cut_rows) ... FAIL
+test_ac254_no_cut_prints_zero_median (test_f56_excerpt.Excerpt.test_ac254_no_cut_prints_zero_median) ... FAIL
+test_ac254_prove_prints_excerpt_line (test_f56_excerpt.Excerpt.test_ac254_prove_prints_excerpt_line) ... FAIL
+test_ac254_rows_without_fields_are_ignored (test_f56_excerpt.Excerpt.test_ac254_rows_without_fields_are_ignored) ... FAIL
+
+======================================================================
+ERROR: test_ac248_frontmatter_and_body_rules (test_f55_recall_agent.Agent.test_ac248_frontmatter_and_body_rules)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f55_recall_agent.py", line 70, in test_ac248_frontmatter_and_body_rules
+    t = self.text()
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f55_recall_agent.py", line 52, in text
+    with open(self.agent) as f:
+         ~~~~^^^^^^^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory: '/private/var/folders/_l/jd5t82r93gv28qgpkm5qv8_h0000gn/T/f55-q298pn5v/home/.claude/agents/recall.md'
+
+======================================================================
+ERROR: test_ac252_excerpt_chars_is_an_int_not_more_than_transcript (test_f56_excerpt.Excerpt.test_ac252_excerpt_chars_is_an_int_not_more_than_transcript)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f56_excerpt.py", line 50, in test_ac252_excerpt_chars_is_an_int_not_more_than_transcript
+    self.assertIsInstance(row["excerpt_chars"], int)
+                          ~~~^^^^^^^^^^^^^^^^^
+KeyError: 'excerpt_chars'
+
+======================================================================
+ERROR: test_ac252_no_model_call_gives_zero_chars (test_f56_excerpt.Excerpt.test_ac252_no_model_call_gives_zero_chars)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f56_excerpt.py", line 60, in test_ac252_no_model_call_gives_zero_chars
+    self.assertEqual(row["excerpt_chars"], 0, row)
+                     ~~~^^^^^^^^^^^^^^^^^
+KeyError: 'excerpt_chars'
+
+======================================================================
+ERROR: test_ac252_small_transcript_not_cut (test_f56_excerpt.Excerpt.test_ac252_small_transcript_not_cut)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f56_excerpt.py", line 45, in test_ac252_small_transcript_not_cut
+    self.assertGreater(row["excerpt_chars"], 0, row)
+                       ~~~^^^^^^^^^^^^^^^^^
+KeyError: 'excerpt_chars'
+
+======================================================================
+ERROR: test_ac253_large_segment_is_cut (test_f56_excerpt.Excerpt.test_ac253_large_segment_is_cut)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f56_excerpt.py", line 64, in test_ac253_large_segment_is_cut
+    self.assertGreater(row["excerpt_dropped"], 0, row)
+                       ~~~^^^^^^^^^^^^^^^^^^^
+KeyError: 'excerpt_dropped'
+
+======================================================================
+ERROR: test_ac253_segment_after_boundary_only (test_f56_excerpt.Excerpt.test_ac253_segment_after_boundary_only)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f56_excerpt.py", line 73, in test_ac253_segment_after_boundary_only
+    self.assertEqual(row["excerpt_dropped"], 0, row)
+                     ~~~^^^^^^^^^^^^^^^^^^^
+KeyError: 'excerpt_dropped'
+
+======================================================================
+FAIL: test_ac240_gist_starts_with_current_work_text (test_f54_nodes.Commands.test_ac240_gist_starts_with_current_work_text)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f54_nodes.py", line 355, in test_ac240_gist_starts_with_current_work_text
+    out = self.ok("map")
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f54_nodes.py", line 198, in ok
+    self.assertEqual((r.returncode, r.stderr), (0, ""), r.stdout)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: Tuples differ: (2, "recall.py: argument cmd: invalid choi[83 chars])\n") != (0, '')
+
+First differing element 0:
+2
+0
+
++ (0, '')
+- (2,
+-  "recall.py: argument cmd: invalid choice: 'map' (choose from 'search', "
+-  "'open', 'user', 'index', 'session-end', 'handoffs')\n") : 
+
+======================================================================
+FAIL: test_ac240_map_has_agent_part_for_subagent_nodes (test_f54_nodes.Commands.test_ac240_map_has_agent_part_for_subagent_nodes)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f54_nodes.py", line 372, in test_ac240_map_has_agent_part_for_subagent_nodes
+    out = self.ok("map")
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f54_nodes.py", line 198, in ok
+    self.assertEqual((r.returncode, r.stderr), (0, ""), r.stdout)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: Tuples differ: (2, "recall.py: argument cmd: invalid choi[83 chars])\n") != (0, '')
+
+First differing element 0:
+2
+0
+
++ (0, '')
+- (2,
+-  "recall.py: argument cmd: invalid choice: 'map' (choose from 'search', "
+-  "'open', 'user', 'index', 'session-end', 'handoffs')\n") : 
+
+======================================================================
+FAIL: test_ac240_map_lines_oldest_first (test_f54_nodes.Commands.test_ac240_map_lines_oldest_first)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f54_nodes.py", line 339, in test_ac240_map_lines_oldest_first
+    out = self.ok("map")
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f54_nodes.py", line 198, in ok
+    self.assertEqual((r.returncode, r.stderr), (0, ""), r.stdout)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: Tuples differ: (2, "recall.py: argument cmd: invalid choi[83 chars])\n") != (0, '')
+
+First differing element 0:
+2
+0
+
++ (0, '')
+- (2,
+-  "recall.py: argument cmd: invalid choice: 'map' (choose from 'search', "
+-  "'open', 'user', 'index', 'session-end', 'handoffs')\n") : 
+
+======================================================================
+FAIL: test_ac242_describe_node_two (test_f54_nodes.Commands.test_ac242_describe_node_two)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f54_nodes.py", line 381, in test_ac242_describe_node_two
+    out = self.ok("describe", i2["id"])
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f54_nodes.py", line 198, in ok
+    self.assertEqual((r.returncode, r.stderr), (0, ""), r.stdout)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: Tuples differ: (2, "recall.py: argument cmd: invalid choi[88 chars])\n") != (0, '')
+
+First differing element 0:
+2
+0
+
++ (0, '')
+- (2,
+-  "recall.py: argument cmd: invalid choice: 'describe' (choose from 'search', "
+-  "'open', 'user', 'index', 'session-end', 'handoffs')\n") : 
+
+======================================================================
+FAIL: test_ac242_describe_prev_is_node_one (test_f54_nodes.Commands.test_ac242_describe_prev_is_node_one)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f54_nodes.py", line 396, in test_ac242_describe_prev_is_node_one
+    out = self.ok("describe", self.fx.info[1]["id"])
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f54_nodes.py", line 198, in ok
+    self.assertEqual((r.returncode, r.stderr), (0, ""), r.stdout)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: Tuples differ: (2, "recall.py: argument cmd: invalid choi[88 chars])\n") != (0, '')
+
+First differing element 0:
+2
+0
+
++ (0, '')
+- (2,
+-  "recall.py: argument cmd: invalid choice: 'describe' (choose from 'search', "
+-  "'open', 'user', 'index', 'session-end', 'handoffs')\n") : 
+
+======================================================================
+FAIL: test_ac243_search_unknown_node (test_f54_nodes.Commands.test_ac243_search_unknown_node)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f54_nodes.py", line 406, in test_ac243_search_unknown_node
+    self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 2 != 1 : recall.py: unrecognized arguments: --node nzzzzzzzzzz
+
+
+======================================================================
+FAIL: test_ac243_unknown_node (test_f54_nodes.Commands.test_ac243_unknown_node)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f54_nodes.py", line 401, in test_ac243_unknown_node
+    self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 2 != 1 : recall.py: argument cmd: invalid choice: 'describe' (choose from 'search', 'open', 'user', 'index', 'session-end', 'handoffs')
+
+
+======================================================================
+FAIL: test_ac241_no_boundaries (test_f54_nodes.EmptyProject.test_ac241_no_boundaries)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f54_nodes.py", line 417, in test_ac241_no_boundaries
+    self.assertEqual((r.returncode, r.stderr), (0, ""))
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: Tuples differ: (2, "recall.py: argument cmd: invalid choi[83 chars])\n") != (0, '')
+
+First differing element 0:
+2
+0
+
++ (0, '')
+- (2,
+-  "recall.py: argument cmd: invalid choice: 'map' (choose from 'search', "
+-  "'open', 'user', 'index', 'session-end', 'handoffs')\n")
+
+======================================================================
+FAIL: test_ac245_compact_output_has_node_line (test_f54_nodes.Inject.test_ac245_compact_output_has_node_line)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f54_nodes.py", line 479, in test_ac245_compact_output_has_node_line
+    self.assertIn(self.line_for(fx.info[2]), out.split("\n"))
+    ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: '- summary node: this chat continues after node n7b26b4c73d (compaction #3, lines 12-16). See all nodes: python3 ~/.claude/hooks/recall.py map; one node: recall.py describe n7b26b4c73d.' not found in ['HANDOFF DEGRADED: no agent handoff. Verify the handoff against the transcript before acting.', 'Pre-compaction handoff (auto-saved):', '# Handoff (pre-compaction)', '- session: f54aaaaa-0000-4000-8000-000000000001', '- cwd: /private/var/folders/_l/jd5t82r93gv28qgpkm5qv8_h0000gn/T/hh-z85_5ihq/r/proj', '- trigger: auto', '- time: 2026-11-18 03:20:07Z', '- transcript: /private/var/folders/_l/jd5t82r93gv28qgpkm5qv8_h0000gn/T/hh-z85_5ihq/home/.claude/projects/-private-var-folders--l-jd5t82r93gv28qgpkm5qv8-h0000gn-T-hh-z85-5ihq-r-proj/f54aaaaa-0000-4000-8000-000000000001.jsonl', "- authority: the user's latest words > Project decisions > Agent handoff > Fresh summary > Claude Code's summary > Facts. If two disagree, the newer statement from the user wins; if unsure, ask.", '- recall: earlier chats in this project are searchable word for word: python3 ~/.claude/hooks/recall.py search "<words or regex>" (then: recall.py open <id>; recall.py user --last 20). Use it before acting on anything vague here (exact commands, numbers, paths, names, the user\'s wording) and whenever the user refers to something said earlier; quote what you find instead of guessing. If recall and the decisions list disagree, the decisions list and the user\'s latest words win: recall shows history, not current rules.', '', '## Last user messages (oldest first)', '- Please continue with the exporter task, step 0', '- Now run the unit tests for the parser', '- Please continue with the exporter task, step 6', '- Please check the NODETOKEN value again', '- Please continue with the exporter task, step 12', '- Please check the NODETOKEN value again', '- After the compaction I still say NODETOKEN here', '', '## Git', '- branch: main', '```', '', '```', '', '## Last assistant message', 'Understood, continuing with the exporter', '', 'Full transcript: /private/var/folders/_l/jd5t82r93gv28qgpkm5qv8_h0000gn/T/hh-z85_5ihq/home/.claude/projects/-private-var-folders--l-jd5t82r93gv28qgpkm5qv8-h0000gn-T-hh-z85-5ihq-r-proj/f54aaaaa-0000-4000-8000-000000000001.jsonl. Read it for exact details before guessing.']
+
+======================================================================
+FAIL: test_ac245_node_line_is_right_after_recall_line (test_f54_nodes.Inject.test_ac245_node_line_is_right_after_recall_line)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f54_nodes.py", line 486, in test_ac245_node_line_is_right_after_recall_line
+    self.assertEqual(lines[rec[0] + 1], self.line_for(fx.info[2]))
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: '' != '- summary node: this chat continues after[139 chars]73d.'
++ - summary node: this chat continues after node n7b26b4c73d (compaction #3, lines 12-16). See all nodes: python3 ~/.claude/hooks/recall.py map; one node: recall.py describe n7b26b4c73d.
+
+
+======================================================================
+FAIL: test_ac246_malformed_line_in_nodes_file (test_f54_nodes.Inject.test_ac246_malformed_line_in_nodes_file)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f54_nodes.py", line 509, in test_ac246_malformed_line_in_nodes_file
+    p = self.nodes_path()
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f54_nodes.py", line 174, in nodes_path
+    self.assertEqual(len(found), 1, "expected one nodes.jsonl under %s: %s" % (pr, found))
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 0 != 1 : expected one nodes.jsonl under /private/var/folders/_l/jd5t82r93gv28qgpkm5qv8_h0000gn/T/hh-xx99gbg1/home/.local/state/claude-handoffs/projects: []
+
+======================================================================
+FAIL: test_ac247_overlapping_ranges_are_bad_and_fail (test_f54_nodes.Prove.test_ac247_overlapping_ranges_are_bad_and_fail)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f54_nodes.py", line 544, in test_ac247_overlapping_ranges_are_bad_and_fail
+    p = self.nodes_path()
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f54_nodes.py", line 174, in nodes_path
+    self.assertEqual(len(found), 1, "expected one nodes.jsonl under %s: %s" % (pr, found))
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 0 != 1 : expected one nodes.jsonl under /private/var/folders/_l/jd5t82r93gv28qgpkm5qv8_h0000gn/T/hh-xnucemrk/home/.local/state/claude-handoffs/projects: []
+
+======================================================================
+FAIL: test_ac247_prove_good (test_f54_nodes.Prove.test_ac247_prove_good)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f54_nodes.py", line 533, in test_ac247_prove_good
+    self.assertIn("nodes: 3 boundaries, 3 leaves, 0 bad", out.split("\n"))
+    ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'nodes: 3 boundaries, 3 leaves, 0 bad' not found in ['proof 1d: receipts 1 · lossless 1/1 · right-agent 1/1 · delivered 0/1 · decisions-safe 1/1 · failed 1', '']
+
+======================================================================
+FAIL: test_ac247_prove_without_prior_sync (test_f54_nodes.Prove.test_ac247_prove_without_prior_sync)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f54_nodes.py", line 539, in test_ac247_prove_without_prior_sync
+    self.assertIn("nodes: 3 boundaries, 3 leaves, 0 bad", out.split("\n"))
+    ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'nodes: 3 boundaries, 3 leaves, 0 bad' not found in ['proof 1d: receipts 0 · lossless 0/0 · right-agent 0/0 · delivered 0/0 · decisions-safe 0/0 · failed 0', '']
+
+======================================================================
+FAIL: test_ac244_hit_after_last_boundary_is_live (test_f54_nodes.SearchNodes.test_ac244_hit_after_last_boundary_is_live)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f54_nodes.py", line 458, in test_ac244_hit_after_last_boundary_is_live
+    self.assertTrue(self.tag_for(self.hit_lines(out), self.live).endswith(" [node live]"))
+    ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: False is not true
+
+======================================================================
+FAIL: test_ac244_hybrid_mode_hits_also_tagged (test_f54_nodes.SearchNodes.test_ac244_hybrid_mode_hits_also_tagged)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f54_nodes.py", line 465, in test_ac244_hybrid_mode_hits_also_tagged
+    self.assertTrue(self.tag_for(hits, self.l2).endswith(" [node %s]" % self.i2["id"]))
+    ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: False is not true
+
+======================================================================
+FAIL: test_ac244_node_filter_node_three (test_f54_nodes.SearchNodes.test_ac244_node_filter_node_three)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f54_nodes.py", line 446, in test_ac244_node_filter_node_three
+    out = self.ok("search", TOKEN, "--keyword", "--node", self.i3["id"])
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f54_nodes.py", line 198, in ok
+    self.assertEqual((r.returncode, r.stderr), (0, ""), r.stdout)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: Tuples differ: (2, 'recall.py: unrecognized arguments: --node n7b26b4c73d\n') != (0, '')
+
+First differing element 0:
+2
+0
+
+- (2, 'recall.py: unrecognized arguments: --node n7b26b4c73d\n')
++ (0, '') : 
+
+======================================================================
+FAIL: test_ac244_node_filter_shows_only_node_two (test_f54_nodes.SearchNodes.test_ac244_node_filter_shows_only_node_two)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f54_nodes.py", line 441, in test_ac244_node_filter_shows_only_node_two
+    out = self.ok("search", TOKEN, "--keyword", "--node", self.i2["id"])
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f54_nodes.py", line 198, in ok
+    self.assertEqual((r.returncode, r.stderr), (0, ""), r.stdout)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: Tuples differ: (2, 'recall.py: unrecognized arguments: --node nfd178c75d3\n') != (0, '')
+
+First differing element 0:
+2
+0
+
+- (2, 'recall.py: unrecognized arguments: --node nfd178c75d3\n')
++ (0, '') : 
+
+======================================================================
+FAIL: test_ac244_plain_search_tags_each_hit (test_f54_nodes.SearchNodes.test_ac244_plain_search_tags_each_hit)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f54_nodes.py", line 453, in test_ac244_plain_search_tags_each_hit
+    self.assertTrue(self.tag_for(hits, self.l2).endswith(" [node %s]" % self.i2["id"]))
+    ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: False is not true
+
+======================================================================
+FAIL: test_ac236_line_ranges_are_the_expected_numbers (test_f54_nodes.Store.test_ac236_line_ranges_are_the_expected_numbers)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f54_nodes.py", line 246, in test_ac236_line_ranges_are_the_expected_numbers
+    got = {n["seq"]: (n["first_line"], n["last_line"]) for n in self.nodes()}
+                                                                ~~~~~~~~~~^^
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f54_nodes.py", line 182, in nodes
+    for l in self.raw_lines():
+             ~~~~~~~~~~~~~~^^
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f54_nodes.py", line 178, in raw_lines
+    return [l for l in open(self.nodes_path()).read().split("\n") if l != ""]
+                            ~~~~~~~~~~~~~~~^^
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f54_nodes.py", line 174, in nodes_path
+    self.assertEqual(len(found), 1, "expected one nodes.jsonl under %s: %s" % (pr, found))
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 0 != 1 : expected one nodes.jsonl under /private/var/folders/_l/jd5t82r93gv28qgpkm5qv8_h0000gn/T/hh-6ma3je0p/home/.local/state/claude-handoffs/projects: []
+
+======================================================================
+FAIL: test_ac236_missing_pre_tokens_is_null (test_f54_nodes.Store.test_ac236_missing_pre_tokens_is_null)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f54_nodes.py", line 257, in test_ac236_missing_pre_tokens_is_null
+    ns = self.nodes()
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f54_nodes.py", line 182, in nodes
+    for l in self.raw_lines():
+             ~~~~~~~~~~~~~~^^
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f54_nodes.py", line 178, in raw_lines
+    return [l for l in open(self.nodes_path()).read().split("\n") if l != ""]
+                            ~~~~~~~~~~~~~~~^^
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f54_nodes.py", line 174, in nodes_path
+    self.assertEqual(len(found), 1, "expected one nodes.jsonl under %s: %s" % (pr, found))
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 0 != 1 : expected one nodes.jsonl under /private/var/folders/_l/jd5t82r93gv28qgpkm5qv8_h0000gn/T/hh-_ux4toiw/home/.local/state/claude-handoffs/projects: []
+
+======================================================================
+FAIL: test_ac236_prev_links_and_unique_ids (test_f54_nodes.Store.test_ac236_prev_links_and_unique_ids)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f54_nodes.py", line 234, in test_ac236_prev_links_and_unique_ids
+    by_seq = {n["seq"]: n for n in self.nodes()}
+                                   ~~~~~~~~~~^^
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f54_nodes.py", line 182, in nodes
+    for l in self.raw_lines():
+             ~~~~~~~~~~~~~~^^
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f54_nodes.py", line 178, in raw_lines
+    return [l for l in open(self.nodes_path()).read().split("\n") if l != ""]
+                            ~~~~~~~~~~~~~~~^^
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f54_nodes.py", line 174, in nodes_path
+    self.assertEqual(len(found), 1, "expected one nodes.jsonl under %s: %s" % (pr, found))
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 0 != 1 : expected one nodes.jsonl under /private/var/folders/_l/jd5t82r93gv28qgpkm5qv8_h0000gn/T/hh-wrya3kn3/home/.local/state/claude-handoffs/projects: []
+
+======================================================================
+FAIL: test_ac236_three_boundaries_three_leaves (test_f54_nodes.Store.test_ac236_three_boundaries_three_leaves)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f54_nodes.py", line 213, in test_ac236_three_boundaries_three_leaves
+    ns = self.nodes()
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f54_nodes.py", line 182, in nodes
+    for l in self.raw_lines():
+             ~~~~~~~~~~~~~~^^
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f54_nodes.py", line 178, in raw_lines
+    return [l for l in open(self.nodes_path()).read().split("\n") if l != ""]
+                            ~~~~~~~~~~~~~~~^^
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f54_nodes.py", line 174, in nodes_path
+    self.assertEqual(len(found), 1, "expected one nodes.jsonl under %s: %s" % (pr, found))
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 0 != 1 : expected one nodes.jsonl under /private/var/folders/_l/jd5t82r93gv28qgpkm5qv8_h0000gn/T/hh-40bz8s93/home/.local/state/claude-handoffs/projects: []
+
+======================================================================
+FAIL: test_ac237_backfill_alone_adds_all (test_f54_nodes.Store.test_ac237_backfill_alone_adds_all)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f54_nodes.py", line 283, in test_ac237_backfill_alone_adds_all
+    out = self.ok("nodes", "--backfill")
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f54_nodes.py", line 198, in ok
+    self.assertEqual((r.returncode, r.stderr), (0, ""), r.stdout)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: Tuples differ: (2, "recall.py: argument cmd: invalid choi[111 chars])\n") != (0, '')
+
+First differing element 0:
+2
+0
+
++ (0, '')
+- (2,
+-  "recall.py: argument cmd: invalid choice: 'nodes', maybe you meant 'index'? "
+-  "(choose from 'search', 'open', 'user', 'index', 'session-end', 'handoffs')\n") : 
+
+======================================================================
+FAIL: test_ac237_run_twice_and_backfill_no_duplicates (test_f54_nodes.Store.test_ac237_run_twice_and_backfill_no_duplicates)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f54_nodes.py", line 274, in test_ac237_run_twice_and_backfill_no_duplicates
+    self.assertEqual(len(self.nodes()), 3)
+                         ~~~~~~~~~~^^
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f54_nodes.py", line 182, in nodes
+    for l in self.raw_lines():
+             ~~~~~~~~~~~~~~^^
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f54_nodes.py", line 178, in raw_lines
+    return [l for l in open(self.nodes_path()).read().split("\n") if l != ""]
+                            ~~~~~~~~~~~~~~~^^
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f54_nodes.py", line 174, in nodes_path
+    self.assertEqual(len(found), 1, "expected one nodes.jsonl under %s: %s" % (pr, found))
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 0 != 1 : expected one nodes.jsonl under /private/var/folders/_l/jd5t82r93gv28qgpkm5qv8_h0000gn/T/hh-lxd_e4pn/home/.local/state/claude-handoffs/projects: []
+
+======================================================================
+FAIL: test_ac238_fourth_boundary_appends_only (test_f54_nodes.Store.test_ac238_fourth_boundary_appends_only)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f54_nodes.py", line 290, in test_ac238_fourth_boundary_appends_only
+    before = self.raw_lines()
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f54_nodes.py", line 178, in raw_lines
+    return [l for l in open(self.nodes_path()).read().split("\n") if l != ""]
+                            ~~~~~~~~~~~~~~~^^
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f54_nodes.py", line 174, in nodes_path
+    self.assertEqual(len(found), 1, "expected one nodes.jsonl under %s: %s" % (pr, found))
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 0 != 1 : expected one nodes.jsonl under /private/var/folders/_l/jd5t82r93gv28qgpkm5qv8_h0000gn/T/hh-fohz82gb/home/.local/state/claude-handoffs/projects: []
+
+======================================================================
+FAIL: test_ac238_state_file_next_to_nodes (test_f54_nodes.Store.test_ac238_state_file_next_to_nodes)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f54_nodes.py", line 306, in test_ac238_state_file_next_to_nodes
+    self.assertTrue(os.path.isfile(os.path.join(os.path.dirname(self.nodes_path()), "nodes.state.json")))
+                                                                ~~~~~~~~~~~~~~~^^
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f54_nodes.py", line 174, in nodes_path
+    self.assertEqual(len(found), 1, "expected one nodes.jsonl under %s: %s" % (pr, found))
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 0 != 1 : expected one nodes.jsonl under /private/var/folders/_l/jd5t82r93gv28qgpkm5qv8_h0000gn/T/hh-j40pw7w7/home/.local/state/claude-handoffs/projects: []
+
+======================================================================
+FAIL: test_ac239_subagent_transcript_leaf (test_f54_nodes.Store.test_ac239_subagent_transcript_leaf)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f54_nodes.py", line 325, in test_ac239_subagent_transcript_leaf
+    ns = self.nodes()
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f54_nodes.py", line 182, in nodes
+    for l in self.raw_lines():
+             ~~~~~~~~~~~~~~^^
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f54_nodes.py", line 178, in raw_lines
+    return [l for l in open(self.nodes_path()).read().split("\n") if l != ""]
+                            ~~~~~~~~~~~~~~~^^
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f54_nodes.py", line 174, in nodes_path
+    self.assertEqual(len(found), 1, "expected one nodes.jsonl under %s: %s" % (pr, found))
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 0 != 1 : expected one nodes.jsonl under /private/var/folders/_l/jd5t82r93gv28qgpkm5qv8_h0000gn/T/hh-x8ch45s_/home/.local/state/claude-handoffs/projects: []
+
+======================================================================
+FAIL: test_ac248_fresh_install_writes_agent_file (test_f55_recall_agent.Agent.test_ac248_fresh_install_writes_agent_file)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f55_recall_agent.py", line 59, in test_ac248_fresh_install_writes_agent_file
+    self.assertTrue(os.path.isfile(self.agent), "no ~/.claude/agents/recall.md")
+    ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: False is not true : no ~/.claude/agents/recall.md
+
+======================================================================
+FAIL: test_ac249_foreign_file_left_unchanged (test_f55_recall_agent.Agent.test_ac249_foreign_file_left_unchanged)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f55_recall_agent.py", line 93, in test_ac249_foreign_file_left_unchanged
+    self.assertIn(NOT_OURS, r.stdout + r.stderr)
+    ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: '~/.claude/agents/recall.md exists and is not ours; left unchanged.' not found in 'warning: HANDOFF CHECK: Claude Code deletes chat transcripts after 30 days (cleanupPeriodDays), so recall loses older messages. Set "cleanupPeriodDays": 365 in ~/.claude/settings.json, or run ./install.sh --keep-transcripts.\nsettings: add PreCompact hook (timeout 150)\nsettings: add PostToolUse nudge hook (matcher *, timeout 5)\nsettings: add SessionStart compact --part 1 (timeout 10)\nsettings: add SessionStart compact --part 2 (timeout 10)\nsettings: add SessionStart compact --part 3 (timeout 10)\nsettings: add SessionStart compact --ledger --part 1 (timeout 10)\nsettings: add SessionStart compact --ledger --part 2 (timeout 10)\nsettings: add SessionStart compact --ledger --part 3 (timeout 10)\nsettings: add SessionStart startup --ledger --part 1 (timeout 10)\nsettings: add SessionStart startup --ledger --part 2 (timeout 10)\nsettings: add SessionStart startup --ledger --part 3 (timeout 10)\nsettings: add SessionStart startup --check (timeout 5)\nsettings: add SessionStart resume --ledger --part 1 (timeout 10)\nsettings: add SessionStart resume --ledger --part 2 (timeout 10)\nsettings: add SessionStart resume --ledger --part 3 (timeout 10)\nsettings: add SessionStart resume --check (timeout 5)\nsettings: add SessionEnd recall hook (timeout 5)\nsettings: add permissions.allow Edit(~/.local/state/claude-handoffs/**)\nsettings: add permissions.allow Bash(python3 ~/.claude/hooks/recall.py:*)\nsettings: set env.CLAUDE_CODE_AUTO_COMPACT_WINDOW = 400000\nsettings: written /private/var/folders/_l/jd5t82r93gv28qgpkm5qv8_h0000gn/T/f55-s3e1kefs/home/.claude/settings.json\ninstall hook: /private/var/folders/_l/jd5t82r93gv28qgpkm5qv8_h0000gn/T/f55-s3e1kefs/home/.claude/hooks/precompact-handoff.py\ninstall hook: /private/var/folders/_l/jd5t82r93gv28qgpkm5qv8_h0000gn/T/f55-s3e1kefs/home/.claude/hooks/postcompact-inject.py\ninstall hook: /private/var/folders/_l/jd5t82r93gv28qgpkm5qv8_h0000gn/T/f55-s3e1kefs/home/.claude/hooks/handoff-nudge.py\ninstall hook: /private/var/folders/_l/jd5t82r93gv28qgpkm5qv8_h0000gn/T/f55-s3e1kefs/home/.claude/hooks/recall.py\ninstall hook: /private/var/folders/_l/jd5t82r93gv28qgpkm5qv8_h0000gn/T/f55-s3e1kefs/home/.claude/hooks/claims.json\nmanifest: /private/var/folders/_l/jd5t82r93gv28qgpkm5qv8_h0000gn/T/f55-s3e1kefs/home/.claude/hooks/.handoff-manifest.json\ncreate state dir: /private/var/folders/_l/jd5t82r93gv28qgpkm5qv8_h0000gn/T/f55-s3e1kefs/home/.local/state/claude-handoffs\n\nMeaning search: skipped the model pull (not interactive). Run: ollama pull bge-m3   (or rerun install with --yes)\nnightly index job: skipped (--no-nightly)\nnightly reconcile job: skipped (--no-nightly)\n\nInstalled.\nRestart open Claude Code sessions: hooks load when a session starts.\n\nRecall: the first index of your earlier chats is building in the background (log: /private/var/folders/_l/jd5t82r93gv28qgpkm5qv8_h0000gn/T/f55-s3e1kefs/home/.local/state/claude-handoffs/recall/index-all.log).\nChats are indexed automatically when they end. Search from a project folder:  python3 ~/.claude/hooks/recall.py search "words"\n\nVerify after the first compaction: tail -n 3 /private/var/folders/_l/jd5t82r93gv28qgpkm5qv8_h0000gn/T/f55-s3e1kefs/home/.local/state/claude-handoffs/health.jsonl\nHeadless runs (claude -p, SDK) load these hooks too, except with --bare. To keep them under --setting-sources without user, run ./install.sh --managed-hooks.\n'
+
+======================================================================
+FAIL: test_ac249_our_old_file_is_replaced (test_f55_recall_agent.Agent.test_ac249_our_old_file_is_replaced)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f55_recall_agent.py", line 99, in test_ac249_our_old_file_is_replaced
+    self.assertNotIn("OLD-CONTENT-MARK", t)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'OLD-CONTENT-MARK' unexpectedly found in '<!-- lossless-handoff:recall-agent -->\nOLD-CONTENT-MARK from an older release\n'
+
+======================================================================
+FAIL: test_ac251_sentence_with_agent_file (test_f55_recall_agent.RecallLine.test_ac251_sentence_with_agent_file)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f55_recall_agent.py", line 176, in test_ac251_sentence_with_agent_file
+    self.assertTrue(line.endswith(SENTENCE), line[-300:])
+    ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: False is not true : ue here (exact commands, numbers, paths, names, the user's wording) and whenever the user refers to something said earlier; quote what you find instead of guessing. If recall and the decisions list disagree, the decisions list and the user's latest words win: recall shows history, not current rules.
+
+======================================================================
+FAIL: test_f55c_sentence_in_ledger_part_one (test_f55_recall_agent.RecallLine.test_f55c_sentence_in_ledger_part_one)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f55_recall_agent.py", line 218, in test_f55c_sentence_in_ledger_part_one
+    self.assertTrue(self.recall_line(out).endswith(SENTENCE))
+    ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: False is not true
+
+======================================================================
+FAIL: test_f55c_sentence_in_precompact_handoff_file (test_f55_recall_agent.RecallLine.test_f55c_sentence_in_precompact_handoff_file)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f55_recall_agent.py", line 196, in test_f55c_sentence_in_precompact_handoff_file
+    self.assertTrue(line.endswith(SENTENCE), line[-300:])
+    ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: False is not true : ue here (exact commands, numbers, paths, names, the user's wording) and whenever the user refers to something said earlier; quote what you find instead of guessing. If recall and the decisions list disagree, the decisions list and the user's latest words win: recall shows history, not current rules.
+
+======================================================================
+FAIL: test_ac250_uninstall_removes_our_file (test_f55_recall_agent.Uninstall.test_ac250_uninstall_removes_our_file)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f55_recall_agent.py", line 123, in test_ac250_uninstall_removes_our_file
+    self.assertTrue(os.path.isfile(self.agent))
+    ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: False is not true
+
+======================================================================
+FAIL: test_ac254_line_never_fails_the_run (test_f56_excerpt.Excerpt.test_ac254_line_never_fails_the_run)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f56_excerpt.py", line 110, in test_ac254_line_never_fails_the_run
+    self.assertIsNotNone(LINE_RE.search(r.stdout), r.stdout)
+    ~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: unexpectedly None : proof 1d: receipts 0 · lossless 0/0 · right-agent 0/0 · delivered 0/0 · decisions-safe 0/0 · failed 0
+
+
+======================================================================
+FAIL: test_ac254_median_over_cut_rows (test_f56_excerpt.Excerpt.test_ac254_median_over_cut_rows)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f56_excerpt.py", line 92, in test_ac254_median_over_cut_rows
+    self.assertEqual(len(drops), 2, rows)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 0 != 2 : [{'ts': '2026-11-18T03:20:27Z', 'sid': 'S', 'trigger': 'auto', 'agent_file': 'absent', 'stale_sections': [], 'fallback': 'failed', 'summary_model': 'sonnet', 'ledger': 'unchanged', 'ledger_active': 0, 'ledger_superseded': 0, 'ledger_resolved': 0, 'ledger_restored': 0, 'ledger_chars': 0, 'ledger_error': '', 'duration_ms': 743, 'output_chars': 7549, 'truncated': False, 'inline_cut': False, 'errors': [], 'status': 'degraded', 'hook_version': '1.11.0', 'canary_child': False, 'steer': 'off', 'ledger_ids_before': [], 'ledger_ids_after': [], 'superseded_before': [], 'superseded_after': []}, {'ts': '2026-11-18T03:20:27Z', 'sid': 'S2', 'trigger': 'auto', 'agent_file': 'absent', 'stale_sections': [], 'fallback': 'failed', 'summary_model': 'sonnet', 'ledger': 'unchanged', 'ledger_active': 0, 'ledger_superseded': 0, 'ledger_resolved': 0, 'ledger_restored': 0, 'ledger_chars': 0, 'ledger_error': '', 'duration_ms': 97, 'output_chars': 7550, 'truncated': False, 'inline_cut': False, 'errors': [], 'status': 'degraded', 'hook_version': '1.11.0', 'canary_child': False, 'steer': 'off', 'ledger_ids_before': [], 'ledger_ids_after': [], 'superseded_before': [], 'superseded_after': []}, {'ts': '2026-11-18T03:20:27Z', 'sid': 'S3', 'trigger': 'auto', 'agent_file': 'absent', 'stale_sections': [], 'fallback': 'failed', 'summary_model': 'sonnet', 'ledger': 'unchanged', 'ledger_active': 0, 'ledger_superseded': 0, 'ledger_resolved': 0, 'ledger_restored': 0, 'ledger_chars': 0, 'ledger_error': '', 'duration_ms': 84, 'output_chars': 1332, 'truncated': False, 'inline_cut': False, 'errors': [], 'status': 'degraded', 'hook_version': '1.11.0', 'canary_child': False, 'steer': 'off', 'ledger_ids_before': [], 'ledger_ids_after': [], 'superseded_before': [], 'superseded_after': []}]
+
+======================================================================
+FAIL: test_ac254_no_cut_prints_zero_median (test_f56_excerpt.Excerpt.test_ac254_no_cut_prints_zero_median)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f56_excerpt.py", line 104, in test_ac254_no_cut_prints_zero_median
+    self.assertIn("excerpt cut: 0 of 1 compactions, median dropped 0 chars", r.stdout.split("\n"))
+    ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'excerpt cut: 0 of 1 compactions, median dropped 0 chars' not found in ['proof 1d: receipts 0 · lossless 0/0 · right-agent 0/0 · delivered 0/0 · decisions-safe 0/0 · failed 0', '']
+
+======================================================================
+FAIL: test_ac254_prove_prints_excerpt_line (test_f56_excerpt.Excerpt.test_ac254_prove_prints_excerpt_line)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f56_excerpt.py", line 82, in test_ac254_prove_prints_excerpt_line
+    self.assertIsNotNone(m, r.stdout)
+    ~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^
+AssertionError: unexpectedly None : proof 1d: receipts 0 · lossless 0/0 · right-agent 0/0 · delivered 0/0 · decisions-safe 0/0 · failed 0
+
+
+======================================================================
+FAIL: test_ac254_rows_without_fields_are_ignored (test_f56_excerpt.Excerpt.test_ac254_rows_without_fields_are_ignored)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f56_excerpt.py", line 120, in test_ac254_rows_without_fields_are_ignored
+    self.assertIsNotNone(m, r.stdout)
+    ~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^
+AssertionError: unexpectedly None : proof 1d: receipts 0 · lossless 0/0 · right-agent 0/0 · delivered 0/0 · decisions-safe 0/0 · failed 0
+
+
+----------------------------------------------------------------------
+Ran 57 tests in 23.737s
+
+FAILED (failures=40, errors=6)
