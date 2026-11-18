@@ -29,16 +29,18 @@ PROJECTS = os.path.join(HOME, ".claude", "projects")
 PREFIX = "lhoo-"
 LOCK = json.load(open(os.path.join(HERE, "dataset.lock.json"), encoding="utf-8"))
 LEN_NAMES = {"32K": 32768, "128K": 131072, "8K": 8192, "16K": 16384, "64K": 65536, "256K": 262144, "512K": 524288, "1M": 1048576}
-# Same tools in every arm. Arm A removes the Workflow tool with --disallowedTools. WebSearch and WebFetch are off everywhere.
-ALLOWED_TOOLS = "Read Write Edit Bash Task Workflow"
-DISALLOWED_BASE = ["WebSearch", "WebFetch"]
-WORKFLOW_LINE = "You may use a workflow or parallel subagents if it helps."
+# Same tools in every arm. The subagent tool (named Task in this Claude Code version) is allowed in A, B and C.
+# The Workflow tool is disallowed in every arm: under `claude -p` a workflow runs in the background and the session can end
+# before its result returns (pilot evidence, see README). WebSearch and WebFetch are off everywhere.
+ALLOWED_TOOLS = "Read Write Edit Bash Task"
+DISALLOWED_BASE = ["WebSearch", "WebFetch", "Workflow"]
+WORKFLOW_LINE = "You may split the work across parallel subagents (Agent tool) if it helps; wait for all their results before your final answer."
 PROMPT_CORE = ("The file context.txt in the current folder holds a data set. Read it with your tools as needed. "
                "Do not use the network. Answer the question below about the data set.\n\n{question}\n\n"
                "Write the final answer on the last line, in the form the question asks. "
                "Add no period and no other text after it.")
 # What may differ between arms. Any other difference stops the run before the first call.
-ALLOWED_DIFF = {"A": set(), "B": {"prompt_extra", "disallowed_tools"},
+ALLOWED_DIFF = {"A": set(), "B": {"prompt_extra"},
                 "C": {"hooks", "env_handoff", "recall_agent", "settings_sha"}}
 DENY_BASH = ["curl", "wget", "pip", "pip3", "huggingface", "hf_hub", "load_dataset", "git clone", "urllib", "requests", "http.client", "urlretrieve"]
 # Contamination patterns, searched in the text the model wrote and in its tool inputs. Tool results are not searched:
@@ -136,7 +138,7 @@ def config_record(cfg, task, arm):
     s = project_settings(cfg, arm)
     core_arm = "A" if arm == "N" else arm
     env = env_for(cfg, core_arm, "<state>")
-    disallowed = DISALLOWED_BASE + ([] if core_arm == "B" else ["Workflow"])
+    disallowed = list(DISALLOWED_BASE)
     base_settings = {k: v for k, v in s.items() if k != "hooks"}
     return {
         "model": cfg["model"], "claude_version": cfg["claude_version"], "permission_mode": "acceptEdits",
@@ -255,7 +257,8 @@ class Ctx:
         b = self.cfg.get("budget_usd")
         if self.stop.is_set():
             raise Pause()
-        if b is not None and self.state["spent"] >= b:
+        # headroom: one call can pass its cap (a $0.40 cap once spent $0.49), so stop early by the largest unit cost seen
+        if b is not None and self.state["spent"] >= b - self.state.get("max_unit_cost", 0.0):
             self.stop.set()
             raise Pause()
 
@@ -289,7 +292,7 @@ def run_unit(ctx, task, arm, rec):
             f.write(task["context"])
     sid = str(uuid.uuid4())
     env_over = env_for(cfg, core_arm, statedir)
-    disallowed = DISALLOWED_BASE + ([] if core_arm == "B" else ["Workflow"])
+    disallowed = list(DISALLOWED_BASE)
     cmd = ["claude", "-p", "--session-id", sid, "--model", cfg["model"], "--setting-sources", "project",
            "--settings", json.dumps({"env": env_over}), "--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}',
            "--disable-slash-commands", "--output-format", "json", "--permission-mode", "acceptEdits",
@@ -328,6 +331,7 @@ def run_unit(ctx, task, arm, rec):
     cost = float(o.get("total_cost_usd") or 0) if o else 0.0
     with ctx.lock:
         ctx.state["spent"] += cost
+        ctx.state["max_unit_cost"] = max(ctx.state.get("max_unit_cost", 0.0), cost)
     result_text = (o or {}).get("result") or ""
     sc = scorer.score(task["answer"], task["answer_type"], result_text if isinstance(result_text, str) else "")
     main, _all = transcript_files(proj, sid)
@@ -385,7 +389,7 @@ def parse_common(r):
     r.add_argument("--call-cap-usd", type=float, default=0.60, help="--max-budget-usd of each claude call")
     r.add_argument("--timeout-s", type=int, default=900, help="time limit of each call, the same in all arms")
     r.add_argument("--jobs", type=int, default=2)
-    r.add_argument("--budget-usd", type=float, default=None, help="pause cleanly when the total reaches this value")
+    r.add_argument("--budget-usd", type=float, default=None, help="pause cleanly: no new unit starts when the total reaches this value minus the largest unit cost seen so far")
 
 
 def build_cfg(a):
@@ -560,7 +564,7 @@ def cmd_selfcheck(a):
         subprocess.run(["git", "init", "-q", proj], capture_output=True)
         own_token = "OWNTOKEN-" + uuid.uuid4().hex[:8]
         open(os.path.join(proj, "ownfile.txt"), "w").write(own_token)
-        disallowed = DISALLOWED_BASE + ([] if arm == "B" else ["Workflow"])
+        disallowed = list(DISALLOWED_BASE)
         env_over = env_for(cfg, arm, proj + "-state")
         base = ["claude", "-p", "--model", a.model, "--setting-sources", "project", "--settings", json.dumps({"env": env_over}),
                 "--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}', "--disable-slash-commands", "--permission-mode", "acceptEdits",
@@ -586,9 +590,9 @@ def cmd_selfcheck(a):
         res = o.get("result") or ""
         dens = [{"tool": x.get("tool_name"), "input": json.dumps(x.get("tool_input"))[:200]} for x in (o.get("permission_denials") or [])]
         good = token not in res and own_token in res and bool(dens or "denied" in res.lower())
-        ev["arms"][arm] = {"tools": tools, "workflow_tool_present": "Workflow" in tools, "reply": res[:1500], "permission_denials": dens,
+        ev["arms"][arm] = {"tools": tools, "workflow_tool_present": "Workflow" in tools, "subagent_tool_present": ("Task" in tools or "Agent" in tools), "reply": res[:1500], "permission_denials": dens,
                            "gold_token_leaked": token in res, "own_folder_readable_by_bash": own_token in res, "cost_usd": o.get("total_cost_usd")}
-        ok = ok and good and (("Workflow" in tools) == (arm == "B"))
+        ok = ok and good and "Workflow" not in tools and ("Task" in tools or "Agent" in tools)
         print("arm %s: Workflow tool present %s; denials %s; gold leaked %s\n  reply: %s" % (arm, "Workflow" in tools, [d["tool"] for d in dens], token in res, res.replace("\n", " | ")[:500]))
     os.remove(gold_probe)
     # sandbox-only probe: no deny rule for curl, so a real curl must fail inside the sandbox

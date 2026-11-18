@@ -117,7 +117,7 @@ def main():
     P("")
     P("## Scores")
     P("")
-    P("| Length | Arm | n raw | Raw mean [95% CI] | n clean | Clean mean [95% CI] | Cost/task | Wall s/task | Turns/task | Workflow calls (tasks with 1+) | Subagent calls | Compactions | Errors |")
+    P("| Length | Arm | n raw | Raw mean [95% CI] | n clean | Clean mean [95% CI] | Cost/task | Wall s/task | Turns/task | Workflow calls | Agent calls (tasks with 1+) | Compactions | Errors |")
     P("|---|---|---|---|---|---|---|---|---|---|---|---|---|")
     flags = []
     for ln in lengths:
@@ -128,13 +128,13 @@ def main():
             raw = [r["score"] for r in rs]
             cln = [r["score"] for r in cl]
             wf = sum(r["workflow_calls"] for r in rs)
-            wft = sum(1 for r in rs if r["workflow_calls"] > 0)
-            if arm == "A" and wf:
-                flags.append("arm A shows %d workflow calls at %s: the arm is not plain" % (wf, LEN_LABEL.get(ln, ln)))
-            P("| %s | %s | %d | %s | %d | %s | $%.3f | %.0f | %.1f | %d (%d) | %d | %d | %d |" % (
+            wft = sum(1 for r in rs if r["subagent_calls"] > 0)
+            if wf:
+                flags.append("arm %s shows %d workflow calls at %s: the Workflow tool must be disallowed" % (arm, wf, LEN_LABEL.get(ln, ln)))
+            P("| %s | %s | %d | %s | %d | %s | $%.3f | %.0f | %.1f | %d | %d (%d) | %d | %d |" % (
                 LEN_LABEL.get(ln, ln), arm, len(raw), fmt(mean(raw), boot_ci(raw, draws, rng)), len(cln), fmt(mean(cln), boot_ci(cln, draws, rng)),
                 mean([r["cost_usd"] for r in rs]), mean([r["wall_s"] for r in rs]), mean([r["num_turns"] or 0 for r in rs]),
-                wf, wft, sum(r["subagent_calls"] for r in rs), sum(r["compactions"] for r in rs), sum(1 for r in rs if r["is_error"])))
+                wf, sum(r["subagent_calls"] for r in rs), wft, sum(r["compactions"] for r in rs), sum(1 for r in rs if r["is_error"])))
     P("")
     P("## Paired difference (same tasks, score of the arm minus score of A)")
     P("")
@@ -152,9 +152,9 @@ def main():
     P("")
     for a_ in arms:
         if a_ == "B":
-            used = sum(1 for r in rows if r["arm"] == "B" and r["workflow_calls"] > 0)
+            used = sum(1 for r in rows if r["arm"] == "B" and r["subagent_calls"] > 0)
             total = sum(1 for r in rows if r["arm"] == "B")
-            P("- Arm B workflow use rate: %d of %d tasks (%.0f%%). At 0%% arm B equals arm A in practice." % (used, total, 100.0 * used / max(total, 1)))
+            P("- Arm B subagent use rate: %d of %d tasks (%.0f%%). At 0%% arm B equals arm A in practice. Arm A also may use subagents; see its Agent calls." % (used, total, 100.0 * used / max(total, 1)))
         if a_ == "C":
             comp = sum(r["compactions"] for r in rows if r["arm"] == "C")
             P("- Arm C compactions: %d. At lengths under the compaction window, arm C equals arm A apart from the session-start text; with 0 compactions it tests only that text." % comp)

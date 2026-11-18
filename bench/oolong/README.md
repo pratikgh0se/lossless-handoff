@@ -19,8 +19,8 @@ The harness does not test the handoff hooks in a useful way below the compaction
 
 | Arm | What it is |
 |---|---|
-| A | Plain Claude Code. The Workflow tool is disallowed. |
-| B | Plain Claude Code. The task prompt adds one line: "You may use a workflow or parallel subagents if it helps." |
+| A | Plain Claude Code. The Workflow tool is disallowed. The subagent tool (named Task in this version) stays allowed. |
+| B | Plain Claude Code. The task prompt adds one line: "You may split the work across parallel subagents (Agent tool) if it helps; wait for all their results before your final answer." |
 | C | Lossless Handoff hooks from `--lh-path`. Same task prompt as A. |
 | N | No-context control. Same as A, but `context.txt` is not in the folder. |
 
@@ -31,8 +31,13 @@ The harness writes a config record per task and arm (`config_records.json`).
 Arm C: at lengths under the compaction window, no compaction occurs. Then C equals A apart from the session-start text.
 The report prints the compaction count of arm C. With a count of 0, C tests only that text.
 
-Arm B: the report prints the workflow use rate. At 0 percent, B equals A in practice.
-Arm A: the report flags any workflow call (it must be 0).
+Arm B: the report prints the subagent use rate. At 0 percent, B equals A in practice.
+The report counts Agent tool calls (the Task tool in this version) for every arm, and flags any Workflow call (it must be 0 in all arms).
+
+Why the Workflow tool is not tested: the Workflow tool is disallowed in all arms. Under `claude -p` a workflow runs in the background.
+The main session can end before the workflow returns. In the first pilot run, arm B called Workflow on task 15000201. The session ended with
+"waiting for the per-question labels" and the answer was wrong. That call also cost $0.49 against a $0.40 cap. So a headless run cannot test workflows.
+Arm B tests parallel subagents instead.
 
 ## Sandbox and contamination guards
 
@@ -81,7 +86,13 @@ cost per task, wall time, turns, workflow calls, compactions. It applies the dec
 ## Known limits
 
 - 30 paired tasks see only a gap of 0.15 or more. The pilot (2 tasks) proves the pipeline. It measures no gap.
-- `--max-budget-usd` is checked between turns. A call with workflow subagents can pass the cap.
-- In `claude -p`, a workflow runs in the background. The main session can end before the workflow returns. Check the arm B transcripts before you trust arm B.
+- `--max-budget-usd` is checked between turns. One call can pass its cap (a $0.40 cap once spent $0.49).
+- Budget guard: with `--budget-usd X`, no new unit starts when the total reaches X minus the largest unit cost seen so far. Calls that already run can still overshoot, so keep a margin when you set X.
 - The Claude Code version (2.1.326) differs from the LCM paper (v2.1.4).
 - The Read tool of an earlier run's leftover folder is not blocked (only the sandboxed Bash is). Run `cleanup` between runs.
+
+## Evidence files
+
+- `evidence/sandbox-20261118T122555.json` is the current sandbox proof (Workflow disallowed in all arms, subagent tool present).
+- `evidence/sandbox-20261118T121859.json` is older. It was made when arm B still allowed the Workflow tool.
+- `evidence/pilot-20261118-summary.md` is the pilot report (haiku, 32K, 2 tasks) from before the arm B change.
