@@ -188,6 +188,17 @@ for f in precompact-handoff.py postcompact-inject.py handoff-nudge.py recall.py 
   fi
 done
 
+# F55.b: remove the recall subagent only when it holds our marker line
+AGENT_DST="$HOME/.claude/agents/recall.md"
+if [ -e "$AGENT_DST" ]; then
+  if grep -qF "<!-- lossless-handoff:recall-agent -->" "$AGENT_DST" 2>/dev/null; then
+    say "remove $AGENT_DST"
+    [ "$DRY" = 1 ] || rm "$AGENT_DST"
+  else
+    echo "kept $AGENT_DST (it is not ours)"
+  fi
+fi
+
 echo "kept $STATE_DIR (handoffs and health.jsonl); delete it yourself if you do not want them"
 echo "kept the recall indexes and logs under $STATE_DIR/recall/ (delete that folder yourself to drop them)"
 echo "kept the project decision ledgers under $STATE_DIR/projects/ (delete that folder yourself to forget them)"
