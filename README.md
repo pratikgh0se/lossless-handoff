@@ -318,6 +318,19 @@ python3 ~/.claude/hooks/recall.py index                        # build or refres
 python3 ~/.claude/hooks/recall.py index --all                  # every project that has a git repo
 ```
 
+**Summary nodes.** Each compaction in a transcript gets one leaf node: an id (`n` and 10 hex characters), the session, the transcript line range it covers, the time and the token count before the compaction. The hooks read the nodes from Claude Code's own `compact_boundary` records. No model call is made for them. The list is stored in `projects/<project>-<hash>/nodes.jsonl`, and the SessionStart `compact` hook adds new nodes from the saved byte offset, so it reads only new bytes.
+
+```
+python3 ~/.claude/hooks/recall.py map                    # one line per node, oldest first: id, time, session, line range, gist
+python3 ~/.claude/hooks/recall.py describe <node id>     # the node's fields and the full Claude Code summary of that compaction
+python3 ~/.claude/hooks/recall.py search "word" --node <node id>   # only hits inside that node's line range
+python3 ~/.claude/hooks/recall.py nodes --backfill       # add nodes for all transcripts of the project at once
+```
+
+Each `search` hit ends with `[node <id>]`, or `[node live]` when it is after the last compaction. After a compaction, the injected context has one line that names the newest node. `--prove` checks that every `compact_boundary` has one node and that the line ranges leave no gap or overlap.
+
+**Recall subagent.** The installer writes `~/.claude/agents/recall.md`, a small agent (model `haiku`, tools `Bash` and `Read`) that runs `map`, `search`, `describe` and `open` and returns at most 15 short quotes with message ids and node ids. When the file is installed, the injected recall line tells the main agent to use it for wide lookups so long recalled text stays out of the main context, and to search directly for one exact fact. Nothing blocks the main agent from running `recall.py open` itself.
+
 Every command accepts `--cwd DIR` (default: the current folder). `search` also takes `--session SID8|all`, `--limit N` and `--subagents`. `--keyword` is words only, `--meaning` is the embedding index only. Output is capped at 12,000 characters, and obvious secrets (API keys, tokens, `password=...`) are replaced by `[redacted]` before printing or embedding. `open <id> --full` returns up to 40,000 characters; a longer message ends with a line giving the exact `--from <N>` to continue with.
 
 **Meaning search setup.** It needs a local embedding model: [Ollama](https://ollama.com/download) with `ollama pull bge-m3`. If `ollama` is on your PATH the installer offers to pull it (`--yes` says yes; a non-interactive run skips it and prints the command). If Ollama is not installed, the installer prints a hint and carries on. The installer never installs Ollama itself. Backend settings are `RECALL_EMBED_*` in [Configuration](#configuration).
@@ -325,6 +338,7 @@ Every command accepts `--cwd DIR` (default: the current folder). `search` also t
 ## What install changes
 
 - Copies `precompact-handoff.py`, `postcompact-inject.py`, `handoff-nudge.py`, `recall.py` and `claims.json` to `~/.claude/hooks/` (a differing existing file is first saved to `~/.claude/hooks/.claude-handoff-backup-<timestamp>/`).
+- Copies `agents/recall.md` from this repository to `~/.claude/agents/recall.md` (the recall subagent). It keeps a file of that name that does not hold the marker line `<!-- lossless-handoff:recall-agent -->` and says so. Uninstall removes the file only when it holds the marker. The repository file is the single source: a benchmark or a project can copy the same file into its own `.claude/agents/` folder.
 - Writes `~/.claude/hooks/.handoff-manifest.json`: version, time and a SHA-256 per installed file, which `--check` compares.
 - Records everything it added in `~/.claude/hooks/.claude-handoff-install.json`, so uninstall removes exactly that.
 - Merges into `~/.claude/settings.json` (backup `settings.json.bak-<timestamp>`):
@@ -360,6 +374,8 @@ Your other hooks and settings are left alone: new entries are appended next to e
 | `claims-status.json`, `claims-report.md`, `claims-notice.json` | Claims register evaluation and its once-only alert marker. |
 | `managed-settings.json` | Only after `install.sh --managed-hooks`: the file you copy to the system location. |
 | `~/.claude/hooks/.handoff-manifest.json` | Installed hook file hashes (not in the state folder). |
+| `projects/<project>-<hash>/nodes.jsonl`, `nodes.state.json`, `nodes.lock` | Summary nodes: one line per compaction (ids, session, line range, times, token count, paths). It holds no message text. |
+| `~/.claude/agents/recall.md` | The recall subagent (user level; not in the state folder). Source file in this repository: `agents/recall.md`. |
 | `projects/<project>-<hash>/decisions.md` | The project's decisions list (kept by uninstall). Beside it: `decisions.<timestamp>.md`, `decisions.state.json`, `decisions.lock`. |
 
 Handoff files (`*.md`) are kept for 365 days. Set `HANDOFF_RETENTION_DAYS` to change this, or to `0` to keep them forever. The small status files (`*-degraded.json`, `*-last-health.json`, `*-pending.json`) are removed after 14 days. The `projects/` folder is never cleaned. Longer retention means more of your chat text stays on disk for longer. Claude Code also deletes its own chat transcripts after `cleanupPeriodDays` days (default 30), and recall can only find messages that are still there. Run `./install.sh --keep-transcripts` to set it to 365 (it never lowers a value and never overrides a managed settings file). The session-start check warns if the value is below 90. The directory is outside `~/.claude/` because Claude Code refuses model writes under that path ([ADR 0008](docs/adr/0008-handoffs-directory-under-local-state.md)).
@@ -409,6 +425,8 @@ Use a folder name that contains `handoff-canary`, so that the nightly check on y
 **Does it cost tokens?** About one short note per nudge, plus up to about 14,000 characters injected once per compaction and up to about 20,000 characters of decisions. Each compaction adds two `claude -p` Sonnet calls (fresh summary and decisions update; 20-40 s in parallel, roughly $0.10-0.20 of API-equivalent usage). Set `HANDOFF_SUMMARY=0` and `HANDOFF_LEDGER=0` to avoid them.
 
 **Will recall find old messages?** Only while Claude Code still keeps the transcript. The default is 30 days. Run `./install.sh --keep-transcripts` (365 days) or set `"cleanupPeriodDays"` yourself. Handoff files are kept 365 days. A longer retention means more chat text stays on your disk for longer.
+
+**Which new fields does the health row have?** `excerpt_chars` is how many characters of transcript the handoff model received (0 if no model call was made). `excerpt_dropped` is how many characters of the current segment were left out because of the 120,000-character limit (0 if nothing was cut). `--prove --days N` prints `excerpt cut: <c> of <n> compactions, median dropped <m> chars`. This line is information only and never fails a proof run. It measures how often the cut happens; it does not claim any gain in answer quality.
 
 **What does the PreCompact hook print?** A short block of guidance for Claude Code's own summary (quote your words, keep exact values, list running work, end with the next step). The hook gives this guidance only. The effect on summaries is measured in a later benchmark. Set `HANDOFF_COMPACT_STEER=0` to turn it off. The health row has a `steer` field (`printed` or `off`).
 

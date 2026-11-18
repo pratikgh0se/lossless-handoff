@@ -8,6 +8,9 @@
 - `~/.claude/settings.json`: merged JSON (hooks, one `permissions.allow` entry, and `env.CLAUDE_CODE_AUTO_COMPACT_WINDOW`), with a `settings.json.bak-<timestamp>` backup before each write. Invalid JSON is never overwritten.
 - `~/.local/state/claude-handoffs/`: created by install, written by the hooks, kept by uninstall. Project decision lists live in `projects/<project>-<hash>/` inside it (`decisions.md`, timestamped backups, `decisions.state.json`, `decisions.lock`); uninstall keeps them too.
 
+- `~/.local/state/claude-handoffs/projects/<project>-<hash>/nodes.jsonl` (with `nodes.state.json` and `nodes.lock`): summary nodes. Each line holds ids, the transcript path, line numbers, times, a token count and a handoff path. It holds no message text. The text of a summary is read from the transcript when you ask for it.
+- `~/.claude/agents/recall.md`: the recall subagent file. Install writes it only when it is missing or holds our marker line. Uninstall removes it only when it holds the marker.
+
 The hooks read the session transcript Claude Code passes them and write handoff files and a health log into the state directory. The only permission added is `Edit(~/.local/state/claude-handoffs/**)`, so the model can write its handoff file there.
 
 ## Network

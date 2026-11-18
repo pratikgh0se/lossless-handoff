@@ -2,7 +2,17 @@
 
 Lossless Handoff, formerly claude-handoff.
 
-## Unreleased
+## [0.10.0] - 2026-11-18
+
+Summary nodes, a recall subagent, and a log of the excerpt cut (hooks 1.12.0). New F54, F55 and F56 in `docs/spec.md`, ACs 236-254.
+
+- Summary nodes: one leaf per compaction in `projects/<project>-<hash>/nodes.jsonl`, built from `compact_boundary` records without a model call. The SessionStart `compact` hook adds new nodes from the saved byte offset. It adds one line that names the newest node.
+- New `recall.py` commands: `map`, `describe <id>`, `nodes --backfill` and `search --node <id>`. Search hits end with `[node <id>]` or `[node live]`.
+- `--prove` checks the nodes (`nodes: <b> boundaries, <n> leaves, <bad> bad`) and prints `excerpt cut: ...`.
+- `install.sh` writes the recall subagent `~/.claude/agents/recall.md` (source file `agents/recall.md`). It never overwrites a file without the marker line. `uninstall.sh` removes it only with the marker. The recall line gets one more sentence when the file is installed.
+- Health rows have `excerpt_chars` and `excerpt_dropped`.
+
+## [0.9.0] - 2026-11-18
 
 Protect the store; steer Claude Code's summary (hooks 1.11.0, release 0.9.0). New F52 and F53 in `docs/spec.md`, ACs 218-235.
 
