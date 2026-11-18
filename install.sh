@@ -496,6 +496,7 @@ AGENT_MARK="<!-- lossless-handoff:recall-agent -->"
 if [ ! -f "$AGENT_SRC" ]; then
   say "recall subagent: skipped (agents/recall.md is missing from this copy)"
 elif [ -e "$AGENT_DST" ] && ! grep -qF "$AGENT_MARK" "$AGENT_DST" 2>/dev/null; then
+  # shellcheck disable=SC2088  # print the literal ~ path for the user
   echo "~/.claude/agents/recall.md exists and is not ours; left unchanged."
 elif [ -f "$AGENT_DST" ] && cmp -s "$AGENT_SRC" "$AGENT_DST"; then
   say "recall subagent unchanged: $AGENT_DST"
