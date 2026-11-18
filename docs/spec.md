@@ -809,19 +809,19 @@ Lossless Handoff guidance for this summary:
 - End with the exact next step.
 - A structured handoff and the project decisions list are injected after this compaction, and the full transcript stays searchable with recall, so keep old history short and keep the current state complete.
 ```
-**F53.b User instructions win.** If the PreCompact input has a non-empty `custom_instructions` (a manual `/compact <text>`), print nothing on stdout. The handoff is still written as before.
+**F53.b User instructions.** Claude Code adds the hook's stdout to the text of a manual `/compact <text>`; it does not replace it (verified live 2026-11-18: a summary held both the user's token and the hook's token). So the block is printed for every PreCompact event, also when `custom_instructions` is non-empty.
 **F53.c Off switch.** `HANDOFF_COMPACT_STEER=0` prints nothing.
 **F53.d Safety.** Exit code and all other behaviour are unchanged. The hook never blocks compaction (never exit 2).
 
 ACs:
 - 229. PreCompact `{"trigger":"auto", ...}`: stdout equals the F53.a block exactly (trailing newline allowed), exit 0, and the handoff is written as before.
-- 230. `{"trigger":"manual","custom_instructions":"keep the API notes"}`: stdout is empty, exit 0, handoff written.
+- 230. `{"trigger":"manual","custom_instructions":"keep the API notes"}`: as 229 (stdout equals the F53.a block, exit 0, handoff written).
 - 231. `{"trigger":"manual","custom_instructions":""}`: as 229.
 - 232. `HANDOFF_COMPACT_STEER=0`: stdout empty.
 - 233. `--check`, `--reconcile --days 1`, `--prove --days 1`: no F53.a text in their output.
 - 234. A subagent PreCompact (`agent_id` set): as 229.
 
-**F53.e Proof field.** Each PreCompact health row (the row the hook already writes) gets `"steer"` with one of: `"printed"` (the F53.a block was written), `"custom"` (skipped because `custom_instructions` was non-empty), `"off"` (`HANDOFF_COMPACT_STEER=0`). Rows written before 1.11.0 have no field.
-- 235. After AC 229's run, the new health row has `"steer": "printed"`; after 230, `"custom"`; after 232, `"off"`.
+**F53.e Proof field.** Each PreCompact health row (the row the hook already writes) gets `"steer"` with one of: `"printed"` (the F53.a block was written), `"off"` (`HANDOFF_COMPACT_STEER=0`). Rows written before 1.11.0 have no field.
+- 235. After AC 229's run and after AC 230's run, the new health row has `"steer": "printed"`; after 232, `"off"`.
 
 Version: hooks 1.11.0; release 0.9.0. `HOOK_VERSION` in both hooks and the `hook_version` in health rows and sidecars is `1.11.0`. This amends the version value in ACs 136, 150, 172, 180, 188 again.

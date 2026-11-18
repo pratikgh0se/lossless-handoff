@@ -398,7 +398,7 @@ Use a folder name that contains `handoff-canary`, so that the nightly check on y
 | `HANDOFF_HAIKU_FALLBACK=0` | Legacy switch from 0.1.x; still honoured and also disables the fresh summary. |
 | `RECALL_EMBED_URL`, `RECALL_EMBED_MODEL`, `RECALL_EMBED_BACKEND`, `RECALL_EMBED_KEY` | Meaning search backend. Defaults: Ollama at `http://localhost:11434`, model `bge-m3`. Backend `openai` works with any `/v1/embeddings` server; the key is an optional Bearer token. |
 | `HANDOFF_RETENTION_DAYS` | Days to keep handoff `*.md` files. Default 365. `0` keeps them forever. A value that is not a whole number counts as 365. The `*-degraded.json`, `*-last-health.json` and `*-pending.json` files always use 14 days. |
-| `HANDOFF_COMPACT_STEER=0` | Do not print the guidance for Claude Code's own compaction summary. The hook prints it by default. It prints nothing when you run `/compact <text>`. The effect on summary quality is measured in a later benchmark. |
+| `HANDOFF_COMPACT_STEER=0` | Do not print the guidance for Claude Code's own compaction summary. The hook prints it by default. The guidance is added to any text that you type after `/compact`. The effect on summary quality is measured in a later benchmark. |
 | `LOSSLESS_HANDOFF_MANAGED_SETTINGS` | Test only. Path of the managed settings file that `install.sh`, `uninstall.sh` and `postcompact-inject.py --check` read instead of `/Library/Application Support/ClaudeCode/managed-settings.json`. The older name `HANDOFF_MANAGED_SETTINGS_PATH` still works. The tools never create the real file. |
 | `HANDOFF_STATE_DIR` | Use another directory instead of `~/.local/state/claude-handoffs`. |
 | `LOSSLESS_HANDOFF_NO_LAUNCHCTL=1` | `install.sh` and `uninstall.sh` write and remove the LaunchAgent files but never call `launchctl`. Use it for any install into a temporary HOME on macOS: `launchctl` acts on your real login session, so without it a test install loads, and a test uninstall unloads, jobs with the real labels. |
@@ -410,7 +410,7 @@ Use a folder name that contains `handoff-canary`, so that the nightly check on y
 
 **Will recall find old messages?** Only while Claude Code still keeps the transcript. The default is 30 days. Run `./install.sh --keep-transcripts` (365 days) or set `"cleanupPeriodDays"` yourself. Handoff files are kept 365 days. A longer retention means more chat text stays on your disk for longer.
 
-**What does the PreCompact hook print?** A short block of guidance for Claude Code's own summary (quote your words, keep exact values, list running work, end with the next step). The hook gives this guidance only. The effect on summaries is measured in a later benchmark. Set `HANDOFF_COMPACT_STEER=0` to turn it off. The health row has a `steer` field (`printed`, `custom` or `off`).
+**What does the PreCompact hook print?** A short block of guidance for Claude Code's own summary (quote your words, keep exact values, list running work, end with the next step). The hook gives this guidance only. The effect on summaries is measured in a later benchmark. Set `HANDOFF_COMPACT_STEER=0` to turn it off. The health row has a `steer` field (`printed` or `off`).
 
 **Does it work in the desktop app?** Yes. The desktop app runs the same hooks from `~/.claude/settings.json`.
 

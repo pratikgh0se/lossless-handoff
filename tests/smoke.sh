@@ -628,7 +628,7 @@ ok "F52: --check line, --keep-transcripts, uninstall note, managed value, handof
   [ ! -s "$T/f53.err" ] || fail "F53: stderr not empty"
   [ -s "$HANDOFF_STATE_DIR/f53a-latest.md" ] || fail "F53: handoff not written"
   o="$(run '{"trigger":"manual","custom_instructions":"keep the API notes","session_id":"f53b","cwd":"/tmp","transcript_path":"/nonexistent"}' X=1)"
-  [ -z "$o" ] && [ -s "$HANDOFF_STATE_DIR/f53b-latest.md" ] || fail "F53: custom_instructions must give empty stdout and a handoff"
+  [ "$o" = "$steer" ] && [ -s "$HANDOFF_STATE_DIR/f53b-latest.md" ] || fail "F53: custom_instructions must still print the block and write a handoff"
   o="$(run '{"trigger":"manual","custom_instructions":"","session_id":"f53c","cwd":"/tmp","transcript_path":"/nonexistent"}' X=1)"
   [ "$o" = "$steer" ] || fail "F53: empty custom_instructions should print the block"
   o="$(run '{"trigger":"auto","session_id":"f53d","cwd":"/tmp","transcript_path":"/nonexistent"}' HANDOFF_COMPACT_STEER=0)"
@@ -640,11 +640,11 @@ ok "F52: --check line, --keep-transcripts, uninstall note, managed value, handof
     o="$(python3 "$PRE" $m </dev/null 2>&1)"; ! grep -q "Lossless Handoff guidance" <<<"$o" || fail "F53: block printed in mode $m"
   done
   o="$(python3 "$ROOT/hooks/postcompact-inject.py" --check 2>&1 </dev/null)"; ! grep -q "Lossless Handoff guidance" <<<"$o" || fail "F53: block in --check"
-  for pair in f53a:printed f53b:custom f53d:off; do
+  for pair in f53a:printed f53b:printed f53d:off; do
     grep '"sid": *"'"${pair%%:*}"'"' "$HANDOFF_STATE_DIR/health.jsonl" | tail -1 | grep -q '"steer": *"'"${pair##*:}"'"' || fail "F53.e: ${pair%%:*} should have steer ${pair##*:}"
   done
 )
-ok "F53: block on auto, subagent and empty custom_instructions; silent for custom text, STEER=0 and CLI modes"
+ok "F53: block on auto, subagent and any custom_instructions; silent for STEER=0 and CLI modes"
 
 "$ROOT/uninstall.sh" >"$T/un.out"
 python3 - "$S" "$T/original.json" <<'PY'

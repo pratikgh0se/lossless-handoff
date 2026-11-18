@@ -1496,21 +1496,17 @@ STEER_TEXT = """Lossless Handoff guidance for this summary:
 """
 
 
-_STEER = [None]  # F53.e: "printed", "custom" or "off"; None when this run is not a PreCompact event
+_STEER = [None]  # F53.e: "printed" or "off"; None when this run is not a PreCompact event
 
 
 def steer_summary(d):
     """F53: Claude Code uses PreCompact stdout as instructions for its own summary. Print the guidance once,
-    flushed, before any model call. Print nothing if the user gave /compact text (F53.b) or HANDOFF_COMPACT_STEER=0."""
+    flushed, before any model call. Claude Code adds this to any /compact text, so print it for every event (F53.b). Print nothing if HANDOFF_COMPACT_STEER=0."""
     try:
         if any(a.startswith("--") for a in sys.argv[1:]):  # a CLI mode, not a PreCompact event
             return
         if (os.environ.get("HANDOFF_COMPACT_STEER") or "").strip() == "0":
             _STEER[0] = "off"
-            return
-        ci = d.get("custom_instructions")
-        if isinstance(ci, str) and ci.strip():
-            _STEER[0] = "custom"
             return
         sys.stdout.buffer.write(STEER_TEXT.encode("utf-8"))
         sys.stdout.buffer.flush()
