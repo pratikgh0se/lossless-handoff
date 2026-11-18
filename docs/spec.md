@@ -983,3 +983,28 @@ ACs (all with a fake `claude` set by `LLM_MAP_CLAUDE`, a script that reads the p
 - 280. Install in a temp HOME: `~/.claude/skills/llm-map/SKILL.md` exists with the marker, `name: llm-map` and the text `llm_map.py`; `~/.claude/hooks/llm_map.py` exists; `settings.json` hook entries are unchanged by this feature. A SKILL.md without the marker is left unchanged with the F60.c line; uninstall removes only the marked file.
 
 Version: hooks 1.14.0; release 0.12.0. `HOOK_VERSION` in both hooks and `hook_version` in health rows and sidecars is `1.14.0`. This amends the version value in ACs 136, 150, 172, 180, 188 and 267 again.
+
+
+## F61 llm_map: faster, a fixed label set, progress (2026-11-18)
+Why: a small OOLONG check (run 20261118T142600, Sonnet, 128K, 5 tasks) gave arm C with llm_map 0.20 against 0.60 for plain Claude Code. The diagnosis found:
+- 3,000 items took about 147 s with the F60 defaults. That is longer than the 120 s default of the Bash tool, so 3 of 4 runs moved to the background, and the model waited badly (one wait loop used `pgrep -f llm_map.py`, which matched itself).
+- The small model often answered with a label that was not in the list (short forms such as "description" or "numeric", or an answer to the question such as "1790").
+- One task never used llm_map.
+
+**F61.a Defaults.** `--batch` default is 100 and `--jobs` default is 8.
+**F61.b Fixed labels.** `--labels "<a>|<b>|..."` (labels split on `|`, each trimmed; at least 2) sets the allowed answers. The batch prompt lists them and asks for exactly one of them. A reply value is mapped to a label in this order: (1) equal to a label after trim and case fold; (2) the reply is a prefix of exactly one label, or exactly one label is a prefix of the reply, after case fold, at a word boundary; else the value is invalid. An item with an invalid value is sent once more like a missing item (F60.a); if it is still invalid, it gets `"out": null, "error": "label: <the reply cut to 40 characters>"`. `out` always holds the canonical label text. `--labels` with `--json-out` is a usage error (exit 2).
+**F61.c Progress.** After each batch ends, llm_map prints to stderr `llm_map: <done> of <n> items done`. The final summary line on stdout is unchanged.
+**F61.d Skill text.** `skills/llm-map/SKILL.md`:
+- The `description` also says: use it to count or aggregate over hundreds or thousands of items.
+- The body says: a run of a few thousand items takes about one minute; give the Bash call a timeout of 600000 ms; wait for it to end in the foreground. Do not poll for it with `pgrep` or `ps`. Use relative paths in the current folder for the files (not `$TMPDIR`). Give the exact label set with `--labels`. Read the summary line before you count. Count from the output file with a script.
+- The example uses `--labels`. It stays neutral (not a benchmark's labels).
+
+ACs (fake `claude` as in F60):
+- 281. 250 items with no `--batch` and no `--jobs`: 3 batches (100, 100, 50).
+- 282. `--labels "numeric value|human being|location"`, a fake that answers `numeric`, `Human Being`, `location` and `1790`: the first three items get `numeric value`, `human being`, `location`; the fourth is sent again; if the fake answers `1790` again, it gets `out` null and an `error` that starts with `label:`, the summary counts it as failed, exit 3.
+- 283. A reply that is a prefix of two labels (for example `h` with labels `human being|history`): invalid, handled as in AC 282.
+- 284. `--labels "a"` (one label), or `--labels` with `--json-out`: exit 2, no `--out` file.
+- 285. stderr holds one `llm_map: <done> of <n> items done` line per batch, and the last one says `<n> of <n>` when all items are done.
+- 286. The installed SKILL.md holds `--labels`, `600000`, and the word `pgrep`; the description holds `count`.
+
+Version: hooks 1.14.1; release 0.12.1. `HOOK_VERSION` in both hooks and `hook_version` in health rows and sidecars is `1.14.1`. This amends the version value in ACs 136, 150, 172, 180, 188 and 267 again.
