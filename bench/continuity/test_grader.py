@@ -5,7 +5,7 @@ Run: python3 bench/continuity/test_grader.py   (exit 0 when every check passes)
 import json, os, sys, unittest
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import gen, grade
+import gen, grade, runner
 
 
 def js(answers):
@@ -392,6 +392,35 @@ class Diagnostics(Base):
         r3 = grade.retention([summ(vals[:10]), summ(vals[:2]), summ(vals[:2])], self.s)
         self.assertTrue(r3["collapse"])  # the drop came before the last step; the best earlier summary counts
         self.assertIsNone(grade.retention([], self.s)["last"])
+
+
+class OracleSize(unittest.TestCase):
+    """Arm O must fit its own window, whatever the main window is."""
+
+    def test_default_o_is_under_60_percent_at_200k(self):
+        planted = runner.o_planted_tokens([1000, 1001])
+        fpt, turns, est = runner.o_plan(200000, planted, None, None)
+        self.assertEqual(turns, 3)
+        self.assertGreaterEqual(fpt, 1)
+        self.assertLess(est, 0.60 * 200000)
+
+    def test_default_does_not_use_main_window(self):
+        # the 400k main window gives 12 files per turn; O must not copy that
+        planted = runner.o_planted_tokens([1000])
+        fpt, _, _ = runner.o_plan(200000, planted, None, None)
+        self.assertLess(fpt, 12)
+
+    def test_preflight_fails_fast(self):
+        planted = runner.o_planted_tokens([1000])
+        with self.assertRaises(SystemExit) as c:
+            runner.o_plan(200000, planted, 12, 3)
+        self.assertIn("arm O would be too large", str(c.exception))
+
+    def test_small_window_is_scaled_not_failed(self):
+        planted = runner.o_planted_tokens([1000])
+        fpt, _, est = runner.o_plan(400000, planted, None, None)
+        self.assertLess(est, 0.60 * 400000)
+        self.assertGreater(fpt, runner.o_plan(200000, planted, None, None)[0])
 
 
 if __name__ == "__main__":

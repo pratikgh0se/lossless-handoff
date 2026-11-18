@@ -40,6 +40,11 @@ Options of `slice` and `full` (see `python3 bench/continuity/runner.py run slice
 | `--jobs` | sessions in parallel | 2 |
 | `--budget-usd` | pause cleanly when the total reaches this value | none |
 | `--files-per-turn` | filler files per turn | from the window (2 at 30000) |
+| `--o-window` | `CLAUDE_CODE_AUTO_COMPACT_WINDOW` of arm O | 200000 |
+| `--oracle-turns` | filler turns of arm O before its probes | 3 |
+| `--o-files-per-turn` | filler files per turn of arm O | from `--o-window`, not from `--window` (3 at 200000) |
+
+Arm O never compacts, so its size must fit its own window. The runner sets its filler size from `--o-window` so that the estimate stays under 60% of that window. The size does not change with `--window`. Before the run, a pre-flight estimate (overhead, planted content, probe, filler) must stay under 75% of `--o-window`. If not, the run stops at once with "arm O would be too large". `config.json` records `o_files_per_turn`, `oracle_turns` and `o_estimate_tokens`.
 
 A run with `--budget-usd X` stops new calls when the running total reaches X. Calls already running finish, so the total can pass X by a few calls.
 The state file keeps the session id and the next turn of each session. `resume` continues from there and repeats no finished work.
