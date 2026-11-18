@@ -263,9 +263,11 @@ Restart open Claude Code sessions after installing: hooks load when a session st
 When a subagent compacts, Claude Code fires the hooks with `agent_id` set but with the parent's `session_id` and `transcript_path`. Before 1.10.0 that looked like a main-session compaction and no subagent handoff was written. Now each compacting subagent gets its own handoff, built from its own transcript (`<session>/subagents/agent-<agent_id>.jsonl` next to the parent transcript) and stored under `<sid>-a-<agent_id>` files.
 
 - A subagent never reads or writes the main session's handoff, and the other way round [C3].
-- A subagent never merges the decisions list and never starts the indexer; the rules are still injected into it. The nudge hook ignores subagent events (non-empty `agent_id`), so a subagent is never told to write the main session's handoff file.
+- A subagent never merges the decisions list and never starts the indexer. The nudge hook ignores subagent events (non-empty `agent_id`), so a subagent is never told to write the main session's handoff file.
 - If the subagent transcript is missing, the health row says `degraded` / `agent_transcript_missing` and no handoff is written.
 - Reconcile counts subagent compactions separately, and the register tracks that they are covered [C6]. Before 1.10.0 they were not: 0 of 28 in the author's first 30-day reconcile.
+
+**Rules at subagent start (hooks 1.13.0).** A new subagent gets no project rules, and most subagents never compact. So the installer registers a `SubagentStart` hook (`postcompact-inject.py --subagent-start`, timeout 10). It gives the new subagent, and only the subagent, one block of context: the active `rule` entries of the project decisions list (newest first, at most 4,000 characters, cut at an entry boundary) and the recall line. It never gives decisions, tasks, the main agent's handoff or the agent notes [D3]. If there is no ledger or no rule, only the recall line is given. `HANDOFF_SUBAGENT_RULES=0` turns the hook off. Each run adds a row with `event: "subagent_start"` to `health.jsonl`; `--prove` and `--reconcile` skip these rows. The hook takes about 50 ms with 200 rules. `SubagentStart` is a new hook event: restart open Claude Code sessions after you update. The installer prints a line about this only when it adds the entry.
 
 ## Headless runs
 
@@ -331,7 +333,7 @@ Each `search` hit ends with `[node <id>]`, or `[node live]` when it is after the
 
 **Recall subagent.** The installer writes `~/.claude/agents/recall.md`, a small agent (model `haiku`, tools `Bash` and `Read`) that runs `map`, `search`, `describe` and `open` and returns at most 15 short quotes with message ids and node ids. When the file is installed, the injected recall line tells the main agent to use it for wide lookups so long recalled text stays out of the main context, and to search directly for one exact fact. Nothing blocks the main agent from running `recall.py open` itself.
 
-Every command accepts `--cwd DIR` (default: the current folder). `search` also takes `--session SID8|all`, `--limit N` and `--subagents`. `--keyword` is words only, `--meaning` is the embedding index only. Output is capped at 12,000 characters, and obvious secrets (API keys, tokens, `password=...`) are replaced by `[redacted]` before printing or embedding. `open <id> --full` returns up to 40,000 characters; a longer message ends with a line giving the exact `--from <N>` to continue with.
+Every command accepts `--cwd DIR` (default: the current folder). `search` also takes `--session SID8|all`, `--limit N` and `--no-subagents`. Search, `open` and the meaning index include the work of subagents by default. A subagent hit has the id `<sid8>/<agent8>:<line>` and the tag `[agent <agent8>]`; it shows what a subagent saw or did, not what you typed. `--no-subagents` leaves them out. The old `--subagents` flag is still accepted and does nothing. `user` still reads only the main chats, because a subagent's user turns are prompts from the main agent. `--keyword` is words only, `--meaning` is the embedding index only. Output is capped at 12,000 characters, and obvious secrets (API keys, tokens, `password=...`) are replaced by `[redacted]` before printing or embedding. `open <id> --full` returns up to 40,000 characters; a longer message ends with a line giving the exact `--from <N>` to continue with.
 
 **Meaning search setup.** It needs a local embedding model: [Ollama](https://ollama.com/download) with `ollama pull bge-m3`. If `ollama` is on your PATH the installer offers to pull it (`--yes` says yes; a non-interactive run skips it and prints the command). If Ollama is not installed, the installer prints a hint and carries on. The installer never installs Ollama itself. Backend settings are `RECALL_EMBED_*` in [Configuration](#configuration).
 
@@ -345,6 +347,7 @@ Every command accepts `--cwd DIR` (default: the current folder). `search` also t
   - a PreCompact hook (timeout 150) and a PostToolUse hook (matcher `*`, timeout 5);
   - a SessionStart `compact` group with the three inject commands and the three `--ledger --part 1/2/3` commands (timeout 10), and `startup` and `resume` groups with the three `--ledger` commands plus `postcompact-inject.py --check` (timeout 5);
   - a `SessionEnd` hook running `recall.py session-end` (timeout 5);
+  - a `SubagentStart` hook running `postcompact-inject.py --subagent-start` (timeout 10);
   - `permissions.allow` entries `Edit(~/.local/state/claude-handoffs/**)` (so the model can write its handoff without a prompt) and `Bash(python3 ~/.claude/hooks/recall.py:*)` (so it can run recall without a prompt);
   - `env.CLAUDE_CODE_AUTO_COMPACT_WINDOW` = `"400000"` unless already set (`--window N` picks another value, `--no-window` leaves it alone).
 - Creates `~/.local/state/claude-handoffs/`.
@@ -414,6 +417,7 @@ Use a folder name that contains `handoff-canary`, so that the nightly check on y
 | `HANDOFF_HAIKU_FALLBACK=0` | Legacy switch from 0.1.x; still honoured and also disables the fresh summary. |
 | `RECALL_EMBED_URL`, `RECALL_EMBED_MODEL`, `RECALL_EMBED_BACKEND`, `RECALL_EMBED_KEY` | Meaning search backend. Defaults: Ollama at `http://localhost:11434`, model `bge-m3`. Backend `openai` works with any `/v1/embeddings` server; the key is an optional Bearer token. |
 | `HANDOFF_RETENTION_DAYS` | Days to keep handoff `*.md` files. Default 365. `0` keeps them forever. A value that is not a whole number counts as 365. The `*-degraded.json`, `*-last-health.json` and `*-pending.json` files always use 14 days. |
+| `HANDOFF_SUBAGENT_RULES=0` | Do not give project rules to a new subagent. The `SubagentStart` hook then prints nothing. |
 | `HANDOFF_COMPACT_STEER=0` | Do not print the guidance for Claude Code's own compaction summary. The hook prints it by default. The guidance is added to any text that you type after `/compact`. The effect on summary quality is measured in a later benchmark. |
 | `LOSSLESS_HANDOFF_MANAGED_SETTINGS` | Test only. Path of the managed settings file that `install.sh`, `uninstall.sh` and `postcompact-inject.py --check` read instead of `/Library/Application Support/ClaudeCode/managed-settings.json`. The older name `HANDOFF_MANAGED_SETTINGS_PATH` still works. The tools never create the real file. |
 | `HANDOFF_STATE_DIR` | Use another directory instead of `~/.local/state/claude-handoffs`. |

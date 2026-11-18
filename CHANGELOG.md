@@ -2,6 +2,15 @@
 
 Lossless Handoff, formerly claude-handoff.
 
+## [0.11.0] - 2026-11-18
+
+Subagent work in search, and rules at subagent start (hooks 1.13.0). New F57 and F58 in `docs/spec.md`, ACs 255-267.
+
+- `search`, `open` and the meaning index include subagent transcripts by default. A subagent hit has the id `<sid8>/<agent8>:<line>` and the tag `[agent <agent8>]`. `--no-subagents` restores the old scope. `--subagents` is still accepted and does nothing. `user` still reads only main chats. Run `recall.py index` once to add subagent text to the meaning index.
+- New `SubagentStart` hook (`postcompact-inject.py --subagent-start`). It gives a new subagent the active `rule` entries of the project (at most 4,000 characters) and the recall line. It gives no decisions, tasks, handoff text or notes. `HANDOFF_SUBAGENT_RULES=0` turns it off.
+- `install.sh` registers the hook (also in the `--managed-hooks` file); `uninstall.sh` removes it. `SubagentStart` is a new hook event: restart open Claude Code sessions.
+- Each run adds a health row with `event: "subagent_start"`. `--prove` and `--reconcile` skip these rows. The agent file `agents/recall.md` explains the `[agent ...]` tag.
+
 ## [0.10.0] - 2026-11-18
 
 Summary nodes, a recall subagent, and a log of the excerpt cut (hooks 1.12.0). New F54, F55 and F56 in `docs/spec.md`, ACs 236-254.
