@@ -389,6 +389,8 @@ class Diagnostics(Base):
         self.assertTrue(r["collapse"])
         r2 = grade.retention([summ(vals[:10]), summ(vals[:5])], self.s)
         self.assertFalse(r2["collapse"])
+        r3 = grade.retention([summ(vals[:10]), summ(vals[:2]), summ(vals[:2])], self.s)
+        self.assertTrue(r3["collapse"])  # the drop came before the last step; the best earlier summary counts
         self.assertIsNone(grade.retention([], self.s)["last"])
 
 

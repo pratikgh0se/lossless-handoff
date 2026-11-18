@@ -214,7 +214,7 @@ def summary_texts(records):
 def retention(records, script):
     """Count the planted answers found in each summary. Returns
     {"total", "summaries", "found" (per summary, in order), "last", "by_type_last", "collapse"}.
-    collapse is True when the last summary keeps fewer than half of what the previous summary kept."""
+    collapse is True when the last summary keeps fewer than half of what the best earlier summary kept."""
     ans = planted_answers(script)
     texts = summary_texts(records)
     found = [sum(1 for (_t, _i, v) in ans if v in tx) for tx in texts]
@@ -224,6 +224,6 @@ def retention(records, script):
             c = by_type.setdefault(t, [0, 0])
             c[1] += 1
             c[0] += 1 if v in texts[-1] else 0
-    collapse = len(found) >= 2 and found[-2] > 0 and found[-1] < found[-2] / 2
+    collapse = len(found) >= 2 and max(found[:-1]) > 0 and found[-1] < max(found[:-1]) / 2
     return {"total": len(ans), "summaries": len(texts), "found": found, "last": found[-1] if found else None,
             "by_type_last": by_type, "collapse": collapse}

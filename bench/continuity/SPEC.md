@@ -143,7 +143,7 @@ Other files: `config.json` (all settings, versions, commits), `state.json` (runn
 - Gain verdict words: GAIN (point at least 5 points, CI lower bound above 0, at least 20 pairs), NO GAIN PROVEN, SMALL SAMPLE (fewer than 20 pairs: no claim), NO DATA.
 - A cell with 0 items is "no data", never a pass.
 - Seed spread: for each arm and N, the pooled rate, the min-max over seeds and each seed. A pooled number alone can hide a seed that fails for a random reason.
-- Planted answers in the last summary: for each arm and seed, found/total in the last compaction summary, and the found count of each summary in order. The line `SUMMARY COLLAPSE` appears when the last summary keeps fewer than half of the answers that the previous summary kept. Read it before a claim: a collapse is a random summary failure, not an effect of the arm. It prints "no data" when `retention.jsonl` is missing or empty.
+- Planted answers in the last summary: for each arm and seed, found/total in the last compaction summary, and the found count of each summary in order. The line `SUMMARY COLLAPSE` appears when the last summary keeps fewer than half of the answers that the best earlier summary kept. Read it before a claim: a collapse is a random summary failure, not an effect of the arm. It prints "no data" when `retention.jsonl` is missing or empty.
 - Type U lookup trace (information only): for each arm, how many U forks made any tool call and how many called recall, and the first 3 recall commands. It prints "no data" for rows with no `lookup_calls`.
 - `run.sh regrade` applies the S label rule to stored replies. If `retention.jsonl` is missing, it counts from the live transcripts in `~/.claude/projects` when they exist, and prints "no data" when they do not.
 

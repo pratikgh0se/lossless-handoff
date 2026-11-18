@@ -395,10 +395,10 @@ def build(run_id, draws=None):
         md.append("")
         flags = [x for x in ret if x.get("collapse")]
         for x in sorted(flags, key=lambda y: (y["arm"], y["seed"])):
-            md.append("SUMMARY COLLAPSE: arm %s seed %d: the last summary keeps %d of %d answers, the previous one kept %d." % (
-                x["arm"], x["seed"], x["last"], x["total"], x["found"][-2]))
+            md.append("SUMMARY COLLAPSE: arm %s seed %d: the last summary keeps %d of %d answers, the best earlier one kept %d." % (
+                x["arm"], x["seed"], x["last"], x["total"], max(x["found"][:-1])))
         if not flags:
-            md.append("No summary collapse (a collapse = the last summary keeps fewer than half of the answers that the previous one kept).")
+            md.append("No summary collapse (a collapse = the last summary keeps fewer than half of the answers that the best earlier summary kept).")
     md.append("")
 
     # ---- U lookup trace
