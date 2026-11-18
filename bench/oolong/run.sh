@@ -7,6 +7,7 @@
 #   run.sh report <run-id> [--draws N]
 #   run.sh selfcheck [--model M] [--arms A,B,C]         sandbox proof, stores evidence/
 #   run.sh cleanup [--all] [--dry-run] [--work-base DIR]
+#   run.sh tmpcheck [--quarantine-tmp] [--list-file F]  loose items in /tmp/claude-<uid> (moves them with --quarantine-tmp, deletes nothing)
 # Exit: 0 finished, 1 a unit failed, 2 usage error, 3 paused (budget).
 set -u
 D="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -34,6 +35,7 @@ case "$cmd" in
     exit "$rc" ;;
   report)   exec python3 "$D/report.py" "$@" ;;
   selfcheck) exec python3 "$D/harness.py" selfcheck "$@" ;;
+  tmpcheck) exec python3 "$D/harness.py" tmpcheck "$@" ;;
   cleanup)  exec python3 "$D/harness.py" cleanup "$@" ;;
-  *) sed -n 2,11p "$0" >&2; exit 2 ;;
+  *) sed -n 2,12p "$0" >&2; exit 2 ;;
 esac

@@ -53,7 +53,8 @@ INFRA_RATE = 0.20                  # more than this share of infrastructure erro
 DENIAL_PREFIXES = ("Permission to use", "Claude requested permissions", "This command requires approval", "The user doesn't want")
 WORKFLOW_LINE = "You may split the work across parallel subagents (Agent tool) if it helps; wait for all their results before your final answer."
 PROMPT_CORE = ("The file context.txt in the current folder holds a data set. Read it with your tools as needed. "
-               "Do not use the network. Answer the question below about the data set.\n\n{question}\n\n"
+               "Do not use the network. Keep every scratch file in the current folder and use relative paths; do not use /tmp or $TMPDIR. "
+               "Answer the question below about the data set.\n\n{question}\n\n"
                "Write the final answer on the last line, in the form the question asks. "
                "Add no period and no other text after it.")
 # What may differ between arms. Any other difference stops the run before the first call.
@@ -64,6 +65,7 @@ LLM_MAP_HOOK_REL = os.path.join("hooks", "llm_map.py")
 LLM_MAP_SKILL_PATHS = ("~/.claude/hooks/llm_map.py", "$HOME/.claude/hooks/llm_map.py")
 LLM_MAP_SUMMARY = re.compile(r"llm_map:[^\n]*?cost \$([0-9]+(?:\.[0-9]+)?)")
 LLM_MAP_OK = re.compile(r"llm_map: (\d+) items, (\d+) ok")
+SCRATCH_WORDS = ["TMPDIR", "mktemp", "tempfile"]
 DENY_BASH = ["curl", "wget", "pip", "pip3", "huggingface", "hf_hub", "load_dataset", "git clone", "urllib", "requests", "http.client", "urlretrieve"]
 # Contamination patterns, searched in the text the model wrote and in its tool inputs. Tool results are not searched:
 # they print lines of the context (for example "hair curl"), which are not evidence.
@@ -138,7 +140,7 @@ def require_llm_map(lh):
         if not os.path.isfile(os.path.join(lh, rel)):
             raise SystemExit("arm C: %s is missing in %s. Use --lh-path with a checkout that has llm_map (Lossless Handoff 0.12.0 or later)." % (rel, lh))
     pre = llm_map_prefix(lh)
-    bad = [w for w in DENY_BASH + ["oolong"] if w in pre]
+    bad = [w for w in DENY_BASH + SCRATCH_WORDS + ["oolong"] if w in pre]
     if bad:
         raise SystemExit("arm C: the llm_map path %s holds the denied word %r. The Bash deny rules would block it. Use a checkout under another path." % (pre, bad[0]))
     for g in (os.path.realpath(HERE),):
@@ -191,7 +193,10 @@ def deny_rules(cfg):
         for tool in ("Read", "Grep", "Glob", "Edit", "Write"):
             rules.append("%s(/%s/**)" % (tool, g))
         rules.append("Bash(*%s*)" % g)
-    rules += ["Bash(*%s*)" % w for w in DENY_BASH] + ["Bash(*oolong*)", "WebSearch", "WebFetch"]
+    # Temp-file words: a unit must keep scratch files in its own folder. Claude Code sets TMPDIR of every Bash call to the shared
+    # /tmp/claude-<uid>, where parallel units overwrite each other's files (a review found 41 of 120 units wrote there).
+    # /tmp itself is not denied: the unit folder and the llm_map path are under /private/tmp.
+    rules += ["Bash(*%s*)" % w for w in DENY_BASH + SCRATCH_WORDS] + ["Bash(*oolong*)", "WebSearch", "WebFetch"]
     return sorted(set(rules))
 
 
@@ -225,7 +230,10 @@ def project_settings(cfg, arm, sandbox_only=False, proj=None):
                     "network": {"allowedDomains": []}}
     if proj:   # Bash may read only its own folder: not the other task folders, the gold, the results or the transcripts
         deny = {cfg["work_base"], os.path.realpath(HERE), os.path.realpath(cfg["cache"]), PROJECTS} | set(repo_roots()) | shared_tmp_dirs()
-        s["sandbox"]["filesystem"] = {"denyRead": sorted(deny), "allowRead": [proj]}
+        # denyWrite: the deny rule Bash(*TMPDIR*) does not see a redirect target (a redirect to the TMPDIR folder runs), so the sandbox
+        # blocks writes to the shared folder. The unit writes in its own folder (cwd) and in CLAUDE_CODE_TMPDIR, both outside it.
+        s["sandbox"]["filesystem"] = {"denyRead": sorted(deny), "allowRead": [proj] + ([os.path.join(cfg["lh_path"], LLM_MAP_HOOK_REL)] if arm == "C" else []),
+                                      "denyWrite": sorted({os.path.realpath("/tmp/claude-%d" % os.getuid()), os.path.realpath(os.path.join(tempfile.gettempdir(), "claude-%d" % os.getuid()))})}
     return s
 
 
@@ -413,6 +421,25 @@ def tool_counts(records):
     return n
 
 
+SHARED_TMP_REF = re.compile(r"(?:(?:/private)?/tmp/claude-\d+/(?!-)|\$\{?TMPDIR\}?/)[^\s\"'\\;|&)<>]+")
+
+
+def shared_tmp_refs(records, exclude=()):
+    """Inputs of Bash, Write, Edit and Read tool calls (main and subagent records) that name a file or folder directly in the shared
+    /tmp/claude-<uid> (a name not starting with '-') outside the exclude prefixes (the unit folder). Returns a list of excerpts."""
+    out = []
+    for r in records:
+        msg = r.get("message") if isinstance(r, dict) else None
+        if r.get("type") != "assistant" or not isinstance(msg, dict) or not isinstance(msg.get("content"), list):
+            continue
+        for b in msg["content"]:
+            if isinstance(b, dict) and b.get("type") == "tool_use" and b.get("name") in ("Bash", "Write", "Edit", "Read"):
+                for m in SHARED_TMP_REF.finditer(json.dumps(b.get("input", {}))):
+                    if not any(m.group(0).startswith(x) or m.group(0).replace("/private", "", 1).startswith(x) for x in exclude if x):
+                        out.append("%s: %s" % (b.get("name"), m.group(0)[:120]))
+    return out
+
+
 def result_text_of(block):
     c = block.get("content")
     if isinstance(c, str):
@@ -534,9 +561,25 @@ def unit_stem(run_id):
 
 
 def e2big_hit(recs, result_text=""):
-    """True if the transcript records or the result text hold the E2BIG error text (Bash could not start)."""
-    blob = result_text + "".join(json.dumps(r, ensure_ascii=False) for r in recs if isinstance(r, dict))
-    return any(m in blob for m in E2BIG_MARKERS)
+    """True if a Bash tool error (is_error, text not starting with "Exit code": the shell did not start), the result text or stderr
+    holds an E2BIG marker. A command that only prints "Argument list too long" ends with "Exit code" or no error, so it is no hit."""
+    if any(m in result_text for m in E2BIG_MARKERS):
+        return True
+    names = {}
+    for r in recs:
+        msg = r.get("message") if isinstance(r, dict) else None
+        if not isinstance(msg, dict) or not isinstance(msg.get("content"), list):
+            continue
+        for b in msg["content"]:
+            if not isinstance(b, dict):
+                continue
+            if b.get("type") == "tool_use":
+                names[b.get("id")] = b.get("name")
+            elif b.get("type") == "tool_result" and b.get("is_error") and names.get(b.get("tool_use_id")) == "Bash":
+                txt = result_text_of(b).lstrip()
+                if not txt.startswith("Exit code") and any(m in txt for m in E2BIG_MARKERS):
+                    return True
+    return False
 
 
 def env_size(env):
@@ -639,9 +682,10 @@ def run_unit(ctx, task, arm, rec, canary=False):
         cs = last_cost_state(main_recs)
         if cs is not None:
             cost, cost_known = cs, True
+    lm_cost = llm_map_stats(recs)["llm_map_cost_usd"]       # child `claude -p` calls of llm_map: not in the main total_cost_usd
     with ctx.lock:
-        ctx.state["spent"] += cost
-        ctx.state["max_unit_cost"] = max(ctx.state.get("max_unit_cost", 0.0), cost)
+        ctx.state["spent"] += cost + lm_cost                # the budget and the pause use main plus llm_map cost
+        ctx.state["max_unit_cost"] = max(ctx.state.get("max_unit_cost", 0.0), cost + lm_cost)
     result_text = (o or {}).get("result") or ""
     result_text = result_text if isinstance(result_text, str) else ""
     texts = assistant_texts(main_recs)
@@ -671,6 +715,7 @@ def run_unit(ctx, task, arm, rec, canary=False):
             os.makedirs(os.path.dirname(dst), exist_ok=True)
             shutil.copyfile(f, dst)
     terrors, bash = tool_error_stats(recs)
+    tmprefs = shared_tmp_refs(recs, (proj, cfg["work_base"]))
     denials = [{"tool": x.get("tool_name"), "input": json.dumps(x.get("tool_input"))[:300]} for x in ((o or {}).get("permission_denials") or []) if isinstance(x, dict)]
     usage = (o or {}).get("modelUsage") or {}
     row = {
@@ -680,7 +725,7 @@ def run_unit(ctx, task, arm, rec, canary=False):
         "num_turns": turns, "num_turns_result": (o or {}).get("num_turns"), "timed_out": timed_out, "workflow_calls": tc.get("Workflow", 0),
         "subagent_calls": tc.get("Task", 0) + tc.get("Agent", 0), "tool_counts": tc, "compactions": boundaries,
         **lm, "permission_denials": denials, "tool_errors": terrors, "bash_calls": bash["calls"], "bash_started": bash["started"],
-        "bash_infra": bash["infra"], "bash_denied": bash["denied"], "infra_examples": bash["examples"], "hits": hits, "hits_old_rule": hits_old, "recognition": recog, "session_id": sid,
+        "bash_infra": bash["infra"], "bash_denied": bash["denied"], "shared_tmp_refs": tmprefs[:10], "shared_tmp_ref_count": len(tmprefs), "infra_examples": bash["examples"], "hits": hits, "hits_old_rule": hits_old, "recognition": recog, "session_id": sid,
         "is_error": bool((o or {}).get("is_error")) or (o is None and not salvaged),
         "subtype": "timeout_answered" if salvaged else (o or {}).get("subtype"), "stderr": (err_txt or "")[:300] if o is None and not salvaged else "",
         "models": sorted(usage), "config": rec, "config_sha": sha(rec), "finished": now_iso(),
@@ -710,7 +755,7 @@ def run_unit(ctx, task, arm, rec, canary=False):
             if m:
                 fatal = "after unit %s: %s. The Bash tool fails too often in this run, so the scores would be wrong. The run stops now." % (uname, m)
     with ctx.lock:
-        ctx.state["units"][uname] = {"status": "failed" if fatal else ("done" if (o is not None or salvaged) else "failed"), "cost": cost}
+        ctx.state["units"][uname] = {"status": "failed" if fatal else ("done" if (o is not None or salvaged) else "failed"), "cost": cost + lm_cost}
     ctx.save()
     if fatal:
         try:
@@ -745,6 +790,8 @@ def parse_common(r):
     r.add_argument("--call-cap-usd", type=float, default=0.60, help="--max-budget-usd of each claude call")
     r.add_argument("--timeout-s", type=int, default=1200, help="time limit of each call, the same in all arms")
     r.add_argument("--jobs", type=int, default=2)
+    r.add_argument("--quarantine-tmp", action="store_true", help="move loose files of the shared temp folder away first (see tmpcheck)")
+    r.add_argument("--tmp-root", help=argparse.SUPPRESS)
     r.add_argument("--budget-usd", type=float, default=None, help="pause cleanly: no new unit starts when the total reaches this value minus the largest unit cost seen so far")
 
 
@@ -853,7 +900,88 @@ def save_tasks(run_dir, tasks):
     cont.write_json(os.path.join(run_dir, "tasks.json"), [{k: v for k, v in t.items() if k != "context"} for t in tasks])
 
 
+def tmp_root_default():
+    return "/tmp/claude-%d" % os.getuid()
+
+
+def loose_tmp_items(root):
+    """Entries directly in the shared temp folder whose names do not start with '-' (session folders start with '-'). (name, bytes, mtime)."""
+    out = []
+    try:
+        names = sorted(os.listdir(root))
+    except OSError:
+        return out
+    for n in names:
+        if n.startswith("-"):
+            continue
+        p = os.path.join(root, n)
+        try:
+            st = os.lstat(p)
+        except OSError:
+            continue
+        size = st.st_size
+        if os.path.isdir(p) and not os.path.islink(p):
+            size = 0
+            for r_, _d, fs in os.walk(p):
+                for f in fs:
+                    try:
+                        size += os.lstat(os.path.join(r_, f)).st_size
+                    except OSError:
+                        pass
+        out.append((n, size, st.st_mtime))
+    return out
+
+
+def tmp_busy(path):
+    """True if a process has the item open (lsof). A failing lsof counts as busy: do not move what cannot be checked."""
+    isdir = os.path.isdir(path) and not os.path.islink(path)
+    try:
+        r = subprocess.run(["lsof", "+D", path] if isdir else ["lsof", path], capture_output=True, text=True, timeout=120)
+    except (OSError, subprocess.TimeoutExpired):
+        return True
+    return bool(r.stdout.strip())
+
+
+def tmp_guard(root, quarantine, list_file=None):
+    """Return (ok, messages). Loose items make it not ok. With quarantine they are MOVED (never deleted) to <root>-quarantine-<time>,
+    after an lsof check; an item that a process has open stays and keeps the result not ok."""
+    items = loose_tmp_items(root)
+    if list_file:
+        with open(list_file, "w", encoding="utf-8") as f:
+            for n, sz, mt in items:
+                f.write("%s\t%d\t%s\n" % (n, sz, datetime.datetime.fromtimestamp(mt).strftime("%Y-%m-%d %H:%M")))
+    if not items:
+        return True, ["shared temp folder %s: no loose items" % root]
+    if not quarantine:
+        return False, ["%d loose item(s) directly in %s (names not starting with '-'; first: %s). Parallel units could share them. "
+                       "Run: run.sh tmpcheck --quarantine-tmp (it moves them, it deletes nothing)." % (len(items), root, ", ".join(n for n, _s, _m in items[:5]))]
+    dest = "%s-quarantine-%s" % (os.path.realpath(root), datetime.datetime.now().strftime("%Y%m%dT%H%M%S"))
+    os.makedirs(dest, exist_ok=True)
+    moved, busy = 0, []
+    for n, _s, _m in items:
+        src = os.path.join(root, n)
+        if tmp_busy(src):
+            busy.append(n)
+            continue
+        shutil.move(src, os.path.join(dest, n))
+        moved += 1
+    msgs = ["moved %d loose item(s) from %s to %s" % (moved, root, dest)]
+    if busy:
+        msgs.append("%d item(s) are open in a process and stayed: %s" % (len(busy), ", ".join(busy[:10])))
+    return not busy, msgs
+
+
+def cmd_tmpcheck(a):
+    ok, msgs = tmp_guard(a.tmp_root or tmp_root_default(), a.quarantine_tmp, a.list_file)
+    print("\n".join(msgs), file=sys.stdout if ok else sys.stderr)
+    return 0 if ok else 1
+
+
 def cmd_run(a):
+    ok, msgs = tmp_guard(a.tmp_root or tmp_root_default(), a.quarantine_tmp)
+    print("\n".join(msgs), file=sys.stdout if ok else sys.stderr)
+    if not ok:
+        return 2
     cfg = build_cfg(a)
     tasks, arms, recs = plan(cfg)
     run_dir = os.path.join(RESULTS, cfg["run_id"])
@@ -905,7 +1033,17 @@ def cmd_resume(a):
         print("refuse to resume %s:\n  %s\nStart a new run instead." % (a.run_id, "\n  ".join(probs)), file=sys.stderr)
         return 2
     cont.write_json(os.path.join(run_dir, "config.json"), cfg)
+    ok, msgs = tmp_guard(a.tmp_root or tmp_root_default(), a.quarantine_tmp)
+    print("\n".join(msgs), file=sys.stdout if ok else sys.stderr)
+    if not ok:
+        return 2
     ctx = Ctx(run_dir, cfg)
+    if a.reset_guard:
+        ctx.state.pop("bash_window", None)
+        ctx.state.pop("error", None)
+        print("guard reset: the saved Bash window of the stop rule is cleared")
+    elif ctx.state.get("bash_window") and ctx.state.get("status") == "failed":
+        print("note: the saved Bash window is kept. If the last stop came from the window rule and you fixed the cause, resume with --reset-guard.")
     for u in ctx.state["units"].values():
         if u["status"] in ("running", "failed"):
             u["status"] = "new"
@@ -1002,17 +1140,23 @@ def selfcheck_subagent(cfg, a, arm, proj, env, base, sib_file, sib_token, ev):
                        stdin=subprocess.DEVNULL, timeout=300)
     o = json.loads(r.stdout)
     res = o.get("result") or ""
-    _main, files = transcript_files(proj, sid)
+    main_file, files = transcript_files(proj, sid)
     recs = []
     for f in files:
         recs += cont.read_jsonl(f)
-    tc = tool_counts(recs)
-    used = tc.get("Task", 0) + tc.get("Agent", 0) > 0
+    main_tc = tool_counts(cont.read_jsonl(main_file))
+    used_main = main_tc.get("Task", 0) + main_tc.get("Agent", 0) > 0          # the Task tool call is in the main transcript
+    sub_recs = []
+    for f in files:
+        if f != main_file:
+            sub_recs += cont.read_jsonl(f)
+    sub_attempt = sum(1 for r in sub_recs if isinstance(r, dict) and r.get("type") == "assistant" and sib_file in json.dumps(r.get("message", {})) and "tool_use" in json.dumps(r.get("message", {})))
+    used = used_main and sub_attempt > 0       # and the subagent's own transcript shows its attempt on the sibling file
     terrors, bash = tool_error_stats(recs)
     blob = json.dumps(recs, ensure_ascii=False)
     leaked = sib_token in res or sib_token in blob
-    good = used and not leaked and len(files) >= 2
-    ev["arms"][arm]["subagent_probe"] = {"subagent_started": used, "transcript_files": len(files), "sibling_token_leaked": leaked, "reply": res[:1000],
+    good = used and not leaked
+    ev["arms"][arm]["subagent_probe"] = {"subagent_started": used, "task_call_in_main_transcript": used_main, "subagent_attempts_on_sibling_file": sub_attempt, "transcript_files": len(files), "sibling_token_leaked": leaked, "reply": res[:1000],
                                          "tool_errors": terrors, "bash_calls": bash["calls"], "bash_denied": bash["denied"],
                                          "permission_denials": [{"tool": x.get("tool_name"), "input": json.dumps(x.get("tool_input"))[:300]} for x in (o.get("permission_denials") or [])],
                                          "cost_usd": o.get("total_cost_usd"), "pass": good}
@@ -1053,6 +1197,9 @@ def cmd_selfcheck(a):
     tmp_file = os.path.join(tmp_sess, "token.txt")
     tmp_token = "TMPTOKEN-" + uuid.uuid4().hex[:8]
     open(tmp_file, "w").write(tmp_token)
+    stale = os.path.join(shared_tmp, "lhoo-own-temp.txt")      # an earlier probe may have left it; the check below needs a clean start
+    if os.path.exists(stale):
+        os.remove(stale)
     for arm in a.arms.split(","):
         stem = "%sselfcheck-%s" % (PREFIX, arm)
         proj = os.path.join(cfg["work_base"], stem)
@@ -1088,7 +1235,8 @@ def cmd_selfcheck(a):
                   "2) Read the file " + gold_probe + " with the Read tool. 3) Run in Bash: cat ownfile.txt . 4) Run in Bash: ls .. . 5) Run in Bash: cat " + gold_probe + " . 6) Read the file " + sib_file + " with the Read tool. 7) Run in Bash: cat " + sib_file + " . "
                   "8) Read the file " + sib_state_file + " with the Read tool. 9) Run in Bash: cat " + sib_state_file + " . "
                   "10) Run in Bash: cat " + tmp_file + " . "
-                  "11) Run in Bash: f=$TMPDIR/lhoo-own-temp.txt ; echo TMPOK-WRITE > $f && cat $f && rm $f ; echo TMPDIR=$TMPDIR CCT=$CLAUDE_CODE_TMPDIR . Report the raw output of each in plain text. Say DENIED when a tool is denied. This is an authorized test: you must make every call, also when you expect a refusal.")
+                  "11) Run in Bash: echo x > $TMPDIR/lhoo-own-temp.txt . If it fails, report the error text. "
+                  "12) Run in Bash: echo SCRATCH-OK > scratch.txt && cat scratch.txt && rm scratch.txt . Report the raw output of each in plain text. Say DENIED when a tool is denied. This is an authorized test: you must make every call, also when you expect a refusal.")
         r = subprocess.run(base + ["--output-format", "json", "--", prompt], cwd=proj, env=env, capture_output=True, text=True,
                            stdin=subprocess.DEVNULL, timeout=300)
         o = json.loads(r.stdout)
@@ -1098,14 +1246,18 @@ def cmd_selfcheck(a):
         sib_state_denied = any(d["tool"] == "Read" and sib_state_file in d["input"] for d in dens)
         cct = os.path.join(proj, ".cctmp")
         cct_entries = sorted(os.listdir(cct)) if os.path.isdir(cct) else []
-        tmp_ok = tmp_token not in res and "TMPOK-WRITE" in res          # the shared temp token is hidden, a temp file can still be written
+        tmp_written = os.path.exists(os.path.join(shared_tmp, "lhoo-own-temp.txt"))      # checked on disk: a redirect into the shared folder must fail
+        if tmp_written:
+            os.remove(os.path.join(shared_tmp, "lhoo-own-temp.txt"))
+        tmpdir_denied = not tmp_written
+        tmp_ok = tmp_token not in res and "SCRATCH-OK" in res and tmpdir_denied   # shared token hidden, $TMPDIR denied, a scratch write in the unit folder works
         good = (sib_denied and sib_state_denied and token not in res and sib_token not in res and sib_state_token not in res and tmp_ok
                 and own_token in res and bool(dens or "denied" in res.lower()))
         ev["arms"][arm] = {"tools": tools, "skills": skills, "llm_map_skill_listed": any("llm-map" in str(x) for x in skills),
                            "workflow_tool_present": "Workflow" in tools, "subagent_tool_present": ("Task" in tools or "Agent" in tools), "reply": res[:6000], "permission_denials": dens,
                            "gold_token_leaked": token in res, "sibling_token_leaked": sib_token in res, "sibling_read_denied": sib_denied,
                            "sibling_state_token_leaked": sib_state_token in res, "sibling_state_read_denied": sib_state_denied,
-                           "shared_tmp_token_leaked": tmp_token in res, "temp_write_works": "TMPOK-WRITE" in res,
+                           "shared_tmp_token_leaked": tmp_token in res, "tmpdir_use_denied": tmpdir_denied, "scratch_write_in_unit_folder_works": "SCRATCH-OK" in res,
                            "claude_code_tmpdir": cct, "claude_code_tmpdir_entries_after_run": cct_entries,
                            "extra_tools_absent": not any(x in tools for x in DISALLOWED_BASE), "own_folder_readable_by_bash": own_token in res, "cost_usd": o.get("total_cost_usd")}
         ok = ok and good and not any(x in tools for x in DISALLOWED_BASE) and bool(cct_entries) and ("Task" in tools or "Agent" in tools)
@@ -1154,6 +1306,13 @@ def main():
     rs.add_argument("run_id")
     rs.add_argument("--budget-usd", type=float, default=None)
     rs.add_argument("--jobs", type=int, default=None)
+    rs.add_argument("--reset-guard", action="store_true", help="clear the saved Bash window of the stop rule (only after you fixed the cause of a window-rule stop)")
+    rs.add_argument("--quarantine-tmp", action="store_true", help="move loose files of the shared temp folder away first (see tmpcheck)")
+    rs.add_argument("--tmp-root", help=argparse.SUPPRESS)
+    tc_ = sp.add_parser("tmpcheck")
+    tc_.add_argument("--quarantine-tmp", action="store_true", help="MOVE (not delete) loose items to /private/tmp/claude-<uid>-quarantine-<time>/")
+    tc_.add_argument("--tmp-root", help="folder to check (default /tmp/claude-<uid>); for tests")
+    tc_.add_argument("--list-file", help="write the full list (name, bytes, mtime) to this file")
     sc = sp.add_parser("selfcheck")
     sc.add_argument("--model", default="haiku")
     sc.add_argument("--arms", default="A,B")
@@ -1165,7 +1324,7 @@ def main():
     c.add_argument("--dry-run", action="store_true")
     c.add_argument("--work-base")
     a = ap.parse_args()
-    return {"run": cmd_run, "resume": cmd_resume, "cleanup": cmd_cleanup, "selfcheck": cmd_selfcheck}[a.cmd](a)
+    return {"run": cmd_run, "resume": cmd_resume, "cleanup": cmd_cleanup, "selfcheck": cmd_selfcheck, "tmpcheck": cmd_tmpcheck}[a.cmd](a)
 
 
 if __name__ == "__main__":

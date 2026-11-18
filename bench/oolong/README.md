@@ -175,6 +175,19 @@ A permission denial is not one: the tool worked and refused the command. A denia
 13. Transcripts: subagent transcripts of each unit are copied to `results/<run>/transcripts/<unit>/`.
 14. `selfcheck` probes: a subagent (Task tool) tries to read a sibling folder with Read and Bash; the `-state` folder of a sibling unit; the shared temp token.
 
+15. Scratch files stay in the unit folder. Claude Code sets `TMPDIR` of every sandboxed Bash call to the shared `/tmp/claude-<uid>`. A second review found that 41 of 120 units wrote generic files there (`q.txt`, `labels.jsonl`), and parallel units can overwrite them.
+    - The Bash deny rules now include `*TMPDIR*`, `*mktemp*` and `*tempfile*`. `/tmp` itself is not denied (the unit folder and the llm_map path are under `/private/tmp`).
+    - The task prompt (all arms) says: keep every scratch file in the current folder, use relative paths, no `/tmp` or `$TMPDIR`.
+    - Each row has `shared_tmp_refs` (and `shared_tmp_ref_count`): Bash, Write, Edit and Read inputs of the main and the subagent transcripts that name `/tmp/claude-<uid>/<name not starting with ->` (also `/private/tmp/...`) outside the unit folder.
+    - The report shows the count per arm and length, and a column with the raw score without the tasks that have a ref. It starts with an INVALID banner if more than 2 percent of the units have a ref.
+16. Loose files check. `run.sh tmpcheck` lists the items directly in `/tmp/claude-<uid>` whose names do not start with `-` (`--list-file F` writes name, bytes, mtime). `run` and `resume` refuse to start while any exist.
+    `--quarantine-tmp` MOVES them (mv, never rm) to `/private/tmp/claude-<uid>-quarantine-<time>/`, after `lsof` shows that no process has them open. An item that is open stays, and the run still refuses.
+    Limit: a session of Claude Code that runs now may create such items itself (for example `bash-edit-diff`). Run `tmpcheck` before the run, from a quiet machine.
+17. The budget counts the main cost plus the llm_map child cost (`llm_map_cost_usd` of each row). `--budget-usd`, the pause and `state.json` `spent` use that sum.
+18. The E2BIG stop looks only at Bash tool errors that do not start with `Exit code`, at the result text and at stderr. A command that prints "Argument list too long" does not stop the run.
+19. `resume --reset-guard` clears the saved Bash window (`bash_window`) and the saved error. Use it only after you fixed the cause of a window-rule stop. Without it the window is kept, so a still-broken run stops again.
+20. The subagent probe of `selfcheck` is proved by the Task tool call in the main transcript and by the attempt on the sibling file in the transcript of the subagent itself.
+
 Limits.
 - The rules see only what the transcripts show. A tool that fails in a way the model hides, or a unit that makes fewer than 3 Bash calls (after the first unit of its arm), is not caught by the unit rule.
 - The window rule needs 10 Bash calls. A small run (2 tasks) may stay under it. The report scan applies the same rule, so it has the same limit.

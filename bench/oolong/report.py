@@ -60,6 +60,10 @@ def rescan(d, rows):
     score, turns (assistant messages), timeout salvage, and the hit rules (new, old, recognition). Cost stays as stored."""
     tp = os.path.join(d, "tasks.json")
     gold = {t["task_id"]: t for t in json.load(open(tp, encoding="utf-8"))} if os.path.isfile(tp) else {}
+    try:
+        work_base = json.load(open(os.path.join(d, "config.json"), encoding="utf-8")).get("work_base", "")
+    except (OSError, ValueError):
+        work_base = ""
     for r in rows:
         p = os.path.join(d, "transcripts", r["unit"] + ".jsonl")
         if not os.path.isfile(p):
@@ -77,6 +81,8 @@ def rescan(d, rows):
         lm = harness.llm_map_stats(recs)
         r.update(llm_map_calls=lm["llm_map_calls"], llm_map_ok_calls=lm["llm_map_ok_calls"])
         recs_all, recs = recs, main_recs
+        refs = harness.shared_tmp_refs(recs_all, (work_base,))
+        r.update(shared_tmp_refs=refs[:10], shared_tmp_ref_count=len(refs))
         texts = harness.assistant_texts(recs)
         was_timeout = r.get("stderr") == "timeout" or r.get("timed_out")
         r["timed_out"] = bool(was_timeout)
@@ -110,8 +116,20 @@ def main():
     out = []
     P = out.append
     infra_msgs = harness.infra_scan(rows)
+    ref_units = [r for r in rows if r.get("shared_tmp_ref_count", 0) > 0]
+    ref_tasks = {r["task_id"] for r in ref_units}
+    tmp_invalid = bool(rows) and len(ref_units) > 0.02 * len(rows)
     P("# OOLONG run %s" % run)
     P("")
+    if tmp_invalid:
+        P("# INVALID RUN: units used the shared temp folder /tmp/claude-<uid>. Do not use these scores.")
+        P("")
+        P("%d of %d units (%.1f%%, limit 2%%) named a file directly in the shared temp folder in a Bash, Write, Edit or Read input. Parallel units can overwrite such files." % (
+            len(ref_units), len(rows), 100.0 * len(ref_units) / len(rows)))
+        P("")
+        for r in ref_units[:10]:
+            P("- unit %s: %s" % (r["unit"], "; ".join(r.get("shared_tmp_refs", [])[:2])))
+        P("")
     if infra_msgs:
         P("# INVALID RUN: the Bash tool failed to start in this run. Do not use these scores.")
         P("")
@@ -187,8 +205,8 @@ def main():
     P("")
     P("## Scores")
     P("")
-    P("| Length | Arm | n raw | Raw mean [95% CI] | n clean (new rule) | Clean mean, new rule [95% CI] | n clean (old rule) | Clean mean, old rule [95% CI] | Cost/task | Wall s/task | Turns/task | Workflow calls | Agent calls (tasks with 1+) | llm_map attempts / successes (tasks with 1+) | Compactions | Timed out (scored) | Errors |")
-    P("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|")
+    P("| Length | Arm | n raw | Raw mean [95% CI] | n clean (new rule) | Clean mean, new rule [95% CI] | n clean (old rule) | Clean mean, old rule [95% CI] | Cost/task | Wall s/task | Turns/task | Workflow calls | Agent calls (tasks with 1+) | llm_map attempts / successes (tasks with 1+) | Compactions | Timed out (scored) | Errors | Shared tmp refs (units) | Raw mean without tmp-ref tasks [95% CI] (n) |")
+    P("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|")
     flags = []
     for ln in lengths:
         tids = [t for t, l in tasks.items() if l == ln]
@@ -196,6 +214,7 @@ def main():
             rs = [by[(t, arm)] for t in tids if (t, arm) in by]
             cl = [by[(t, arm)] for t in tids if (t, arm) in by and t not in removed]
             raw = [r["score"] for r in rs]
+            nr = [r["score"] for r in rs if r["task_id"] not in ref_tasks]
             cln = [r["score"] for r in cl]
             clo = [by[(t, arm)]["score"] for t in tids if (t, arm) in by and t not in removed_old]
             nto = sum(1 for r in rs if r.get("timed_out"))
@@ -209,11 +228,12 @@ def main():
             lmok = sum(r.get("llm_map_ok_calls", 0) for r in rs)
             if arm == "C" and rs and lmok == 0:
                 flags.append("arm C has 0 llm_map successes at %s (%d attempt(s)): the llm_map tool changed nothing at this length" % (LEN_LABEL.get(ln, ln), lmc))
-            P("| %s | %s | %d | %s | %d | %s | %d | %s | $%.3f | %.0f | %.1f | %d | %d (%d) | %d / %d (%d) | %d | %d (%d) | %d |" % (
+            P("| %s | %s | %d | %s | %d | %s | %d | %s | $%.3f | %.0f | %.1f | %d | %d (%d) | %d / %d (%d) | %d | %d (%d) | %d | %d | %s (%d) |" % (
                 LEN_LABEL.get(ln, ln), arm, len(raw), fmt(mean(raw), boot_ci(raw, draws, rng)), len(cln), fmt(mean(cln), boot_ci(cln, draws, rng)),
                 len(clo), fmt(mean(clo), boot_ci(clo, draws, rng)),
                 mean([task_cost(r) for r in rs]), mean([r["wall_s"] for r in rs]), mean([r["num_turns"] or 0 for r in rs]),
-                wf, sum(r["subagent_calls"] for r in rs), wft, lmc, lmok, lmt, sum(r["compactions"] for r in rs), nto, ntos, sum(1 for r in rs if r["is_error"])))
+                wf, sum(r["subagent_calls"] for r in rs), wft, lmc, lmok, lmt, sum(r["compactions"] for r in rs), nto, ntos, sum(1 for r in rs if r["is_error"]),
+                sum(1 for r in rs if r.get("shared_tmp_ref_count", 0) > 0), fmt(mean(nr), boot_ci(nr, draws, rng)), len(nr)))
     P("")
     P("## Tool errors (main and subagent transcripts)")
     P("")

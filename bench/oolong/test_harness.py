@@ -62,7 +62,8 @@ def test_unit_stems_are_random():
 
 def test_e2big_detection():
     text = "Could not start /bin/sh: the command line plus environment exceed the OS exec argument limit (E2BIG)."
-    assert harness.e2big_hit([{"type": "user", "message": {"content": [{"type": "tool_result", "content": text}]}}])
+    use = {"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "x", "name": "Bash", "input": {}}]}}
+    assert harness.e2big_hit([use, {"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "x", "is_error": True, "content": text}]}}])
     assert harness.e2big_hit([], "x E2BIG y")
     assert harness.e2big_hit([], "they exceed the OS exec argument limit")
     assert not harness.e2big_hit([{"type": "user", "message": {"content": "all fine"}}], "ok")
@@ -133,6 +134,8 @@ STUB = textwrap.dedent("""\
             sub += [use(i), res(i, INFRA, True)]
     elif mode == "infra1":
         main += [use(0), res(0, INFRA, True)]
+    elif mode == "llm":
+        main += [use(0), res(0, "llm_map: 5 items, 5 ok, 0 failed, 1 batches, cost $0.5000", False)]
     elif mode == "ok3":
         for i in range(3):
             main += [use(i), res(i, "fine", False)]
@@ -311,6 +314,7 @@ def test_disallowed_and_tmpdir():
         assert root in deny, root
     assert os.path.join(os.path.realpath("/tmp/claude-%d" % os.getuid()), "-*") in deny
     assert s["sandbox"]["filesystem"]["allowRead"] == ["/private/tmp/x/u"]
+    assert os.path.realpath("/tmp/claude-%d" % os.getuid()) in s["sandbox"]["filesystem"]["denyWrite"]
 
 
 def test_report_duplicates_banner_and_rescan():
@@ -339,6 +343,102 @@ def test_report_duplicates_banner_and_rescan():
         msgs = harness.infra_scan(rows)
         assert msgs and "none started" in msgs[0], msgs
         assert not harness.infra_scan([dict(base, bash_calls=5, bash_started=5, bash_infra=0)])
+    finally:
+        report.HERE = old
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_e2big_ignores_model_output():
+    """A command that prints the marker is no hit: only a Bash error that does not start with "Exit code", result text and stderr count."""
+    use = {"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "x", "name": "Bash", "input": {}},
+                                                        {"type": "tool_use", "id": "y", "name": "Read", "input": {}}]}}
+
+    def res(i, text, err):
+        return {"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": i, "is_error": err, "content": text}]}}
+    assert not harness.e2big_hit([use, res("x", "Exit code 126\nbash: ls: Argument list too long", True)])
+    assert not harness.e2big_hit([use, res("x", "the text Argument list too long printed by echo", False)])
+    assert not harness.e2big_hit([use, res("y", "Argument list too long", True)])      # not a Bash result
+    assert harness.e2big_hit([use, res("x", "Could not start /bin/sh: Argument list too long", True)])
+    assert harness.e2big_hit([use], "stderr E2BIG")
+
+
+def test_scratch_deny_rules():
+    cfg = make_cfg("/private/tmp/x")
+    rules = harness.deny_rules(cfg)
+    for w in ("TMPDIR", "mktemp", "tempfile"):
+        assert "Bash(*%s*)" % w in rules, w
+    assert not {"Bash(*/tmp*)", "Bash(*/tmp/*)", "Bash(*/private/tmp*)", "Bash(*/private/tmp/*)"} & set(rules), "/tmp itself must not be denied"
+    assert "scratch file in the current folder" in harness.PROMPT_CORE
+
+
+def test_shared_tmp_refs():
+    def use(name, inp):
+        return {"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "i", "name": name, "input": inp}]}}
+    recs = [use("Bash", {"command": "echo a > $TMPDIR/q.txt; cat /tmp/claude-501/q.txt"}),
+            use("Bash", {"command": "python3 /private/tmp/claude-501/w/c.py"}),
+            use("Write", {"file_path": "/tmp/claude-501/d.txt"}),
+            use("Read", {"file_path": "/private/tmp/claude-501/labels.jsonl"}),
+            use("Bash", {"command": "cat /private/tmp/claude-501/-Users-x-scratchpad/work/lhoo-r-abc/context.txt"}),   # session folder: no ref
+            use("Bash", {"command": "cat /private/tmp/claude-501/unitbase/lhoo-r-abc/ownfile.txt"}),                    # inside exclude
+            use("Grep", {"pattern": "/tmp/claude-501/z"})]
+    refs = harness.shared_tmp_refs(recs, ("/private/tmp/claude-501/unitbase",))
+    assert len(refs) == 5, refs
+    assert harness.shared_tmp_refs(recs[4:6], ("/private/tmp/claude-501/unitbase",)) == []
+
+
+def test_spent_includes_llm_map():
+    code, ctx, rows, _t = run_stub("llm", n_tasks=2)
+    assert code == 0, code
+    assert abs(rows[0]["llm_map_cost_usd"] - 0.5) < 1e-9, rows[0]
+    assert abs(ctx.state["spent"] - 2 * 0.51) < 1e-6, ctx.state["spent"]
+    assert abs(ctx.state["max_unit_cost"] - 0.51) < 1e-6
+
+
+def test_tmpcheck_quarantine():
+    tmp = tempfile.mkdtemp(prefix="lhoo-test-")
+    try:
+        root = os.path.join(tmp, "claude-501")
+        os.makedirs(os.path.join(root, "-Users-x-session"))
+        open(os.path.join(root, "q.txt"), "w").write("a")
+        os.makedirs(os.path.join(root, "w"))
+        open(os.path.join(root, "w", "items.txt"), "w").write("b")
+        names = [n for n, _s, _m in harness.loose_tmp_items(root)]
+        assert names == ["q.txt", "w"], names
+        ok, msgs = harness.tmp_guard(root, False)
+        assert not ok and "tmpcheck --quarantine-tmp" in msgs[0]
+        assert harness.tmp_guard(os.path.join(tmp, "nothing"), False)[0]
+        busy = open(os.path.join(root, "q.txt"))          # an open file stays
+        ok, msgs = harness.tmp_guard(root, True)
+        busy.close()
+        assert not ok and any("stayed" in m for m in msgs), msgs
+        dests = [d for d in os.listdir(tmp) if d.startswith("claude-501-quarantine-")]
+        assert len(dests) == 1
+        assert open(os.path.join(tmp, dests[0], "w", "items.txt")).read() == "b", "moved, not deleted"
+        assert os.path.isdir(os.path.join(root, "-Users-x-session")), "session folders stay"
+        assert os.path.exists(os.path.join(root, "q.txt"))
+        ok, msgs = harness.tmp_guard(root, True)      # now nothing is open
+        assert ok and os.path.exists(os.path.join(tmp, [d for d in os.listdir(tmp) if d.startswith("claude-501-quarantine-")][-1], "q.txt")), msgs
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_report_shared_tmp_refs():
+    tmp = tempfile.mkdtemp(prefix="lhoo-test-")
+    old = report.HERE
+    try:
+        d = os.path.join(tmp, "results", "R2")
+        os.makedirs(os.path.join(d, "transcripts", "7-A", "subagents"))
+        json.dump({"model": "haiku", "work_base": "/private/tmp/claude-501/unitbase"}, open(os.path.join(d, "config.json"), "w"))
+        row = {"unit": "7-A", "task_id": "7", "arm": "A", "length": 8192, "score": 1.0, "is_error": False, "full_answer": ""}
+        open(os.path.join(d, "results.jsonl"), "w").write(json.dumps(row) + "\n")
+        report.HERE = tmp
+        sub = [{"type": "assistant", "message": {"id": "s", "content": [{"type": "tool_use", "id": "t", "name": "Bash", "input": {"command": "echo x > /tmp/claude-501/c.py"}}]}}]
+        main = [{"type": "assistant", "message": {"id": "m", "content": [{"type": "text", "text": "Answer: x"}]}}]
+        open(os.path.join(d, "transcripts", "7-A.jsonl"), "w").write(json.dumps(main[0]) + "\n")
+        open(os.path.join(d, "transcripts", "7-A", "subagents", "a.jsonl"), "w").write(json.dumps(sub[0]) + "\n")
+        _d, _c, rows = report.load("R2")
+        rows = report.rescan(d, rows)
+        assert rows[0]["shared_tmp_ref_count"] == 1, rows[0]
     finally:
         report.HERE = old
         shutil.rmtree(tmp, ignore_errors=True)
