@@ -1,0 +1,4 @@
+Add F61 tests (ACs 281-286) and move the hook version pin to 1.14.1
+
+Red run against v0.12.0: test_f61_llm_map_labels.py has 15 tests, 13 fail, 2 pass (AC 284 passes only because the old CLI rejects the unknown --labels flag with exit 2; the other 13 fail for the missing F61 behaviour). test_f60_llm_map.py: 24 of 24 pass, no change needed (AC 274 passes --batch 40). Version-pin files (ACs 136, 150, 172, 180, 188, 267): 11 failures, all on the 1.14.1 pin only.
+
