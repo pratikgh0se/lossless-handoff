@@ -906,7 +906,8 @@ open(sys.argv[1], "w").write(str(s.server_address[1]))
 s.serve_forever()
 PY
   EPID=$!; disown "$EPID"
-  for _i in $(seq 1 40); do [ -s "$T/f57-embed.port" ] && break; sleep 0.25; done
+  for _i in $(seq 1 240); do [ -s "$T/f57-embed.port" ] && break; sleep 0.25; done
+  [ -s "$T/f57-embed.port" ] || fail "F57: the fake embedding server did not start in 60 s"
   F57PORT="$(cat "$T/f57-embed.port")"; export RECALL_EMBED_URL="http://127.0.0.1:$F57PORT"
   i1="$(R index)"
   m="$(R search Quokkasub --meaning)"
