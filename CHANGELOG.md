@@ -2,6 +2,15 @@
 
 Lossless Handoff, formerly claude-handoff.
 
+## [0.12.0] - 2026-11-18
+
+Label many items with a small model (hooks 1.14.0). New F60 in `docs/spec.md`, ACs 274-280.
+
+- New `hooks/llm_map.py`: it labels each item of a large list with a small model in parallel batches. It writes one JSON line per item, retries missing items once and has a cost cap (`--max-usd`).
+- Each model call runs without tools, hooks, MCP servers or a saved session, so no Lossless Handoff hook runs for it.
+- New skill `skills/llm-map/SKILL.md`. Install writes it to `~/.claude/skills/llm-map/` unless a file that is not ours is there. Uninstall removes only the marked file.
+- `install.sh` also copies `llm_map.py`. It changes no `settings.json` entry.
+
 ## [0.11.1] - 2026-11-18
 
 Find what a subagent read (hooks 1.13.1). New F59 in `docs/spec.md`, ACs 268-273.

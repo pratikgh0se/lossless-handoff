@@ -74,7 +74,7 @@ python3 - "$H" <<'PY'
 import hashlib, json, sys
 h = sys.argv[1]
 m = json.load(open(h + "/.handoff-manifest.json"))
-assert m["version"] == "1.13.1" and m["installed_at"], m
+assert m["version"] == "1.14.0" and m["installed_at"], m
 assert sorted(m["files"]) == ["claims.json", "handoff-nudge.py", "postcompact-inject.py", "precompact-handoff.py", "recall.py"], m
 for n, want in m["files"].items():
     assert hashlib.sha256(open(h + "/" + n, "rb").read()).hexdigest() == want, n
@@ -804,6 +804,81 @@ ok "F54: leaves, ids, append only, SessionStart line, subagent, map, describe, s
   "$ROOT/install.sh" --no-nightly >/dev/null; grep -q "^name: recall$" "$AG" || fail "F55.a: marked old file not replaced"
   "$ROOT/uninstall.sh" >/dev/null; [ ! -e "$AG" ] || fail "F55.b: uninstall left our agent file"
 )
+
+# F60: llm_map with a fake claude (ACs 274, 275, 278, 280)
+(
+  export HOME="$T/home-f60"; mkdir -p "$HOME/.claude"
+  FK="$T/fake-claude.py"
+  cat > "$FK" <<'PY'
+import json, os, re, sys
+a = sys.argv[1:]
+prompt = a[a.index("-p") + 1]
+with open(os.environ["FAKE_LOG"], "a") as f:
+    f.write(json.dumps({"argv": a, "cwd": os.getcwd()}) + "\n")
+drop = os.environ.get("FAKE_DROP")  # item number to drop
+once = os.environ.get("FAKE_ONCE")  # "1": drop it on the first call only
+seen = os.environ["FAKE_LOG"] + ".seen"
+lines = []
+for m in re.finditer(r"^(\d+): ", prompt, re.M):
+    i = int(m.group(1))
+    if drop and i == int(drop) and not (once and os.path.exists(seen)):
+        continue
+    lines.append(json.dumps({"i": i, "out": "L%d" % i}))
+if drop and once:
+    open(seen, "w").close()
+print(json.dumps({"type": "result", "result": "```json\n" + "\n".join(lines) + "\n```", "total_cost_usd": 0.01}))
+PY
+  export LLM_MAP_CLAUDE="python3 $FK" FAKE_LOG="$T/f60.log"
+  LM="$ROOT/hooks/llm_map.py"
+  seq 1 100 | sed 's/^/item /' > "$T/f60-in.txt"
+  # AC 274
+  : > "$FAKE_LOG"
+  o="$(cd "$T" && python3 "$LM" --in "$T/f60-in.txt" --prompt "label" --out "$T/f60-out.jsonl" --batch 40)" || fail "F60 274: exit"
+  grep -q '^llm_map: 100 items, 100 ok, 0 failed, 3 batches, cost \$0.0300$' <<<"$o" || fail "F60 274: summary: $o"
+  python3 - "$T/f60-out.jsonl" <<'PY' || fail "F60 274: out file"
+import json, sys
+r = [json.loads(l) for l in open(sys.argv[1])]
+assert [x["i"] for x in r] == list(range(1, 101)) and all(x["out"] == "L%d" % x["i"] and "error" not in x for x in r), r[:2]
+PY
+  # call flags: no tools, no hooks, no MCP, no session; cwd is gone after the run
+  python3 - "$FAKE_LOG" "$T" <<'PY' || fail "F60 flags"
+import json, os, sys
+rows = [json.loads(l) for l in open(sys.argv[1])]
+a = rows[0]["argv"]
+assert "-p" in a and a[a.index("--model") + 1] == "haiku" and a[a.index("--output-format") + 1] == "json", a
+assert a[a.index("--tools") + 1] == "" and "--strict-mcp-config" in a and "--no-session-persistence" in a, a
+assert "disableAllHooks" in a[a.index("--settings") + 1], a
+assert not os.path.exists(rows[0]["cwd"]) and rows[0]["cwd"] != sys.argv[2], rows[0]
+PY
+  # AC 275: item dropped once, then answered on the retry
+  rm -f "$FAKE_LOG.seen"
+  o="$(FAKE_DROP=7 FAKE_ONCE=1 python3 "$LM" --in "$T/f60-in.txt" --prompt "label" --out "$T/f60-out2.jsonl")" || fail "F60 275: retry exit"
+  sed -n 7p "$T/f60-out2.jsonl" | grep -q '"out": "L7"' && ! sed -n 7p "$T/f60-out2.jsonl" | grep -q error || fail "F60 275: item 7"
+  # AC 275: item never answered
+  set +e; o="$(FAKE_DROP=7 python3 "$LM" --in "$T/f60-in.txt" --prompt "label" --out "$T/f60-out3.jsonl")"; rc=$?; set -e
+  [ "$rc" = 3 ] && grep -q ' 1 failed,' <<<"$o" && sed -n 7p "$T/f60-out3.jsonl" | grep -q '"out": null, "error"' || fail "F60 275: failed item (rc=$rc): $o"
+  # AC 278: missing file, empty input
+  : > "$T/f60-empty.txt"
+  set +e
+  python3 "$LM" --in "$T/nope.txt" --prompt x --out "$T/f60-o4.jsonl" 2>"$T/f60.err"; r1=$?
+  python3 "$LM" --in "$T/f60-empty.txt" --prompt x --out "$T/f60-o5.jsonl" 2>>"$T/f60.err"; r2=$?
+  set -e
+  [ "$r1" = 2 ] && [ "$r2" = 2 ] && [ -s "$T/f60.err" ] && [ ! -e "$T/f60-o4.jsonl" ] && [ ! -e "$T/f60-o5.jsonl" ] || fail "F60 278: usage errors ($r1 $r2)"
+  # AC 280: install and uninstall
+  SK="$HOME/.claude/skills/llm-map/SKILL.md"
+  "$ROOT/install.sh" --no-nightly --dry-run >/dev/null; [ ! -e "$SK" ] || fail "F60 280: dry-run wrote the skill"
+  "$ROOT/install.sh" --no-nightly >/dev/null
+  grep -qF "<!-- lossless-handoff:llm-map-skill -->" "$SK" && grep -q "^name: llm-map$" "$SK" && grep -q "llm_map.py" "$SK" \
+    && [ -f "$HOME/.claude/hooks/llm_map.py" ] || fail "F60 280: install"
+  printf 'mine\n' > "$SK"; cp "$SK" "$T/f60.mine"
+  o="$("$ROOT/install.sh" --no-nightly)"
+  # shellcheck disable=SC2088  # the literal ~ is the expected output text
+  cmp -s "$SK" "$T/f60.mine" && grep -qF "~/.claude/skills/llm-map/SKILL.md exists and is not ours; left unchanged." <<<"$o" || fail "F60 280: foreign skill touched"
+  "$ROOT/uninstall.sh" >/dev/null; [ -f "$SK" ] || fail "F60 280: uninstall removed a foreign skill"
+  rm "$SK"; "$ROOT/install.sh" --no-nightly >/dev/null
+  "$ROOT/uninstall.sh" >/dev/null; [ ! -e "$SK" ] && [ ! -e "$HOME/.claude/hooks/llm_map.py" ] || fail "F60 280: uninstall left our files"
+)
+ok "F60: llm_map batches, retry, failures, usage errors, call flags, skill install and uninstall"
 ok "F55: agent file install, foreign file kept, replace when marked, uninstall, recall-line sentence"
 
 # F56: excerpt cut in health rows and prove
@@ -832,7 +907,7 @@ rows = {json.loads(x)["sid"]: json.loads(x) for x in open(sys.argv[1]) if x.stri
 a, b = rows["f56a"], rows["f56b"]
 assert a["excerpt_chars"] > 0 and a["excerpt_dropped"] == 0, a
 assert b["excerpt_dropped"] > 0 and 0 < b["excerpt_chars"] <= 120000, b
-assert a["hook_version"] == "1.13.1"
+assert a["hook_version"] == "1.14.0"
 PY
   p="$(python3 "$ROOT/hooks/precompact-handoff.py" --prove --days 1; echo "rc=$?")"
   grep -qE "^excerpt cut: 1 of 2 compactions, median dropped [0-9]+ chars$" <<<"$p" || fail "F56.b: prove line: $p"
@@ -997,7 +1072,7 @@ PY
 import json, sys
 rows = [json.loads(x) for x in open(sys.argv[1]) if x.strip()]
 r = [x for x in rows if x.get("event") == "subagent_start"][-1]
-assert r["rules"] == 2 and r["chars"] > 0 and r["hook_version"] == "1.13.1" and r["agent_type"] == "general-purpose", r
+assert r["rules"] == 2 and r["chars"] > 0 and r["hook_version"] == "1.14.0" and r["agent_type"] == "general-purpose", r
 PY
   # AC 262: no handoff text, no agent notes
   printf '# Handoff\n- cwd: %s\nLATESTTOKEN\n' "$PROJ" > "$STF/s58-latest.md"; printf 'AGENTTOKEN\n' > "$STF/s58-agent.md"
