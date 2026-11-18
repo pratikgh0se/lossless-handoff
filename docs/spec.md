@@ -900,3 +900,43 @@ ACs:
 - 254. `--prove --days 1` after 252 and 253 prints `excerpt cut: 1 of 2 compactions, median dropped <m> chars` and its exit code does not change because of this line.
 
 Version: hooks 1.12.0; release 0.10.0. `HOOK_VERSION` in both hooks and `hook_version` in health rows and sidecars is `1.12.0`. This amends the version value in ACs 136, 150, 172, 180, 188 again.
+
+## F57 Subagent transcripts in search (2026-11-18)
+Why: in the LCM paper every message is in the store, and grep works for sub-agents too. Here `search` skips subagent transcripts unless `--subagents` is set, and the meaning index never holds them (F44.2, F44.9). In an orchestrator session most of the work text is in subagent transcripts; the main transcript holds only their final reports. So a fact that only a subagent saw cannot be found.
+
+**F57.a Default scope.** `search`, `open` and `user --session` include subagent transcripts (`<sid>/subagents/agent-*.jsonl`, or records with `isSidechain: true`) of in-scope sessions by default. `--no-subagents` restores the old scope. `--subagents` stays accepted and changes nothing. `user` (the user's typed messages) still reads main transcripts only, because a subagent's "user" turns are prompts from the main agent.
+**F57.b Ids and tags.** A hit in a subagent transcript has the id `<sid8>/<agent8>:<line>` (`agent8` = the first 8 characters of the agent id from the file name `agent-<id>.jsonl`), and the hit line carries ` [agent <agent8>]` after the source tag. `open` accepts this id form. Ids of main transcripts are unchanged. An id form that older versions printed for subagent hits still opens.
+**F57.c Meaning index.** `index` also indexes role `user` and `assistant` messages of subagent transcripts (same chunking and redaction), with the agent id stored per row. Hybrid and meaning hits from them carry the F57.b id and tag. Rows that exist are kept; the per-transcript offset makes this incremental.
+**F57.d Recall agent.** `agents/recall.md` tells the agent that subagent work is in search by default and that `[agent ...]` hits are a subagent's view, not the user's words.
+
+ACs (fixture: the F44.8 fixture plus one subagent transcript for an in-scope session, holding the unique word `Quokkasub` in an assistant message):
+- 255. `search Quokkasub` (no flag) finds the subagent hit; its id has the form `<sid8>/<agent8>:<line>`, and the line has `[agent <agent8>]`.
+- 256. `search Quokkasub --no-subagents` finds 0 hits. `--subagents` gives the same output as no flag.
+- 257. `open <sid8>/<agent8>:<line>` from AC 255 prints that message with the `--- <sid8>/<agent8>:<line>` heading.
+- 258. `user --last 50` holds no text from the subagent transcript.
+- 259. After `index` with a fake embedding backend, `search Quokkasub --meaning` returns the subagent chunk with the F57.b id and tag. A second `index` adds 0 rows.
+- 260. A subagent transcript of an out-of-scope session (`/r/proj-private`) never appears.
+- AC 137 is amended: without `--no-subagents` the subagent hit appears.
+
+## F58 Rules at subagent start (2026-11-18)
+Why: a new subagent gets no project rules. It gets them only after its own compaction, and most subagents never compact. So a subagent can break a standing rule the user set (for example, no traces in commits) that the main agent knows. Claude Code's `SubagentStart` hook can add context to the subagent (`additionalContext`). D3 holds: a subagent never gets the main agent's handoff or notes.
+
+**F58.a Hook.** `postcompact-inject.py --subagent-start` reads the SubagentStart hook JSON from stdin (`cwd`, `agent_id`, `agent_type`; verified live 2026-11-18: the context reaches the subagent and not the main agent, 2 of 2 runs) and prints `{"hookSpecificOutput":{"hookEventName":"SubagentStart","additionalContext":"<ctx>"}}`. `<ctx>` is:
+- the line `Project rules for this repo (standing; from the Lossless Handoff decisions list; the user's latest words win):`
+- each active ledger entry with tag `rule` for the project of `cwd`, newest first, in the same line form as ledger part 1;
+- the recall line (with the F55.c sentence when it applies).
+The context is cut at 4,000 characters at an entry boundary, with the line `[more rules: python3 ~/.claude/hooks/recall.py ... or the decisions list at <path>]` when cut. No `decision` or `task` entries, no handoff text, no agent notes.
+**F58.b Empty cases.** No ledger or no active rule: only the recall line (if recall.py exists), else print nothing. `HANDOFF_SUBAGENT_RULES=0`: print nothing. Bad JSON, no stdin, or a missing cwd: print nothing, exit 0. Never exit non-zero; finish within 2 s.
+**F58.c Install.** `install.sh` registers `SubagentStart` with the command `python3 <hooks>/postcompact-inject.py --subagent-start` (timeout 10), idempotent like the other hook entries; `--dry-run` writes nothing; `uninstall.sh` removes it. Because this changes `settings.json`, the installer prints the line `New hook event (SubagentStart): restart open Claude Code sessions to load it.` only when it added the entry.
+**F58.d Health.** Each run appends a row to `health.jsonl` with `event: "subagent_start"`, `agent_type`, `rules` (count included), `chars`, and `hook_version`.
+
+ACs:
+- 261. A project ledger with 2 active rules, 1 decision and 1 task; SubagentStart JSON with that cwd: valid JSON output; `additionalContext` starts with the F58.a header, holds both rule lines (newest first), the recall line, and neither the decision nor the task text.
+- 262. A main-agent handoff `<sid>-latest.md` and `<sid>-agent.md` with unique tokens exist: neither token appears in the output.
+- 263. A ledger with 60 long rules: `additionalContext` is at most 4,000 characters, ends at an entry boundary, and holds the `[more rules:` line.
+- 264. No ledger: output holds only the recall line in `additionalContext`. With recall.py absent from the hooks folder as well: stdout empty, exit 0.
+- 265. `HANDOFF_SUBAGENT_RULES=0`: stdout empty. Garbage stdin, empty stdin: stdout empty, exit 0.
+- 266. `install.sh` in a temp HOME: `settings.json` has one `SubagentStart` entry with the F58.c command; a second install adds none; the restart line prints only the first time. `uninstall.sh` removes it and keeps other hooks.
+- 267. After AC 261's run, `health.jsonl` has a row with `event` `subagent_start`, `rules` 2, `chars` > 0, `hook_version` `1.13.0`.
+
+Version: hooks 1.13.0; release 0.11.0. `HOOK_VERSION` in both hooks and `hook_version` in health rows and sidecars is `1.13.0`. This amends the version value in ACs 136, 150, 172, 180, 188 again.
