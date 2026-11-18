@@ -11,6 +11,8 @@
 - `~/.local/state/claude-handoffs/projects/<project>-<hash>/nodes.jsonl` (with `nodes.state.json` and `nodes.lock`): summary nodes. Each line holds ids, the transcript path, line numbers, times, a token count and a handoff path. It holds no message text. The text of a summary is read from the transcript when you ask for it.
 - `~/.claude/agents/recall.md`: the recall subagent file. Install writes it only when it is missing or holds our marker line. Uninstall removes it only when it holds the marker.
 
+Since 0.11.0 the meaning index also holds the text of subagent transcripts (user and assistant messages, redacted like other text), and `recall.py search` and `open` read them by default. A subagent transcript can hold file contents, command output and notes that never appeared in the main chat, so more of your work text is searchable. Use `--no-subagents` to leave it out of a search. The index is in `~/.local/state/claude-handoffs/recall/`; delete it to remove the text. The `SubagentStart` hook (`postcompact-inject.py --subagent-start`) reads the project decisions list and prints the active `rule` entries to the new subagent. It prints no other ledger entry and no handoff text, makes no network call, and adds one row per run to `health.jsonl`. `HANDOFF_SUBAGENT_RULES=0` turns it off.
+
 The hooks read the session transcript Claude Code passes them and write handoff files and a health log into the state directory. The only permission added is `Edit(~/.local/state/claude-handoffs/**)`, so the model can write its handoff file there.
 
 ## Network

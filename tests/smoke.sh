@@ -74,7 +74,7 @@ python3 - "$H" <<'PY'
 import hashlib, json, sys
 h = sys.argv[1]
 m = json.load(open(h + "/.handoff-manifest.json"))
-assert m["version"] == "1.12.0" and m["installed_at"], m
+assert m["version"] == "1.13.0" and m["installed_at"], m
 assert sorted(m["files"]) == ["claims.json", "handoff-nudge.py", "postcompact-inject.py", "precompact-handoff.py", "recall.py"], m
 for n, want in m["files"].items():
     assert hashlib.sha256(open(h + "/" + n, "rb").read()).hexdigest() == want, n
@@ -434,6 +434,7 @@ assert [g["hooks"][0]["command"] for g in d["hooks"]["PreCompact"]] == ["python3
 ss = {g["matcher"]: [x["command"] for x in g["hooks"]] for g in d["hooks"]["SessionStart"]}
 assert sorted(ss) == ["compact", "resume", "startup"] and ss["startup"][-1].endswith("postcompact-inject.py --check"), ss
 assert d["hooks"]["SessionEnd"][0]["hooks"][0]["command"].endswith("recall.py session-end")
+assert d["hooks"]["SubagentStart"][0]["hooks"][0]["command"].endswith("postcompact-inject.py --subagent-start"), d["hooks"]
 PY
 ok "--managed-hooks stages managed settings, prints the sudo command, touches nothing else"
 
@@ -831,13 +832,196 @@ rows = {json.loads(x)["sid"]: json.loads(x) for x in open(sys.argv[1]) if x.stri
 a, b = rows["f56a"], rows["f56b"]
 assert a["excerpt_chars"] > 0 and a["excerpt_dropped"] == 0, a
 assert b["excerpt_dropped"] > 0 and 0 < b["excerpt_chars"] <= 120000, b
-assert a["hook_version"] == "1.12.0"
+assert a["hook_version"] == "1.13.0"
 PY
   p="$(python3 "$ROOT/hooks/precompact-handoff.py" --prove --days 1; echo "rc=$?")"
   grep -qE "^excerpt cut: 1 of 2 compactions, median dropped [0-9]+ chars$" <<<"$p" || fail "F56.b: prove line: $p"
   grep -q "rc=0" <<<"$p" || fail "F56.b: prove exit code"
 )
 ok "F56: excerpt_chars and excerpt_dropped in health rows; prove prints the cut line"
+
+# F57: subagent transcripts in search (default scope, ids, --no-subagents, user, open, meaning index)
+(
+  export HOME="$T/home-f57"; mkdir -p "$HOME/.claude"; export HANDOFF_LEDGER=0
+  RC="$ROOT/hooks/recall.py"
+  python3 - "$HOME" <<'PY'
+import json, os, subprocess, sys
+home = sys.argv[1]
+proj = os.path.join(home, "proj"); os.makedirs(proj)
+subprocess.run(["git", "-C", proj, "init", "-q"], check=True)
+proj = os.path.realpath(proj)
+sid = "aaaaaaaa-1111-2222-3333-444444444444"
+aid = "ag12345678abcdef"
+pdir = os.path.join(home, ".claude", "projects", proj.replace("/", "-")); os.makedirs(os.path.join(pdir, sid, "subagents"))
+def w(path, rows):
+    open(path, "w").write("\n".join(json.dumps(r) for r in rows) + "\n")
+def m(t, text, cwd, side=False, n=0):
+    c = text if t == "user" else [{"type": "text", "text": text}]
+    r = {"type": t, "uuid": "u%d" % n, "timestamp": "2026-11-18T10:00:%02d.000Z" % n, "cwd": cwd, "message": {"role": t, "content": c}}
+    if side:
+        r["isSidechain"] = True; r["agentId"] = aid
+    return r
+w(os.path.join(pdir, sid + ".jsonl"), [m("user", "typed MAINTYPED words here", proj, n=1), m("assistant", "main reply about plans", proj, n=2)])
+w(os.path.join(pdir, sid, "subagents", "agent-%s.jsonl" % aid),
+  [m("user", "SUBPROMPT from the main agent", proj, True, 3), m("assistant", "the schema has a Quokkasub table", proj, True, 4)])
+other = "/r/proj-private"
+odir = os.path.join(home, ".claude", "projects", "-r-proj-private"); os.makedirs(os.path.join(odir, "bbbbbbbb-1", "subagents"))
+w(os.path.join(odir, "bbbbbbbb-1.jsonl"), [m("user", "private main", other, n=1)])
+w(os.path.join(odir, "bbbbbbbb-1", "subagents", "agent-agprivate01.jsonl"), [m("assistant", "Quokkasub private", other, True, 2)])
+open(os.path.join(home, "ids"), "w").write("%s\n" % proj)
+PY
+  PROJ="$(sed -n 1p "$HOME/ids")"
+  R() { (cd "$PROJ" && python3 "$RC" "$@"); }
+  out="$(R search Quokkasub --keyword)"
+  grep -qE "^aaaaaaaa/ag123456:2 .*\[word\] \[agent ag123456\]: " <<<"$out" || fail "F57: subagent hit id/tag: $out"
+  [ "$(grep -c Quokkasub <<<"$out")" = 1 ] || fail "F57: out-of-scope session leaked: $out"
+  out2="$(R search Quokkasub --keyword --subagents)"
+  [ "$out" = "$out2" ] || fail "F57: --subagents changes the output"
+  out3="$(R search Quokkasub --keyword --no-subagents)"
+  grep -q "^0 hits shown of 0" <<<"$out3" || fail "F57: --no-subagents: $out3"
+  o="$(R open aaaaaaaa/ag123456:2 --around 0)"
+  grep -q "^--- aaaaaaaa/ag123456:2 " <<<"$o" && grep -q "Quokkasub table" <<<"$o" || fail "F57: open: $o"
+  o="$(R open ag123456:2 --around 0)"
+  grep -q "Quokkasub table" <<<"$o" || fail "F57: the older id form does not open: $o"
+  u="$(R user --last 50)"
+  grep -q MAINTYPED <<<"$u" || fail "F57: user lacks the typed message: $u"
+  ! grep -q SUBPROMPT <<<"$u" || fail "F57: user holds subagent text: $u"
+  # meaning index, with a fake embedding backend on a free local port
+  python3 - "$T/f57-embed.port" <<'PY' &
+import hashlib, http.server, json, sys
+class H(http.server.BaseHTTPRequestHandler):
+    def log_message(self, *a): pass
+    def do_POST(self):
+        d = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+        vs = []
+        for t in d["input"]:
+            v = [0.0] * 16
+            for w in t.lower().split():
+                v[hashlib.md5(w.encode()).digest()[0] % 16] += 1.0
+            vs.append(v)
+        b = json.dumps({"embeddings": vs}).encode()
+        self.send_response(200); self.send_header("Content-Length", str(len(b))); self.end_headers(); self.wfile.write(b)
+s = http.server.HTTPServer(("127.0.0.1", 0), H)
+open(sys.argv[1], "w").write(str(s.server_address[1]))
+s.serve_forever()
+PY
+  EPID=$!; disown "$EPID"
+  for _i in $(seq 1 240); do [ -s "$T/f57-embed.port" ] && break; sleep 0.25; done
+  [ -s "$T/f57-embed.port" ] || fail "F57: the fake embedding server did not start in 60 s"
+  F57PORT="$(cat "$T/f57-embed.port")"; export RECALL_EMBED_URL="http://127.0.0.1:$F57PORT"
+  i1="$(R index)"
+  m="$(R search Quokkasub --meaning)"
+  i2="$(R index)"
+  kill "$EPID" 2>/dev/null || true
+  grep -qE "^aaaaaaaa/ag123456:2 .*\[meaning\] \[agent ag123456\]: " <<<"$m" || fail "F57: meaning hit: $i1 / $m"
+  grep -q "^indexed 0 chunks" <<<"$i2" || fail "F57: a second index added rows: $i2"
+)
+ok "F57: subagent hits by default, ids and tags, --no-subagents, open, user, meaning index"
+
+# F58: rules at subagent start
+(
+  export HOME="$T/home-f58"; mkdir -p "$HOME/.claude/hooks"
+  unset RECALL_EMBED_URL || true
+  export HANDOFF_STATE_DIR="$HOME/.local/state/claude-handoffs"; STF="$HANDOFF_STATE_DIR"; mkdir -p "$STF"
+  POST="$ROOT/hooks/postcompact-inject.py"; PRE="$ROOT/hooks/precompact-handoff.py"
+  PROJ="$HOME/proj"; mkdir -p "$PROJ"; git -C "$PROJ" init -q; PROJ="$(cd "$PROJ" && pwd -P)"
+  python3 - "$PROJ" "$STF" <<'PY'
+import hashlib, os, re, sys
+proj, stf = sys.argv[1:3]
+key = re.sub(r"[^A-Za-z0-9._-]", "_", os.path.basename(proj))[:40] + "-" + hashlib.sha1(proj.encode()).hexdigest()[:8]
+d = os.path.join(stf, "projects", key); os.makedirs(d)
+open(os.path.join(stf, "key"), "w").write(key)
+L = ["- D1 [2026-11-01] [rule] RULEONE never mention traces | why: user said so",
+     "- D2 [2026-11-02] [decision] DECISIONTEXT use sqlite | why: simple",
+     "- D3 [2026-11-03] [task] TASKTEXT write docs | why: open",
+     "- D4 [2026-11-04] [rule] RULETWO run tests first | why: user said so"]
+open(os.path.join(d, "decisions.md"), "w").write("# Decisions\n\n" + "\n".join(L) + "\n")
+PY
+  KEY="$(cat "$STF/key")"; LED="$STF/projects/$KEY/decisions.md"
+  sin() { printf '{"session_id":"s58","cwd":"%s","agent_id":"agx","agent_type":"general-purpose","hook_event_name":"SubagentStart"}' "${1:-$PROJ}"; }
+  cx() { python3 -c "import sys,json; print(json.load(sys.stdin)['hookSpecificOutput']['additionalContext'])"; }
+  SUBP="$HOME/.claude/hooks"; cp "$POST" "$ROOT/hooks/recall.py" "$SUBP/"
+  # AC 261: valid JSON, header, rules newest first, recall line, no decision, no task
+  o="$(sin | python3 "$POST" --subagent-start)"
+  python3 -c "import sys,json; d=json.loads(sys.argv[1])['hookSpecificOutput']; assert d['hookEventName']=='SubagentStart'" "$o" || fail "F58: output is not valid hook JSON: $o"
+  c="$(cx <<<"$o")"
+  [ "$(head -n 1 <<<"$c")" = "Project rules for this repo (standing; from the Lossless Handoff decisions list; the user's latest words win):" ] || fail "F58: header: $c"
+  [ "$(sed -n 2p <<<"$c" | cut -c1-5)" = "- D4 " ] && [ "$(sed -n 3p <<<"$c" | cut -c1-5)" = "- D1 " ] || fail "F58: rules not newest first: $c"
+  grep -q "^- recall: " <<<"$c" || fail "F58: no recall line: $c"
+  ! grep -q DECISIONTEXT <<<"$c" && ! grep -q TASKTEXT <<<"$c" || fail "F58: decision or task text in the output: $c"
+  # AC 267: health row
+  python3 - "$STF/health.jsonl" <<'PY'
+import json, sys
+rows = [json.loads(x) for x in open(sys.argv[1]) if x.strip()]
+r = [x for x in rows if x.get("event") == "subagent_start"][-1]
+assert r["rules"] == 2 and r["chars"] > 0 and r["hook_version"] == "1.13.0" and r["agent_type"] == "general-purpose", r
+PY
+  # AC 262: no handoff text, no agent notes
+  printf '# Handoff\n- cwd: %s\nLATESTTOKEN\n' "$PROJ" > "$STF/s58-latest.md"; printf 'AGENTTOKEN\n' > "$STF/s58-agent.md"
+  o="$(sin | python3 "$POST" --subagent-start)"
+  ! grep -q LATESTTOKEN <<<"$o" && ! grep -q AGENTTOKEN <<<"$o" || fail "F58: handoff text reached the subagent"
+  # health rows change no count in --prove, --reconcile and --ledger
+  nl() { wc -l < "$STF/health.jsonl" | tr -d ' '; }
+  pb="$(python3 "$PRE" --prove --days 1)"; rb="$(python3 "$PRE" --reconcile --days 1)"; lb="$(printf '{"cwd":"%s"}' "$PROJ" | python3 "$POST" --ledger --part 1)"
+  for _i in 1 2 3; do sin | python3 "$POST" --subagent-start >/dev/null; done
+  [ "$(python3 "$PRE" --prove --days 1)" = "$pb" ] || fail "F58: --prove changed with subagent rows"
+  [ "$(python3 "$PRE" --reconcile --days 1)" = "$rb" ] || fail "F58: --reconcile changed with subagent rows"
+  [ "$(printf '{"cwd":"%s"}' "$PROJ" | python3 "$POST" --ledger --part 1)" = "$lb" ] || fail "F58: --ledger changed with subagent rows"
+  grep -q subagent_start "$STF/health.jsonl" || fail "F58: no subagent rows to prove it"
+  # AC 263: 60 long rules
+  python3 - "$LED" <<'PY'
+import sys
+L = ["- D%d [2026-11-05] [rule] LONGRULE%d %s | why: x" % (i, i, "word " * 30) for i in range(10, 70)]
+open(sys.argv[1], "a").write("\n".join(L) + "\n")
+PY
+  c="$(sin | python3 "$POST" --subagent-start | cx)"
+  [ "${#c}" -le 4001 ] || fail "F58: context is ${#c} chars"
+  grep -q "^\[more rules: " <<<"$c" || fail "F58: no more-rules line"
+  python3 - "$c" <<'PY'
+import sys
+c = sys.argv[1].rstrip("\n")
+assert len(c) <= 4000, len(c)
+lines = c.split("\n")
+rl = [x for x in lines if x.startswith("- D")]
+assert rl and all(x.endswith("| why: x") for x in rl), rl[-1]  # every rule line is whole
+PY
+  # AC 264: no ledger -> only the recall line; no recall.py either -> nothing
+  mkdir -p "$T/f58-empty"; (cd "$T/f58-empty" && git init -q)
+  c="$(sin "$T/f58-empty" | python3 "$POST" --subagent-start | cx)"
+  grep -q "^- recall: " <<<"$c" && [ "$(wc -l <<<"$c" | tr -d ' ')" = 1 ] || fail "F58: no-ledger output: $c"
+  mkdir -p "$T/f58-bare" "$T/f58-nohome"; cp "$POST" "$T/f58-bare/"
+  o="$(sin "$T/f58-empty" | HOME="$T/f58-nohome" python3 "$T/f58-bare/postcompact-inject.py" --subagent-start)"; rc=$?
+  [ -z "$o" ] && [ "$rc" = 0 ] || fail "F58: expected nothing without recall.py: $o"
+  # AC 265: switch off, garbage and empty stdin
+  [ -z "$(sin | HANDOFF_SUBAGENT_RULES=0 python3 "$POST" --subagent-start)" ] || fail "F58: HANDOFF_SUBAGENT_RULES=0 printed output"
+  for bad in "not json" "" "[]" '{"agent_id":"x"}'; do
+    o="$(printf '%s' "$bad" | python3 "$POST" --subagent-start)"; rc=$?
+    [ -z "$o" ] && [ "$rc" = 0 ] || fail "F58: bad stdin '$bad': $o rc=$rc"
+  done
+  python3 "$POST" --subagent-start </dev/null >/dev/null || fail "F58: exit code with empty stdin"
+)
+ok "F58: SubagentStart output, rule cut, empty cases, switch, health rows, no change to prove/reconcile/ledger"
+
+# F58.c: install and uninstall of the SubagentStart hook
+(
+  export HOME="$T/home-f58i"; mkdir -p "$HOME/.claude"
+  SS="$HOME/.claude/settings.json"; echo '{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"echo hi"}]}]}}' > "$SS"
+  "$ROOT/install.sh" --no-nightly >"$T/f58i-1.out" 2>&1 || fail "F58: install failed: $(tail -3 "$T/f58i-1.out")"
+  "$ROOT/install.sh" --no-nightly >"$T/f58i-2.out" 2>&1 || fail "F58: second install failed"
+  [ "$(grep -c "^New hook event (SubagentStart): restart open Claude Code sessions to load it\.$" "$T/f58i-1.out")" = 1 ] || fail "F58: restart line missing on the first install"
+  ! grep -q "New hook event (SubagentStart)" "$T/f58i-2.out" || fail "F58: restart line on the second install"
+  python3 - "$SS" "$HOME/.claude/hooks" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1]))
+g = d["hooks"]["SubagentStart"]
+cmds = [h["command"] for x in g for h in x["hooks"]]
+assert cmds == ["python3 %s/postcompact-inject.py --subagent-start" % sys.argv[2]], cmds
+assert g[0]["hooks"][0]["timeout"] == 10
+PY
+  "$ROOT/uninstall.sh" >/dev/null 2>&1 || fail "F58: uninstall failed"
+  python3 -c "import json,sys; h=json.load(open(sys.argv[1])).get('hooks',{}); assert 'SubagentStart' not in h and 'PreToolUse' in h, h" "$SS" || fail "F58: uninstall left the hook or lost another"
+)
+ok "F58: install adds one SubagentStart entry and the restart line once; uninstall removes it"
 
 "$ROOT/uninstall.sh" >"$T/un.out"
 python3 - "$S" "$T/original.json" <<'PY'

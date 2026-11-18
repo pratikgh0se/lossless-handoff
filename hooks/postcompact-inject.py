@@ -77,7 +77,7 @@ HARD_MAX = 9900    # each part's total output (warning + header + content + cont
 INLINE_MAX = 9700  # content target per part
 NAMES_MAX = 150    # the section-name list in a continuation line is cut to this many chars
 MAX_PARTS = 3      # F37.6
-HOOK_VERSION = "1.12.0"
+HOOK_VERSION = "1.13.0"
 _SID = ["unknown"]
 
 
@@ -434,6 +434,98 @@ def ledger_mode(lpart=1):
         emit(parts[lpart - 1])
 
 
+SUBAGENT_HEAD = ("Project rules for this repo (standing; from the Lossless Handoff decisions list; the user's latest "
+                 "words win):")
+SUBAGENT_MAX = 4000
+
+
+def ledger_path_for(cwd):
+    """The decisions.md path of the project of `cwd` (same key as ledger_mode and F39.1)."""
+    import hashlib, subprocess
+    root = cwd
+    try:
+        r = subprocess.run(["git", "-C", cwd, "rev-parse", "--show-toplevel"],
+                           capture_output=True, text=True, timeout=1)
+        if r.returncode == 0 and (r.stdout or "").strip():
+            root = r.stdout.strip()
+    except Exception:
+        pass
+    key = re.sub(r"[^A-Za-z0-9._-]", "_", os.path.basename(root.rstrip("/")))[:40] + "-" + \
+        hashlib.sha1(root.encode("utf-8")).hexdigest()[:8]
+    return os.path.abspath(os.path.join(HANDOFFS_DIR, "projects", key, "decisions.md"))
+
+
+def subagent_context(path):
+    """F58.a: -> (text, number of rule lines in it). Only active `rule` entries, newest first, cut at an entry boundary."""
+    try:
+        rules = [e for e in parse_ledger_file(path) if e["kind"] == "rule"]
+    except OSError:
+        rules = []
+    rl = recall_line().rstrip("\n")
+    if not rules:
+        return rl, 0
+    more = (f"[more rules: python3 ~/.claude/hooks/recall.py search \"rule\" --role user, "
+            f"or the decisions list at {path}]")
+    head = SUBAGENT_HEAD + "\n"
+    tail = ("\n" + rl) if rl else ""
+    full = head + "\n".join(e["line"] for e in rules) + tail
+    if len(full) <= SUBAGENT_MAX:
+        return full, len(rules)
+    room = SUBAGENT_MAX - len(head) - len(more) - 1 - len(tail)
+    kept, used = [], 0
+    for e in rules:
+        if used + len(e["line"]) + 1 > room:
+            break
+        kept.append(e["line"])
+        used += len(e["line"]) + 1
+    return head + "\n".join(kept + [more]) + tail, len(kept)
+
+
+def subagent_health(d, rules, chars):
+    """F58.d: one health.jsonl row. These rows are skipped by --prove and --reconcile. Never raises."""
+    try:
+        at = d.get("agent_type")
+        os.makedirs(HANDOFFS_DIR, exist_ok=True)
+        path = os.path.join(HANDOFFS_DIR, "health.jsonl")
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(json.dumps({"ts": utc_now(), "event": "subagent_start", "hook": "inject",
+                                "sid": str(d.get("session_id") or "")[:36],
+                                "agent_type": at if isinstance(at, str) else "", "rules": rules, "chars": chars,
+                                "hook_version": HOOK_VERSION}) + "\n")
+        if os.path.getsize(path) > 2000000:  # keep the file small: drop the oldest SubagentStart rows
+            with open(path, "rb") as f:
+                lines = f.readlines()
+            sub = [i for i, x in enumerate(lines) if b'"event": "subagent_start"' in x]
+            drop = set(sub[:-500])
+            tmp = path + f".tmp{os.getpid()}"
+            with open(tmp, "wb") as f:
+                f.writelines(x for i, x in enumerate(lines) if i not in drop)
+            os.replace(tmp, path)
+    except BaseException as e:
+        if isinstance(e, KeyboardInterrupt):
+            raise
+        log_error(e)
+
+
+def subagent_start_mode():
+    """F58: SubagentStart hook. Prints the project's standing rules and the recall line as additionalContext of the
+    new subagent. Never exits non-zero. No decisions, tasks, handoff text or agent notes (D3)."""
+    if os.environ.get("HANDOFF_SUBAGENT_RULES") == "0":
+        return
+    try:
+        d = json.load(sys.stdin)
+    except Exception:
+        return
+    cwd = d.get("cwd") if isinstance(d, dict) else None
+    if not isinstance(cwd, str) or not cwd.strip():
+        return
+    _SID[0] = d.get("session_id") or "unknown"
+    ctx, nrules = subagent_context(ledger_path_for(cwd))
+    subagent_health(d, nrules, len(ctx))
+    if ctx:
+        print(json.dumps({"hookSpecificOutput": {"hookEventName": "SubagentStart", "additionalContext": ctx}}))
+
+
 RECOVER_CODES = ("handoff_missing", "no_health", "handoff_old")
 RECOVERED_FIRST = ("HANDOFF RECOVERED: the pre-compaction hook did not run for this compaction; this handoff was "
                    "rebuilt from the transcript without a model summary. Use recall for detail.\n")
@@ -782,6 +874,14 @@ def check_mode():
 if "--check" in sys.argv[1:]:
     try:
         check_mode()
+    except BaseException as _e:
+        if not isinstance(_e, (SystemExit, KeyboardInterrupt)):
+            log_error(_e)
+    sys.exit(0)
+
+if "--subagent-start" in sys.argv[1:]:
+    try:
+        subagent_start_mode()
     except BaseException as _e:
         if not isinstance(_e, (SystemExit, KeyboardInterrupt)):
             log_error(_e)

@@ -229,6 +229,11 @@ class Transcript:
             stem = stem[len("agent-"):]
         self.sid = stem
         self.sid8 = stem[:8]
+        # F57.b: a subagent transcript has the id form <sid8>/<agent8>; self.sid stays the agent id (index key)
+        self.agent = stem if sub else None
+        self.agent8 = stem[:8] if sub else None
+        self.parent = os.path.basename(os.path.dirname(os.path.dirname(path))) if sub else None
+        self.label = ("%s/%s" % (self.parent[:8], stem[:8])) if sub else stem[:8]
         try:
             self.mtime = os.stat(path).st_mtime
         except OSError:
@@ -323,7 +328,8 @@ def in_scope_transcripts(root, include_sub):
 def select_session(ts, sess):
     if not sess or sess == "all":
         return ts
-    return [t for t in ts if t.sid.startswith(sess) or t.sid8.startswith(sess[:8])]
+    return [t for t in ts if t.sid.startswith(sess) or t.sid8.startswith(sess[:8])
+            or (t.parent and t.parent.startswith(sess))]
 
 
 # ---------------------------------------------------------------- search
@@ -387,8 +393,8 @@ def keyword_hits(a, ts, rx, pattern, fixed):
                 m = rx.search(text)
                 if not m:
                     continue
-                hits.append({"ts": rec.get("timestamp") or "", "path": t.path, "line": n, "sid8": t.sid8,
-                             "sid": t.sid, "role": role, "tag": "word",
+                hits.append({"ts": rec.get("timestamp") or "", "path": t.path, "line": n, "sid8": t.label,
+                             "agent8": t.agent8, "sid": t.sid, "role": role, "tag": "word",
                              "snippet": redacted_snippet(text, m.start(), m.end())})
     hits.sort(key=lambda h: (h["ts"], h["path"], h["line"]), reverse=True)
     seen, uniq = set(), []
@@ -401,7 +407,8 @@ def keyword_hits(a, ts, rx, pattern, fixed):
 
 
 def fmt_hit(h):
-    s = "%s:%d %s %s [%s]: %s" % (h["sid8"], h["line"], fmt_ts(h["ts"]), h["role"], h["tag"], h["snippet"])
+    s = "%s:%d %s %s [%s]%s: %s" % (h["sid8"], h["line"], fmt_ts(h["ts"]), h["role"], h["tag"],
+                                    (" [agent %s]" % h["agent8"]) if h.get("agent8") else "", h["snippet"])
     return s + (" [node %s]" % h["node"] if h.get("node") else "")
 
 
@@ -438,7 +445,7 @@ def cmd_search(a, root):
     if a.node:  # F54.c: only hits inside one leaf's line range
         node = find_node(root, a.node)
         if node.get("agent"):
-            a.subagents = True
+            a.subagents = True  # a node of a subagent transcript is always searchable
     ts = select_session(in_scope_transcripts(root, a.subagents), a.session)
     if node:
         ts = [t for t in ts if os.path.realpath(t.path) == os.path.realpath(node["transcript"])]
@@ -618,7 +625,7 @@ def meaning_hits(a, root, ts):
     if len(q) != dim:
         return [], None, "query vector size %d differs from index size %d" % (len(q), dim)
 
-    by_sid = {t.sid: t for t in ts if not t.sub}
+    by_sid = {t.sid: t for t in ts}
     # coverage: indexed vs known messages, plus an estimate for bytes not yet scanned
     known = sum(r[4] or 0 for sid, r in frows.items() if sid in by_sid)
     done_bytes = sum(r[2] or 0 for sid, r in frows.items() if sid in by_sid)
@@ -662,7 +669,7 @@ def meaning_hits(a, root, ts):
             continue
         seen.add(k)
         t = by_sid[sid]
-        hits.append({"ts": ts_ or "", "path": t.path, "line": line, "sid8": t.sid8, "sid": sid, "role": role,
+        hits.append({"ts": ts_ or "", "path": t.path, "line": line, "sid8": t.label, "agent8": t.agent8, "sid": sid, "role": role,
                      "tag": "meaning", "chunk": chunk, "snippet": None})
     mode = "mode: hybrid (meaning index covers %d of %d messages)" % (i, n)
     return hits, mode, None
@@ -726,7 +733,7 @@ def cmd_index(a, root):
         db.commit()
         meta = {}
     dim = int(meta["dim"]) if meta.get("dim") else None
-    ts = [t for t in in_scope_transcripts(root, False) if not t.sub]
+    ts = in_scope_transcripts(root, True)  # F57.c: main chats and subagent transcripts
     ts.sort(key=lambda t: t.mtime, reverse=True)
     frows = {r[0]: r for r in db.execute("SELECT sid, path, off, lines, msgs FROM files")}
     total, skipped = 0, None
@@ -773,7 +780,7 @@ def cmd_index(a, root):
                 if (b'"user"' not in raw and b'"assistant"' not in raw):
                     continue
                 rec = parse_line(raw.decode("utf-8", "replace"))
-                if not rec or rec.get("isSidechain"):
+                if not rec or (rec.get("isSidechain") and not t.sub):
                     continue
                 cs = message_chunks(rec)
                 if not cs:
@@ -1377,22 +1384,25 @@ def rec_message(rec):
 
 
 def heading(t, n, rec, role):
-    return "--- %s:%d %s %s" % (t.sid8, n, fmt_ts(rec.get("timestamp")), role)
+    return "--- %s:%d %s %s" % (t.label, n, fmt_ts(rec.get("timestamp")), role)
 
 
 def cmd_open(a, root):
-    m = re.match(r"^([A-Za-z0-9_-]+):(\d+)$", a.id)
+    m = re.match(r"^([A-Za-z0-9_-]+)(?:/([A-Za-z0-9_-]+))?:(\d+)$", a.id)
     if not m:
-        raise UsageError("id must look like <sid8>:<line>")
-    sid, line = m.group(1), int(m.group(2))
+        raise UsageError("id must look like <sid8>:<line> or <sid8>/<agent8>:<line>")
+    sid, agent, line = m.group(1), m.group(2), int(m.group(3))
     if a.around < 0:
         raise UsageError("--around must be >= 0")
     around = min(a.around, 10)
     ts = in_scope_transcripts(root, True)
     # prefer main transcripts over subagent ones for the same prefix
-    match = [t for t in ts if t.sid.startswith(sid)]
-    mains = [t for t in match if not t.sub]
-    match = mains or match
+    if agent:  # F57.b
+        match = [t for t in ts if t.sub and t.parent.startswith(sid) and t.agent.startswith(agent)]
+    else:  # also the older id form <agent8>:<line> of a subagent hit
+        match = [t for t in ts if t.sid.startswith(sid)]
+        mains = [t for t in match if not t.sub]
+        match = mains or match
     if len(match) != 1:
         raise UsageError("unknown or ambiguous session id %s" % sid)
     t = match[0]
@@ -1410,14 +1420,14 @@ def cmd_open(a, root):
             raise UsageError("--from must be >= 0")
         n, rec, role, text = msgs[pos]
         text = redact(text)
-        mid = "%s:%d" % (t.sid8, n)
+        mid = "%s:%d" % (t.label, n)
         seg_end = min(len(text), a.from_ + MSG_CAP_FULL)
         out.append("%s [chars %d-%d of %d]" % (heading(t, n, rec, role), min(a.from_, len(text)), seg_end, len(text)))
         out.append(cap_body(text, True, mid, a.from_))
         return out
     for n, rec, role, text in msgs[max(0, pos - around):pos + around + 1]:
         out.append(heading(t, n, rec, role))
-        out.append(cap_body(redact(text), a.full, "%s:%d" % (t.sid8, n)))
+        out.append(cap_body(redact(text), a.full, "%s:%d" % (t.label, n)))
     return out
 
 
@@ -1507,7 +1517,8 @@ def build_parser():
     p.add_argument("--role", choices=["user", "assistant", "tool", "any"], default="any")
     p.add_argument("--session", default="all")
     p.add_argument("--limit", type=int, default=20)
-    p.add_argument("--subagents", action="store_true")
+    p.add_argument("--subagents", action="store_true")  # F57.a: accepted, changes nothing
+    p.add_argument("--no-subagents", dest="no_subagents", action="store_true")
     p.add_argument("--keyword", action="store_true")
     p.add_argument("--meaning", action="store_true")
     p.add_argument("--node", default=None)
@@ -1552,6 +1563,8 @@ def emit(lines, cap=OUT_CAP):
 def main(argv):
     try:
         a = build_parser().parse_args(argv)
+        if a.cmd == "search":
+            a.subagents = not a.no_subagents  # F57.a: subagent transcripts are in scope by default
         if a.cmd == "session-end":
             return cmd_session_end()
         if a.cmd == "index" and a.all:
