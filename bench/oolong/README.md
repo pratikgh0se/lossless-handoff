@@ -54,9 +54,9 @@ Arm B tests parallel subagents instead.
   Claude Code exempts a call only when every command in it matches. So `llm_map` must be a Bash call of its own: a chain (`&&`, `;`, a pipe), a `cd`, a redirect or a command substitution keeps the call in the sandbox, and then it fails on the network.
   Known limit: the excluded command runs outside the sandbox, so its `--in` file is not limited by the sandbox read rules. The Bash deny rules for the gold and bench paths still apply to the command text.
 - Claude Code sandbox is on for Bash: no network, `allowUnsandboxedCommands` false. Bash can read only its own folder (no sibling folders, no gold, no results, no transcripts).
-- The Read tool is not covered by the sandbox. So each unit has deny rules for the other task folders of the run, the bench folder and the cache folder.
+- The Read tool is not covered by the sandbox. Each unit has deny rules for the bench folder, the cache folder and `~/.claude/projects`. The other task folders have no rule of their own (see "E2BIG and constant-size rules").
 - The gold answers stay in the cache and in `results/`. They never enter a task folder. The harness deletes each task folder when the unit ends.
-- Proof: `run.sh selfcheck` runs one real `curl` from inside a task session with no curl deny rule. The sandbox must stop it. It stores `evidence/sandbox-<time>.json` with the tool list of each arm.
+- Proof: `run.sh selfcheck` makes a sibling folder with a token. The Read tool and Bash must both fail to read it. It also runs one real `curl` from inside a task session with no curl deny rule. The sandbox must stop it. It stores `evidence/sandbox-<time>.json` with the tool list of each arm.
   With arm C it also checks that the session lists the `llm-map` skill, that one `llm_map` run of 3 items succeeds from inside the sandbox, and that a curl to example.com in the same session still fails.
 - Control N: each question runs once with no context file. A task that is right without context leaves the cleaned score (also by chance: a label question has a 1 in 6 chance).
 - Transcript search: the text the model wrote and its tool inputs (not tool results, which print context lines) are searched for `trec_coarse`, "oolong", "ground truth", Hugging Face, download commands and URLs in commands. The report lists the hits per task. The plain word "TREC" is a recognition note, not a hit (see "Harness rules of 2026-11-18").
@@ -76,6 +76,7 @@ Self-test: `run.sh selftest` (24 fixed cases for all answer types). With `--data
 ```
 ./run.sh fetch --lens 32768,131072 --cache DIR         # pip install pyarrow first. Network. Harness side only.
 ./run.sh selftest [--data DIR]
+python3 test_harness.py                                  # offline tests of harness.py and run.sh (no model call)
 ./run.sh selfcheck --arms A,B,C                          # sandbox proof, a few cents
 ./run.sh run --model haiku --lengths 32K --tasks 2 --arms A,B --budget-usd 1.3
 ./run.sh resume <run-id> [--budget-usd X]
@@ -128,6 +129,29 @@ Each change applies to all arms in the same way. The config record holds them (`
    The report shows both columns: the clean score under the new rule and the clean score under the old rule, and the decision rule under both. Nothing is hidden.
    The report derives all of this again from the stored transcripts, so older runs can be shown under the new rules (a re-rendered report scores a timed-out unit from its transcript and counts turns again; cost stays as stored).
 
+## E2BIG and constant-size rules (2026-11-18)
+
+Run 20261118T160603 (6 lengths, 50 tasks, 4 arms, 1200 units) lost every Bash call in all 825 recorded units.
+The text was: "Could not start /bin/sh: the command line plus environment exceed the OS exec argument limit (E2BIG). At spawn: command line 1.2MB across 3 args".
+Cause: the settings file of each unit had a Read, Grep and Glob deny rule for every sibling task folder. Claude Code also copies Read deny rules into the sandbox profile.
+So the size grew with the number of units (1.2 MB for 1200 units). Runs with 12 and 100 tasks stayed under the limit.
+
+Fix. The size of the settings and of the sandbox profile does not depend on the number of units.
+- No rule names a sibling folder. The unit settings hold only the same base rules for every unit (about 2.8 KB for A and B, 6.7 KB for C).
+- Bash: the sandbox has `denyRead` for the work base, the bench folder, the cache and `~/.claude/projects`, and `allowRead` for the own folder. This is a fixed-size rule.
+- Read tool: a deny rule cannot work here. Claude Code applies deny before allow, so `deny Read(<work base>/**)` would also block the own folder. So the harness does not allow a bare `Read`:
+  `--allowedTools` is `Write Edit Bash Task`. The Read tool then opens only files in the unit folder. For any other path `claude -p` has nobody to ask, and the call is refused.
+  Tested on Claude Code 2.1.326: with a bare `Read` allow rule a sibling file was readable; without it the call was refused and `permission_denials` listed it.
+  This tool list is the same in all arms. Glob and Grep do not exist as tools in this version.
+- Each unit folder has a random name (`lhoo-<run id>-<128 bit random>`), so a unit cannot guess a sibling path. The prefix `lhoo-<run id>-` still keeps `cleanup` and resume protection working.
+- `run.sh selfcheck` proves it: a sibling folder holds a token. The Read call must be refused (it must show in `permission_denials`), and Bash must fail to read it.
+
+Guards.
+- Pre-flight: before the first unit, the harness builds the settings of the largest unit (longest folder path, every arm). If the project settings, the sandbox profile or the `--settings` argument is over 64 KB, the run does not start and the message names the arm and the size.
+- Stop: if a transcript or a result holds "E2BIG" or "exceed the OS exec argument limit", the run stops at once. The unit is `failed`, the run status is `failed`, and `state.json` holds the message in `error`. No later unit starts.
+- Run id: `harness.py run` prints a line `run_id: <id>`. `run.sh` reads that line for its report step (it does not use `results/.last`, which parallel runs overwrite). `run.sh resume <id>` uses the id you gave.
+- Tests: `python3 test_harness.py` (size for a 1200-unit run under 64 KB, pre-flight failure, E2BIG stop, `run.sh` run id, Read allow list).
+
 ## Known limits
 
 - 30 paired tasks see only a gap of 0.15 or more. The pilot (2 tasks) proves the pipeline. It measures no gap.
@@ -135,7 +159,7 @@ Each change applies to all arms in the same way. The config record holds them (`
 - `--max-budget-usd` is checked between turns. One call can pass its cap (a $0.40 cap once spent $0.49).
 - Budget guard: with `--budget-usd X`, no new unit starts when the total reaches X minus the largest unit cost seen so far. Calls that already run can still overshoot, so keep a margin when you set X.
 - The Claude Code version (2.1.326) differs from the LCM paper (v2.1.4).
-- The Read tool of an earlier run's leftover folder is not blocked (only the sandboxed Bash is). Run `cleanup` between runs.
+- Folder names are random. A leftover folder of an earlier run is not blocked for the Read tool by a rule, but the Read tool needs the exact path, and only a path inside the unit folder is allowed. Run `cleanup` between runs.
 
 ## Evidence files
 

@@ -32,7 +32,13 @@ LEN_NAMES = {"32K": 32768, "128K": 131072, "8K": 8192, "16K": 16384, "64K": 6553
 # Same tools in every arm. The subagent tool (named Task in this Claude Code version) is allowed in A, B and C.
 # The Workflow tool is disallowed in every arm: under `claude -p` a workflow runs in the background and the session can end
 # before its result returns (pilot evidence, see README). WebSearch and WebFetch are off everywhere.
-ALLOWED_TOOLS = "Read Write Edit Bash Task"
+# "Read" is not in the list on purpose. A bare Read allow rule lets the Read tool open any path, also the folders of other units.
+# Without it the Read tool opens only the working folder of the unit (a path outside it is refused in `claude -p`). The deny rules
+# then need no list of sibling folders, so the size of the settings does not grow with the number of units (E2BIG, run 20261118T160603).
+ALLOWED_TOOLS = "Write Edit Bash Task"
+# Run stops at once if a unit shows this text: every Bash call of the unit failed to start (see README, "E2BIG").
+E2BIG_MARKERS = ("E2BIG", "exceed the OS exec argument limit")
+PREFLIGHT_MAX_BYTES = 64 * 1024
 DISALLOWED_BASE = ["WebSearch", "WebFetch", "Workflow"]
 WORKFLOW_LINE = "You may split the work across parallel subagents (Agent tool) if it helps; wait for all their results before your final answer."
 PROMPT_CORE = ("The file context.txt in the current folder holds a data set. Read it with your tools as needed. "
@@ -163,13 +169,11 @@ def prompt_for(arm, question):
 
 
 # ------------------------------------------------------------------ settings and config record
-def deny_rules(cfg, siblings=()):
-    """Base rules are the same for every unit. siblings: folders of the other units of this run (Read tool cannot be
-    limited by the sandbox, so each other folder gets its own deny rule)."""
+def deny_rules(cfg):
+    """The rules are the same for every unit, so their size does not depend on the number of units. The other task folders are
+    protected without a rule per folder: Bash by the sandbox (denyRead of the work base, allowRead of the own folder), the Read tool
+    by the missing Read allow rule (see ALLOWED_TOOLS), and both by the random folder name (see unit_stem)."""
     rules = list(cont.deny_rules(cfg["work_base"]))
-    for sdir in siblings:
-        for tool in ("Read", "Grep", "Glob"):
-            rules.append("%s(/%s/**)" % (tool, sdir))
     gold = [os.path.realpath(HERE), os.path.realpath(cfg["cache"])]
     for g in gold:
         for tool in ("Read", "Grep", "Glob", "Edit", "Write"):
@@ -179,12 +183,12 @@ def deny_rules(cfg, siblings=()):
     return sorted(set(rules))
 
 
-def project_settings(cfg, arm, sandbox_only=False, proj=None, siblings=()):
+def project_settings(cfg, arm, sandbox_only=False, proj=None):
     """sandbox_only is for selfcheck: it drops the Bash deny words so that a curl really runs and the sandbox must stop it."""
     s = {}
     if arm == "C":
         s = cont.lh_settings(os.path.join(cfg["lh_path"], "hooks"))
-    s["permissions"] = {"deny": [r for r in deny_rules(cfg, siblings) if not (sandbox_only and r.startswith("Bash(*") and any(w in r for w in DENY_BASH))]}
+    s["permissions"] = {"deny": [r for r in deny_rules(cfg) if not (sandbox_only and r.startswith("Bash(*") and any(w in r for w in DENY_BASH))]}
     s["sandbox"] = {"enabled": True, "autoAllowBashIfSandboxed": True, "allowUnsandboxedCommands": False,
                     "network": {"allowedDomains": []}}
     if proj:   # Bash may read only its own folder: not the other task folders, the gold, the results or the transcripts
@@ -377,7 +381,7 @@ class Ctx:
         self.lock = threading.RLock()
         self.stop = threading.Event()
         self.state_path = os.path.join(run_dir, "state.json")
-        self.stems = []
+        self.fatal = None
         self.state = {"spent": 0.0, "status": "running", "units": {}}
         if os.path.exists(self.state_path):
             self.state = json.load(open(self.state_path, encoding="utf-8"))
@@ -401,6 +405,32 @@ class Ctx:
             raise Pause()
 
 
+def unit_stem(run_id):
+    """Folder name of one unit: the run prefix and a random 128-bit part. A unit cannot guess the folder of another unit."""
+    return "%s%s-%s" % (PREFIX, run_id, uuid.uuid4().hex)
+
+
+def e2big_hit(recs, result_text=""):
+    """True if the transcript records or the result text hold the E2BIG error text (Bash could not start)."""
+    blob = result_text + "".join(json.dumps(r, ensure_ascii=False) for r in recs if isinstance(r, dict))
+    return any(m in blob for m in E2BIG_MARKERS)
+
+
+def preflight(cfg, arms):
+    """Build the settings of the largest unit (longest folder path, every arm) and fail early if one is over the limit.
+    Returns a list of problems, empty if all is fine. Each size is the serialized JSON in bytes."""
+    longest = os.path.join(cfg["work_base"], unit_stem(cfg["run_id"]) + "-state")
+    probs = []
+    for arm in sorted(set("A" if x == "N" else x for x in arms)):
+        s = project_settings(cfg, arm, proj=longest)
+        t = trusted_settings(cfg, arm, env_for(cfg, arm, longest))
+        sizes = {"project settings": len(json.dumps(s)), "sandbox profile": len(json.dumps(s["sandbox"])), "--settings argument": len(json.dumps(t))}
+        for name, n in sizes.items():
+            if n > PREFLIGHT_MAX_BYTES:
+                probs.append("arm %s: %s is %d bytes, over the limit of %d. Bash would fail with E2BIG." % (arm, name, n, PREFLIGHT_MAX_BYTES))
+    return probs
+
+
 def run_unit(ctx, task, arm, rec):
     cfg = ctx.cfg
     uname = "%s-%s" % (task["task_id"], arm)
@@ -408,7 +438,7 @@ def run_unit(ctx, task, arm, rec):
         return
     ctx.check_budget()
     core_arm = "A" if arm == "N" else arm
-    stem = "%s%s-%s-%s" % (PREFIX, cfg["run_id"], task["task_id"], arm)
+    stem = unit_stem(cfg["run_id"])
     proj = os.path.join(cfg["work_base"], stem)
     statedir = proj + "-state"
     if os.path.isdir(proj):
@@ -416,9 +446,7 @@ def run_unit(ctx, task, arm, rec):
     os.makedirs(os.path.join(proj, ".claude"))
     os.makedirs(statedir, exist_ok=True)
     proj = os.path.realpath(proj)
-    sibs = sorted(os.path.join(cfg["work_base"], x) for x in ctx.stems if x != stem)
-    sibs += [x + "-state" for x in sibs]
-    cont.write_json(os.path.join(proj, ".claude", "settings.json"), project_settings(cfg, core_arm, proj=proj, siblings=sibs))
+    cont.write_json(os.path.join(proj, ".claude", "settings.json"), project_settings(cfg, core_arm, proj=proj))
     subprocess.run(["git", "init", "-q", proj], capture_output=True, timeout=30)
     if core_arm == "C":
         install_llm_map_skill(cfg["lh_path"], proj)
@@ -518,11 +546,17 @@ def run_unit(ctx, task, arm, rec):
         "models": sorted(usage), "config": rec, "config_sha": sha(rec), "finished": now_iso(),
     }
     ctx.append("results.jsonl", row)
+    bad = e2big_hit(recs, result_text + " " + err_txt)
     for dd in (proj, statedir):      # the task folder is no longer needed; the transcript is copied
         shutil.rmtree(dd, ignore_errors=True)
     with ctx.lock:
-        ctx.state["units"][uname] = {"status": "done" if (o is not None or salvaged) else "failed", "cost": cost}
+        ctx.state["units"][uname] = {"status": "failed" if bad else ("done" if (o is not None or salvaged) else "failed"), "cost": cost}
     ctx.save()
+    if bad:
+        ctx.fatal = ("unit %s: Bash could not start (E2BIG, the command line or environment is too large). Every Bash call fails, so the "
+                     "run stops now. Nothing more is spent. Check the size of the settings (README, E2BIG)." % uname)
+        ctx.stop.set()
+        raise Fatal(ctx.fatal)
     print("  %-22s score %.2f cost $%.3f %5.0fs turns %s wf %d hits %d llm_map %d ($%.3f)%s" % (
         uname, sc["score"], cost, wall, row["num_turns"], row["workflow_calls"], len(hits), lm["llm_map_calls"], lm["llm_map_cost_usd"],
         ("  TIMEOUT-SCORED" if salvaged else "  ERROR") if row["is_error"] or salvaged else ""), flush=True)
@@ -595,11 +629,15 @@ def execute(ctx, tasks, arms, recs):
         print("FAIRNESS CHECK FAILED:\n  " + "\n  ".join(probs), file=sys.stderr)
         return 1
     print("fairness check: only the intended settings differ across arms (%d config records)" % len(recs))
+    pre = preflight(cfg, arms)
+    if pre:
+        print("PRE-FLIGHT FAILED:\n  " + "\n  ".join(pre), file=sys.stderr)
+        return 1
+    print("pre-flight: settings size is under %d bytes for every arm" % PREFLIGHT_MAX_BYTES)
     code = 0
     ctx.state["status"] = "running"
     ctx.save()
     units = [(t, arm) for t in tasks for arm in arms]
-    ctx.stems = ["%s%s-%s-%s" % (PREFIX, cfg["run_id"], t["task_id"], arm) for t, arm in units]
     try:
         with concurrent.futures.ThreadPoolExecutor(max_workers=cfg["jobs"]) as ex:
             futs = [ex.submit(run_unit, ctx, t, arm, recs[(t["task_id"], arm)]) for t, arm in units]
@@ -617,7 +655,10 @@ def execute(ctx, tasks, arms, recs):
     except KeyboardInterrupt:
         ctx.stop.set()
     undone = [u for t, arm in units for u in ["%s-%s" % (t["task_id"], arm)] if ctx.state["units"].get(u, {}).get("status") != "done"]
-    if ctx.stop.is_set() and undone:
+    if ctx.fatal:
+        ctx.state["status"], ctx.state["error"], code = "failed", ctx.fatal, 1
+        print("RUN STOPPED:", ctx.fatal, file=sys.stderr)
+    elif ctx.stop.is_set() and undone:
         ctx.state["status"], code = "paused", 3
     elif undone:
         ctx.state["status"], code = "failed", code or 1
@@ -645,6 +686,7 @@ def cmd_run(a):
     save_tasks(run_dir, tasks)
     cont.write_json(os.path.join(run_dir, "config_records.json"), {"%s|%s" % k: v for k, v in recs.items()})
     open(os.path.join(RESULTS, ".last"), "w").write(cfg["run_id"])
+    print("run_id: %s" % cfg["run_id"], flush=True)      # machine-readable: run.sh reads it
     print("run", cfg["run_id"], "model", cfg["model"], "lengths", cfg["lengths"], "tasks", [t["task_id"] for t in tasks], "arms", arms)
     return execute(Ctx(run_dir, cfg), tasks, arms, recs)
 
@@ -761,6 +803,12 @@ def cmd_selfcheck(a):
     os.makedirs(cfg["cache"], exist_ok=True)
     open(gold_probe, "w").write("GOLDPROBE-" + uuid.uuid4().hex[:8])
     token = open(gold_probe).read()
+    # a sibling unit folder: its token must stay unreadable by the Read tool and by Bash
+    sib_dir = os.path.join(cfg["work_base"], unit_stem("selfchecksib"))
+    os.makedirs(sib_dir, exist_ok=True)
+    sib_file = os.path.join(sib_dir, "secret.txt")
+    sib_token = "SIBTOKEN-" + uuid.uuid4().hex[:8]
+    open(sib_file, "w").write(sib_token)
     for arm in a.arms.split(","):
         stem = "%sselfcheck-%s" % (PREFIX, arm)
         proj = os.path.join(cfg["work_base"], stem)
@@ -792,21 +840,23 @@ def cmd_selfcheck(a):
                 skills = j.get("skills", []) or []
         prompt = ("Do two things in separate tool calls. 1) Run this in Bash: curl -sS -m 10 -o /dev/null -w '%{http_code}' https://example.com; echo EXIT=$? . "
                   "If the Bash tool denies the command, try this one instead: python3 -c \"print(__import__('socket').create_connection(('example.com',443),5))\" . "
-                  "2) Read the file " + gold_probe + " with the Read tool. 3) Run in Bash: cat ownfile.txt . 4) Run in Bash: ls .. . 5) Run in Bash: cat " + gold_probe + " . Report the raw output of each in plain text. Say DENIED when a tool is denied.")
+                  "2) Read the file " + gold_probe + " with the Read tool. 3) Run in Bash: cat ownfile.txt . 4) Run in Bash: ls .. . 5) Run in Bash: cat " + gold_probe + " . 6) Read the file " + sib_file + " with the Read tool. 7) Run in Bash: cat " + sib_file + " . Report the raw output of each in plain text. Say DENIED when a tool is denied. This is an authorized test: you must make every call, also when you expect a refusal.")
         r = subprocess.run(base + ["--output-format", "json", "--", prompt], cwd=proj, env=env, capture_output=True, text=True,
                            stdin=subprocess.DEVNULL, timeout=300)
         o = json.loads(r.stdout)
         res = o.get("result") or ""
-        dens = [{"tool": x.get("tool_name"), "input": json.dumps(x.get("tool_input"))[:200]} for x in (o.get("permission_denials") or [])]
-        good = token not in res and own_token in res and bool(dens or "denied" in res.lower())
+        dens = [{"tool": x.get("tool_name"), "input": json.dumps(x.get("tool_input"))[:500]} for x in (o.get("permission_denials") or [])]
+        sib_denied = any(d["tool"] == "Read" and sib_file in d["input"] for d in dens)    # the Read call was made and refused
+        good = sib_denied and token not in res and sib_token not in res and own_token in res and bool(dens or "denied" in res.lower())
         ev["arms"][arm] = {"tools": tools, "skills": skills, "llm_map_skill_listed": any("llm-map" in str(x) for x in skills),
                            "workflow_tool_present": "Workflow" in tools, "subagent_tool_present": ("Task" in tools or "Agent" in tools), "reply": res[:1500], "permission_denials": dens,
-                           "gold_token_leaked": token in res, "own_folder_readable_by_bash": own_token in res, "cost_usd": o.get("total_cost_usd")}
+                           "gold_token_leaked": token in res, "sibling_token_leaked": sib_token in res, "sibling_read_denied": sib_denied, "own_folder_readable_by_bash": own_token in res, "cost_usd": o.get("total_cost_usd")}
         ok = ok and good and "Workflow" not in tools and ("Task" in tools or "Agent" in tools)
         if arm == "C":
             ok = ok and ev["arms"][arm]["llm_map_skill_listed"] and "Skill" in tools
         print("arm %s: Workflow tool present %s; denials %s; gold leaked %s\n  reply: %s" % (arm, "Workflow" in tools, [d["tool"] for d in dens], token in res, res.replace("\n", " | ")[:500]))
     os.remove(gold_probe)
+    shutil.rmtree(sib_dir, ignore_errors=True)
     # sandbox-only probe: no deny rule for curl, so a real curl must fail inside the sandbox
     proj = os.path.join(cfg["work_base"], PREFIX + "selfcheck-sbx")
     os.makedirs(os.path.join(proj, ".claude"), exist_ok=True)

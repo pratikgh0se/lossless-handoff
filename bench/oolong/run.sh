@@ -16,10 +16,17 @@ case "$cmd" in
   fetch)    exec python3 "$D/fetch.py" "$@" ;;
   selftest) exec python3 "$D/test_scorer.py" "$@" ;;
   run|resume)
-    python3 "$D/harness.py" "$cmd" "$@"
-    rc=$?
-    last="$(cat "$D/results/.last" 2>/dev/null)"
-    [ "$cmd" = resume ] && last="${1:-$last}"
+    # The report is for the run this process started: its run id comes from the line "run_id: <id>" that harness prints
+    # (results/.last is shared by parallel runs and is not used).
+    out="$(mktemp "${TMPDIR:-/tmp}/oolong-run.XXXXXX")" || exit 2
+    python3 -u "$D/harness.py" "$cmd" "$@" | tee "$out"
+    rc=${PIPESTATUS[0]}
+    if [ "$cmd" = resume ]; then
+      last="${1:-}"
+    else
+      last="$(sed -n 's/^run_id: //p' "$out" | head -n 1)"
+    fi
+    rm -f "$out"
     if [ "$rc" -ne 3 ] && [ -n "$last" ] && [ -s "$D/results/$last/results.jsonl" ]; then
       python3 "$D/report.py" "$last" >/dev/null || rc=$((rc == 0 ? 1 : rc))
       echo "report: $D/results/$last/summary.md"
