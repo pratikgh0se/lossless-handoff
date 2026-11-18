@@ -1,0 +1,12 @@
+Add F59 tests (ACs 268-273) and move the hook version pin to 1.13.1
+
+New file: test_f59_find_subagent_read.py (loose separators, result pointer,
+open of the result id, regex kept, recall text).
+Version pins in the tests of ACs 136, 150, 172, 180, 188 and 267 now say 1.13.1.
+
+Red run against lossless-handoff v0.11.0 (hooks 1.13.0), 786 tests:
+17 not passed (16 failures, 1 error), 767 passed, 2 skipped.
+F59 tests that fail: ac268 (space and other separators), ac270 (result pointer),
+ac271 (open id; no pointer to read), ac273 (recall.md and compact recall line).
+Other failures are the version pins only (ACs 136, 150, 172, 180, 188, 267).
+

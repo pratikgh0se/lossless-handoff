@@ -334,7 +334,7 @@ def select_session(ts, sess):
 
 # ---------------------------------------------------------------- search
 
-SAFE_RE = re.compile(r"^[A-Za-z0-9_ @:/=,|()?*+.#%&'<>!~;-]+$")
+SAFE_RE = re.compile(r"^[A-Za-z0-9_ @:/=,|()?*+.#%&'<>!~;\[\]-]+$")
 SAFE_FIXED_RE = re.compile(r"^[\x20\x21\x23-\x5b\x5d-\x7e]+$")  # printable ASCII except " and \
 DOT_REPL = r"(?:\\u[0-9a-fA-F]{4}(?:\\u[0-9a-fA-F]{4})?|\\.|.)"
 
@@ -406,9 +406,83 @@ def keyword_hits(a, ts, rx, pattern, fixed):
     return uniq
 
 
+LOOSE_PLAIN_RE = re.compile(r"^[A-Za-z0-9 _.-]+$")
+
+
+def loose_pattern(pattern):
+    """F59.a: a plain pattern with a space, - or _ gets loose separators. Else the pattern is unchanged."""
+    if LOOSE_PLAIN_RE.match(pattern) and re.search(r"[ _-]", pattern):
+        return re.sub(r"[ _-]+", "[ _-]+", pattern)
+    return pattern
+
+
+def tool_use_blocks(rec):
+    """F59.b: (tool_use id, hit text) of each tool_use block of an assistant record. Same text form as `segments`."""
+    msg = rec.get("message")
+    c = msg.get("content") if isinstance(msg, dict) else None
+    out = []
+    if rec.get("type") == "assistant" and isinstance(c, list):
+        for b in c:
+            if isinstance(b, dict) and b.get("type") == "tool_use" and isinstance(b.get("id"), str):
+                inp = b.get("input")
+                try:
+                    s = json.dumps(inp, ensure_ascii=False) if not isinstance(inp, str) else inp
+                except Exception:
+                    s = str(inp)
+                out.append((b["id"], "%s %s" % (b.get("name") or "tool", s)))
+    return out
+
+
+def add_result_pointers(shown, ts, rx):
+    """F59.b: set h["result"] on a tool hit from a tool_use block when a later line holds its tool_result.
+    Reads only the transcripts of the shown tool hits. Never raises."""
+    try:
+        by_path = {t.path: t for t in ts}
+        groups = {}
+        for h in shown:
+            if h.get("role") == "tool" and h["path"] in by_path:
+                groups.setdefault(h["path"], []).append(h)
+        for path, hs in groups.items():
+            t = by_path[path]
+            want = {}  # tool_use id -> hit
+            lines = {h["line"] for h in hs}
+            for n, rec in t.records(lines):
+                blocks = tool_use_blocks(rec)
+                pick = [i for i, x in blocks if rx.search(x)] or [i for i, _x in blocks[:1]]
+                for h in hs:
+                    if h["line"] == n:
+                        for i in pick:
+                            want.setdefault(i, h)
+            if not want:
+                continue
+            first = min(h["line"] for h in want.values())
+            try:
+                f = open(path, encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            with f:
+                for n, raw in enumerate(f, 1):
+                    if n <= first or "tool_use_id" not in raw:
+                        continue
+                    rec = parse_line(raw)
+                    msg = rec.get("message") if rec else None
+                    c = msg.get("content") if isinstance(msg, dict) else None
+                    if rec and rec.get("type") == "user" and isinstance(c, list):
+                        for b in c:
+                            if isinstance(b, dict) and b.get("type") == "tool_result":
+                                h = want.get(b.get("tool_use_id"))
+                                if h is not None and n > h["line"] and "result" not in h:
+                                    h["result"] = "%s:%d" % (t.label, n)
+                    if all("result" in h for h in want.values()):
+                        break
+    except Exception:
+        pass
+
+
 def fmt_hit(h):
     s = "%s:%d %s %s [%s]%s: %s" % (h["sid8"], h["line"], fmt_ts(h["ts"]), h["role"], h["tag"],
                                     (" [agent %s]" % h["agent8"]) if h.get("agent8") else "", h["snippet"])
+    s += (" -> result %s" % h["result"]) if h.get("result") else ""
     return s + (" [node %s]" % h["node"] if h.get("node") else "")
 
 
@@ -434,6 +508,8 @@ def cmd_search(a, root):
         raise UsageError("--keyword and --meaning are exclusive")
     fixed = a.fixed
     pattern = a.pattern
+    if not fixed:
+        pattern = loose_pattern(pattern)  # F59.a
     try:
         rx = re.compile(re.escape(pattern) if fixed else pattern, re.I)
     except re.error as e:
@@ -476,6 +552,7 @@ def cmd_search(a, root):
                   and node["first_line"] <= h["line"] <= node["last_line"]]
     shown = merged[:limit]
     fill_meaning_snippets(shown, ts)
+    add_result_pointers(shown, ts, rx)
     tag_nodes(shown, root)
     lines = [mode_line]
     lines += [fmt_hit(h) for h in shown]
