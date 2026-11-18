@@ -74,7 +74,7 @@ python3 - "$H" <<'PY'
 import hashlib, json, sys
 h = sys.argv[1]
 m = json.load(open(h + "/.handoff-manifest.json"))
-assert m["version"] == "1.11.0" and m["installed_at"], m
+assert m["version"] == "1.12.0" and m["installed_at"], m
 assert sorted(m["files"]) == ["claims.json", "handoff-nudge.py", "postcompact-inject.py", "precompact-handoff.py", "recall.py"], m
 for n, want in m["files"].items():
     assert hashlib.sha256(open(h + "/" + n, "rb").read()).hexdigest() == want, n
@@ -645,6 +645,198 @@ ok "F52: --check line, --keep-transcripts, uninstall note, managed value, handof
   done
 )
 ok "F53: block on auto, subagent and any custom_instructions; silent for STEER=0 and CLI modes"
+
+# F54: summary nodes (map, describe, search --node, SessionStart line, prove check)
+(
+  export HOME="$T/home-f54"; mkdir -p "$HOME/.claude"; export HANDOFF_LEDGER=0
+  STF="$HOME/.local/state/claude-handoffs"; mkdir -p "$STF"
+  POST="$ROOT/hooks/postcompact-inject.py"; PRE="$ROOT/hooks/precompact-handoff.py"; RC="$ROOT/hooks/recall.py"
+  python3 - "$HOME" <<'PY'
+import json, os, subprocess, sys
+home = sys.argv[1]
+proj = os.path.join(home, "proj"); os.makedirs(proj)
+subprocess.run(["git", "-C", proj, "init", "-q"], check=True)
+proj = os.path.realpath(proj)
+sid = "11111111-2222-3333-4444-555555555555"
+pdir = os.path.join(home, ".claude", "projects", proj.replace("/", "-")); os.makedirs(pdir)
+L = []
+def add(o): L.append(json.dumps(o))
+def msg(t, text, ts, role=None):
+    c = text if t == "user" else [{"type": "text", "text": text}]
+    add({"type": t, "uuid": "m%d" % len(L), "timestamp": ts, "cwd": proj, "message": {"role": t, "content": c}})
+for k in (1, 2, 3):
+    ts = "2026-11-1%dT10:00:00.000Z" % k
+    msg("user", "question %d about SHARED%d" % (k, k), ts)
+    msg("assistant", "answer %d with COMMON token" % k, ts)
+    add({"type": "system", "subtype": "compact_boundary", "uuid": "b%d" % k, "timestamp": ts, "cwd": proj,
+         "compactMetadata": {"trigger": "auto", "preTokens": 1000 * k}})
+    add({"type": "user", "uuid": "s%d" % k, "isCompactSummary": True, "timestamp": ts, "cwd": proj,
+         "message": {"role": "user", "content": "This session is being continued.\n\nSummary:\n1. Primary Request:\n   x\n"
+                     "7. Current Work:\n   Work on SUMTOKEN%d thing.\n8. Optional Next Step:\n   later\n" % k}})
+msg("user", "after the last boundary COMMON live", "2026-11-20T10:00:00.000Z")
+open(os.path.join(pdir, sid + ".jsonl"), "w").write("\n".join(L) + "\n")
+open(os.path.join(home, "ids"), "w").write("%s\n%s\n%s\n" % (sid, proj, os.path.join(pdir, sid + ".jsonl")))
+PY
+  SID="$(sed -n 1p "$HOME/ids")"; PROJ="$(sed -n 2p "$HOME/ids")"; TP="$(sed -n 3p "$HOME/ids")"
+  printf '# Handoff (pre-compaction)\n- session: %s\n- cwd: %s\n- authority: x\n- recall: old line\n## Goal\nhello\n' "$SID" "$PROJ" > "$STF/$SID-latest.md"
+  echo "{\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"trigger\":\"auto\",\"degraded\":false,\"status\":\"ok\"}" > "$STF/$SID-last-health.json"
+  hin() { printf '{"session_id":"%s","transcript_path":"%s","cwd":"%s","hook_event_name":"SessionStart","source":"%s"%s}' "$SID" "$TP" "$PROJ" "$1" "${2:-}"; }
+  ctx() { python3 -c "import sys,json; print(json.load(sys.stdin)['hookSpecificOutput']['additionalContext'])"; }
+  NJ() { cat "$STF"/projects/*/nodes.jsonl; }
+  out="$(hin compact | python3 "$POST" --part 1 | ctx)"
+  [ "$(NJ | wc -l | tr -d ' ')" = 3 ] || fail "F54: expected 3 leaves"
+  python3 - "$SID" "$STF" <<'PY'
+import glob, hashlib, json, sys
+sid, stf = sys.argv[1], sys.argv[2]
+n = [json.loads(x) for x in open(glob.glob(stf + "/projects/*/nodes.jsonl")[0])]
+assert [x["seq"] for x in n] == [1, 2, 3], n
+assert [(x["first_line"], x["last_line"]) for x in n] == [(1, 2), (4, 6), (8, 10)], n
+assert n[0]["prev"] is None and n[1]["prev"] == n[0]["id"] and n[2]["prev"] == n[1]["id"]
+assert all(x["id"] == "n" + hashlib.sha1((sid + ":" + x["boundary_uuid"]).encode()).hexdigest()[:10] for x in n)
+assert [x["pre_tokens"] for x in n] == [1000, 2000, 3000] and n[0]["agent"] is None and n[0]["kind"] == "leaf"
+PY
+  ID3="$(NJ | python3 -c "import sys,json; print(json.loads(sys.stdin.readlines()[2])['id'])")"
+  ID2="$(NJ | python3 -c "import sys,json; print(json.loads(sys.stdin.readlines()[1])['id'])")"
+  grep -qF "summary node: this chat continues after node $ID3 (compaction #3, lines 8-10)." <<<"$out" || fail "F54.d: node line missing: $out"
+  [ "$(grep -n 'summary node:' <<<"$out" | cut -d: -f1)" = "$(( $(grep -n -- '- recall:' <<<"$out" | cut -d: -f1) + 1 ))" ] || fail "F54.d: node line not right after the recall line"
+  for s in startup resume; do
+    o="$(hin $s | python3 "$POST" --part 1 | ctx)"; ! grep -q "summary node:" <<<"$o" || fail "F54.d: $s output has the node line"
+  done
+  hin compact | python3 "$POST" --part 1 >/dev/null
+  [ "$(NJ | wc -l | tr -d ' ')" = 3 ] || fail "F54: a second run added nodes"
+  [ "$(cd "$PROJ" && python3 "$RC" nodes --backfill)" = "nodes: 0 added, 3 total" ] || fail "F54: backfill line"
+  s="$(cd "$PROJ" && python3 "$RC" search COMMON --keyword)"
+  grep -qF "answer 2 with COMMON token [node $ID2]" <<<"$s" && grep -qF "answer 3 with COMMON token [node $ID3]" <<<"$s" && grep -qF "live [node live]" <<<"$s" || fail "F54.c: hit tags: $s"
+  NJ | head -3 > "$T/f54.first3"
+  printf '%s\n' '{"type":"system","subtype":"compact_boundary","uuid":"b4","timestamp":"'"$(date -u +%Y-%m-%dT%H:%M:%S.000Z)"'","compactMetadata":{"trigger":"manual","preTokens":4000}}' >> "$TP"
+  hin compact | python3 "$POST" --part 1 >/dev/null
+  [ "$(NJ | wc -l | tr -d ' ')" = 4 ] && [ "$(NJ | head -3)" = "$(cat "$T/f54.first3")" ] || fail "F54: 4th boundary / append only"
+  python3 - "$TP" <<'PY'
+import json, sys
+L = open(sys.argv[1]).read().splitlines()
+L = [x for x in L if '"b4"' not in x]
+open(sys.argv[1], "w").write("\n".join(L) + "\n")
+PY
+  # (the transcript got shorter: a rescan adds only missing ids, so the 4th leaf stays and nothing is added)
+  hin compact | python3 "$POST" --part 1 >/dev/null
+  [ "$(NJ | wc -l | tr -d ' ')" = 4 ] || fail "F54: rescan after a shorter transcript added nodes"
+  printf '%s\n' '{"type":"system","subtype":"compact_boundary","uuid":"b4","timestamp":"'"$(date -u +%Y-%m-%dT%H:%M:%S.000Z)"'","compactMetadata":{"trigger":"manual","preTokens":4000}}' >> "$TP"
+  hin compact | python3 "$POST" --part 1 >/dev/null
+  [ "$(NJ | wc -l | tr -d ' ')" = 4 ] || fail "F54: re-adding the same boundary made a duplicate"
+  # subagent leaf
+  python3 - "$(dirname "$TP")/$SID/subagents" "$PROJ" <<'PY'
+import json, os, sys
+sub, proj = sys.argv[1], sys.argv[2]
+os.makedirs(sub)
+open(os.path.join(sub, "agent-ag1.jsonl"), "w").write("\n".join([
+    json.dumps({"type": "user", "uuid": "x1", "timestamp": "2026-11-15T10:00:00.000Z", "cwd": proj, "isSidechain": True, "message": {"role": "user", "content": "sub work"}}),
+    json.dumps({"type": "system", "subtype": "compact_boundary", "uuid": "xb1", "timestamp": __import__("datetime").datetime.now(__import__("datetime").timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z"), "cwd": proj, "compactMetadata": {"trigger": "auto", "preTokens": 50}})]) + "\n")
+PY
+  SUBTP="$(dirname "$TP")/$SID/subagents/agent-ag1.jsonl"
+  printf '{"session_id":"%s","agent_id":"ag1","transcript_path":"%s","agent_transcript_path":"%s","cwd":"%s","source":"compact"}' "$SID" "$TP" "$SUBTP" "$PROJ" | python3 "$POST" --part 1 >/dev/null
+  NJ | python3 -c "import sys,json; r=[json.loads(x) for x in sys.stdin]; s=[x for x in r if x['agent']=='ag1']; assert len(s)==1 and s[0]['transcript'].endswith('subagents/agent-ag1.jsonl'), r"  || fail "F54: subagent leaf"
+  # map, describe, search
+  m="$(cd "$PROJ" && python3 "$RC" map)"
+  grep -qE "^$ID2 2026-11-12 10:00 11111111 #2 lines 4-6 2000 tokens: Work on SUMTOKEN2 thing" <<<"$m" || fail "F54.c: map line: $m"
+  grep -q "^5 nodes in 1 sessions$" <<<"$m" && grep -qE "^n[0-9a-f]{10} .* 11111111/ag1 #1 lines 1-1 50 tokens: " <<<"$m" || fail "F54.c: map count line: $m"
+  [ "$(grep -c SUMTOKEN <<<"$m")" = 3 ] || fail "F54.c: map gists"
+  d="$(cd "$PROJ" && python3 "$RC" describe "$ID2")"
+  grep -q "^seq: 2$" <<<"$d" && grep -q "^lines: 4-6$" <<<"$d" && grep -q "^open: python3 ~/.claude/hooks/recall.py open 11111111:4$" <<<"$d" || fail "F54.c: describe fields: $d"
+  grep -q SUMTOKEN2 <<<"$d" && ! grep -q SUMTOKEN3 <<<"$d" || fail "F54.c: describe summary text"
+  rc=0; o="$(cd "$PROJ" && python3 "$RC" describe nzzzzzzzzzz 2>&1)" || rc=$?
+  [ "$rc" = 1 ] && grep -q "no node nzzzzzzzzzz" <<<"$o" || fail "F54.c: unknown node (rc $rc)"
+  s="$(cd "$PROJ" && python3 "$RC" search COMMON --keyword --node "$ID2")"
+  grep -q "answer 2 with COMMON" <<<"$s" && ! grep -q "answer 3 with COMMON" <<<"$s" || fail "F54.c: --node filter: $s"
+  # no boundary: no node line; a malformed line does not break map
+  printf '%s\n' 'not json at all' >> "$STF"/projects/*/nodes.jsonl
+  [ "$(cd "$PROJ" && python3 "$RC" map | grep -c SUMTOKEN)" = 3 ] || fail "F54: malformed nodes line broke map"
+  # prove: nodes check
+  p="$(python3 "$PRE" --prove --days 1)"
+  grep -qE "^nodes: 5 boundaries, 5 leaves, 0 bad$" <<<"$p" || fail "F54.e: prove nodes line: $p"
+  python3 - "$STF" <<'PY'
+import glob, json, sys
+f = glob.glob(sys.argv[1] + "/projects/*/nodes.jsonl")[0]
+rows = [x for x in open(f).read().splitlines()]
+out = []
+for x in rows:
+    try:
+        o = json.loads(x)
+    except Exception:
+        out.append(x); continue
+    if o.get("seq") == 2 and not o.get("agent"):
+        o["first_line"] = 2
+    out.append(json.dumps(o))
+open(f, "w").write("\n".join(out) + "\n")
+PY
+  p="$(python3 "$PRE" --prove --days 1)"
+  grep -qE "^nodes: [0-9]+ boundaries, [0-9]+ leaves, [1-9][0-9]* bad$" <<<"$p" || fail "F54.e: overlap not found: $p"
+  grep -qE "failed [1-9]" <<<"$p" || fail "F54.e: prove did not count the bad nodes as failed: $p"
+  # an empty project
+  mkdir -p "$HOME/empty"; (cd "$HOME/empty" && git init -q && o="$(python3 "$RC" map)" && [ "$o" = "no summary nodes yet" ]) || fail "F54.c: empty map"
+)
+ok "F54: leaves, ids, append only, SessionStart line, subagent, map, describe, search --node and tags, prove check"
+
+# F55: the recall subagent file
+(
+  export HOME="$T/home-f55"; mkdir -p "$HOME/.claude"
+  AG="$HOME/.claude/agents/recall.md"
+  [ -f "$ROOT/agents/recall.md" ] || fail "F55: agents/recall.md missing in the repo"
+  "$ROOT/install.sh" --no-nightly --dry-run >/dev/null; [ ! -e "$AG" ] || fail "F55: dry-run wrote the agent"
+  "$ROOT/install.sh" --no-nightly >/dev/null
+  grep -qF "<!-- lossless-handoff:recall-agent -->" "$AG" && grep -q "^name: recall$" "$AG" && grep -q "^model: haiku$" "$AG" \
+    && grep -q "^tools: Bash, Read$" "$AG" && grep -q "recall.py" "$AG" || fail "F55.a: agent file content"
+  # recall line sentence (SessionStart, with a handoff that has a recall line)
+  STF="$HOME/.local/state/claude-handoffs"; mkdir -p "$STF"
+  printf '# Handoff\n- authority: x\n- recall: old line\n## Goal\nhi\n' > "$STF/s55-latest.md"
+  echo "{\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"trigger\":\"auto\",\"degraded\":false,\"status\":\"ok\"}" > "$STF/s55-last-health.json"
+  run55() { printf '{"session_id":"s55","cwd":"/tmp","source":"compact"}' | python3 "$ROOT/hooks/postcompact-inject.py" --part 1; }
+  grep -q "ask the recall subagent" <<<"$(run55)" || fail "F55.c: sentence missing with the agent file"
+  # not ours: left unchanged; uninstall keeps it
+  printf 'mine\n' > "$AG"; cp "$AG" "$T/f55.mine"
+  o="$("$ROOT/install.sh" --no-nightly)"
+  cmp -s "$AG" "$T/f55.mine" && grep -qF "~/.claude/agents/recall.md exists and is not ours; left unchanged." <<<"$o" || fail "F55.a: foreign file touched"
+  ! grep -q "ask the recall subagent" <<<"$(run55)" || fail "F55.c: sentence present without our agent file"
+  "$ROOT/uninstall.sh" >/dev/null; [ -f "$AG" ] || fail "F55.b: uninstall removed a foreign file"
+  # ours with old content: replaced; uninstall removes it
+  printf '<!-- lossless-handoff:recall-agent -->\nold\n' > "$AG"
+  "$ROOT/install.sh" --no-nightly >/dev/null; grep -q "^name: recall$" "$AG" || fail "F55.a: marked old file not replaced"
+  "$ROOT/uninstall.sh" >/dev/null; [ ! -e "$AG" ] || fail "F55.b: uninstall left our agent file"
+)
+ok "F55: agent file install, foreign file kept, replace when marked, uninstall, recall-line sentence"
+
+# F56: excerpt cut in health rows and prove
+(
+  export HOME="$T/home-f56"; mkdir -p "$HOME/.claude"; export HANDOFF_STATE_DIR="$T/f56state"; export HANDOFF_LEDGER=0
+  unset HANDOFF_HAIKU_FALLBACK
+  mkdir -p "$T/f56bin"; printf '#!/bin/sh\ncat >/dev/null\necho "## Goal"; echo "fake summary for the smoke test, long enough to pass the length check of fifty chars"\n' > "$T/f56bin/claude"; chmod +x "$T/f56bin/claude"
+  python3 - "$T" <<'PY'
+import json, sys
+t = sys.argv[1]
+def w(name, n, size):
+    L = []
+    for i in range(n):
+        L.append(json.dumps({"type": "user", "timestamp": "2026-11-18T10:00:%02dZ" % (i % 60), "message": {"role": "user", "content": "message %d " % i + "x" * size}}))
+        L.append(json.dumps({"type": "assistant", "timestamp": "2026-11-18T10:00:%02dZ" % (i % 60), "message": {"role": "assistant", "content": [{"type": "text", "text": "reply %d " % i + "y" * size}]}}))
+    open(t + "/" + name, "w").write("\n".join(L) + "\n")
+w("f56-small.jsonl", 3, 100)
+w("f56-big.jsonl", 60, 3500)
+PY
+  for pair in small:f56a big:f56b; do
+    printf '{"trigger":"auto","session_id":"%s","cwd":"/tmp","transcript_path":"%s/f56-%s.jsonl"}' "${pair##*:}" "$T" "${pair%%:*}" | PATH="$T/f56bin:$PATH" HANDOFF_COMPACT_STEER=0 python3 "$ROOT/hooks/precompact-handoff.py" >/dev/null
+  done
+  python3 - "$HANDOFF_STATE_DIR/health.jsonl" <<'PY'
+import json, sys
+rows = {json.loads(x)["sid"]: json.loads(x) for x in open(sys.argv[1]) if x.strip()}
+a, b = rows["f56a"], rows["f56b"]
+assert a["excerpt_chars"] > 0 and a["excerpt_dropped"] == 0, a
+assert b["excerpt_dropped"] > 0 and 0 < b["excerpt_chars"] <= 120000, b
+assert a["hook_version"] == "1.12.0"
+PY
+  p="$(python3 "$ROOT/hooks/precompact-handoff.py" --prove --days 1; echo "rc=$?")"
+  grep -qE "^excerpt cut: 1 of 2 compactions, median dropped [0-9]+ chars$" <<<"$p" || fail "F56.b: prove line: $p"
+  grep -q "rc=0" <<<"$p" || fail "F56.b: prove exit code"
+)
+ok "F56: excerpt_chars and excerpt_dropped in health rows; prove prints the cut line"
 
 "$ROOT/uninstall.sh" >"$T/un.out"
 python3 - "$S" "$T/original.json" <<'PY'
