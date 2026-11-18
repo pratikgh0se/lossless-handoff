@@ -153,6 +153,8 @@ Other files: `config.json` (all settings, versions, commits), `state.json` (runn
 |---|---|
 | Amnesia (arm Z, all types) | 2% or less |
 | Oracle (arm O, types R D X S E C M) | 95% or more |
+
+Arm O size rule: arm O has its own filler size. Files per turn come from `--o-window` (default 200000), not from the main window. Default 3 filler turns. The estimated context (25k overhead, planted content, 12k probe, 6.5k tokens per filler file) stays under 60% of the O window. A pre-flight check stops the run above 75%. Reason: at a 400k main window, 12 files per turn made arm O compact once, and its probes did not run (run 20261118T152042-full).
 | Fresh control F, each arm | 95% or more |
 | Parse rate, each arm | 98% or more |
 | Missed checkpoints (A, B) | 5% or less |

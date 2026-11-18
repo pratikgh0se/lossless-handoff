@@ -410,7 +410,7 @@ def run_main_session(ctx, ss):
     events = script["events"]
     n0 = sum(1 for e in events if e["epoch"] == 0)
     cks = checkpoints(cfg, ss.arm)
-    per = cfg["files_per_turn"]
+    per = (cfg.get("o_files_per_turn") or cfg["files_per_turn"]) if ss.arm == "O" else cfg["files_per_turn"]
     quiet = 0           # filler turns in a row with no new boundary
     while st["ckpt_i"] < len(cks):
         target, min_fill = cks[st["ckpt_i"]]
@@ -582,11 +582,51 @@ def parse_common(ap):
     ap.add_argument("--files-per-turn", type=int, help="filler files read in one turn (default from the window)")
     ap.add_argument("--o-window", type=int, default=None, help="window of arm O (default 200000)")
     ap.add_argument("--oracle-turns", type=int, default=None, help="filler turns of arm O before its probes (default 3)")
+    ap.add_argument("--o-files-per-turn", type=int, default=None, help="filler files per turn of arm O (default: from --o-window, under 60%% of it; not from --window)")
     ap.add_argument("--work-base", help="folder for the temp project folders (default: the temp dir)")
     ap.add_argument("--call-cap-usd", type=float, default=None, help="--max-budget-usd of each claude call (default 1.50)")
     ap.add_argument("--turn-timeout-s", type=int, default=None)
     ap.add_argument("--jobs", type=int, default=None, help="sessions in parallel (default 2)")
     ap.add_argument("--budget-usd", type=float, default=None, help="pause cleanly when the total reaches this value")
+
+
+# Arm O size model. Arm O never compacts, so its whole context must fit in its own window.
+# It does not depend on the main window. Numbers are estimates and they err on the high side.
+O_TARGET_FRACTION = 0.60      # default settings keep O under this share of its window
+O_FAIL_FRACTION = 0.75        # pre-flight stops the run above this share
+O_OVERHEAD_TOKENS = 25000     # system prompt, tool definitions, project context
+O_PROBE_TOKENS = 12000        # one probe fork: question text and reply
+TOKENS_PER_FILE = 6500        # one filler file is about 20 KB of random words
+CHARS_PER_TOKEN = 3.3
+
+
+def o_planted_tokens(seeds):
+    """Largest planted content (prompts and files of all epochs that arm O plants) over the seeds, in tokens."""
+    worst = 0
+    for sd in seeds:
+        sc = gen.build(sd)
+        chars = sum(len(e["prompt"]) + sum(len(c) for c in (e.get("files") or {}).values()) for e in sc["events"])
+        worst = max(worst, chars)
+    return int(worst / CHARS_PER_TOKEN)
+
+
+def o_estimate(planted, files_per_turn, turns):
+    return O_OVERHEAD_TOKENS + planted + O_PROBE_TOKENS + files_per_turn * turns * TOKENS_PER_FILE
+
+
+def o_plan(o_window, planted, files_per_turn, turns):
+    """Fill the unset values. Default turns 3; default files per turn is the most that keeps O under 60% of its window."""
+    turns = turns or 3
+    if not files_per_turn:
+        room = O_TARGET_FRACTION * o_window - O_OVERHEAD_TOKENS - planted - O_PROBE_TOKENS
+        files_per_turn = max(1, int(room // (turns * TOKENS_PER_FILE)))
+    est = o_estimate(planted, files_per_turn, turns)
+    if est > O_FAIL_FRACTION * o_window:
+        raise SystemExit(
+            "arm O would be too large: estimate %d tokens (planted %d, filler %d files x %d turns) is above %d%% of --o-window %d. "
+            "Lower --o-files-per-turn or --oracle-turns, or raise --o-window. Arm O must not compact."
+            % (est, planted, files_per_turn, turns, int(O_FAIL_FRACTION * 100), o_window))
+    return files_per_turn, turns, est
 
 
 def build_cfg(kind, a):
@@ -603,6 +643,8 @@ def build_cfg(kind, a):
     if "B" in arms and not os.path.isfile(os.path.join(lh, "hooks", "precompact-handoff.py")):
         raise SystemExit("arm B: no hooks in %s/hooks" % lh)
     dirty = bool(sh(["git", "status", "--porcelain", "--", "hooks"], cwd=lh))
+    o_window = a.o_window or 200000
+    o_fpt, o_turns, o_est = o_plan(o_window, o_planted_tokens(seeds), a.o_files_per_turn, a.oracle_turns) if "O" in arms else (None, None, None)
     rid = "%s-%s" % (datetime.datetime.now().strftime("%Y%m%dT%H%M%S"), kind)
     return {
         "run_id": rid, "kind": kind, "gen_version": gen.GEN_VERSION, "model": a.model or k["model"], "window": window,
@@ -610,7 +652,8 @@ def build_cfg(kind, a):
         "lh_path": lh, "lh_commit": sh(["git", "rev-parse", "--short", "HEAD"], cwd=lh) + ("+dirty" if dirty else ""),
         "bench_commit": sh(["git", "rev-parse", "--short", "HEAD"], cwd=REPO),
         "files_per_turn": a.files_per_turn or max(1, min(12, round(window * 0.4 / 6000))),
-        "o_window": a.o_window or 200000, "oracle_turns": a.oracle_turns or 3,
+        "o_window": o_window, "oracle_turns": o_turns or a.oracle_turns or 3, "o_files_per_turn": o_fpt,
+        "o_estimate_tokens": o_est,
         "work_base": work_base(a.work_base), "call_cap_usd": a.call_cap_usd or 1.50,
         "turn_timeout_s": a.turn_timeout_s or (420 if "haiku" in (a.model or k["model"]) else 900),
         "jobs": a.jobs or 2, "budget_usd": a.budget_usd, "claude_version": sh(["claude", "--version"]),
