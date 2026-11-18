@@ -2,8 +2,9 @@
 """Code grader for the continuity benchmark. It never calls a model.
 
 grade(ptype, items, raw) returns one dict for each item:
-  {"id", "parse_ok", "correct", "parsed"}
+  {"id", "parse_ok", "correct", "parsed", "abstained"}
 Each item is right (True) or wrong (False). There is no partial credit.
+An explicit null in the main field is an abstention: parse_ok True, correct False, abstained True.
 """
 import json, re
 
@@ -44,6 +45,16 @@ def as_bool(v):
     if isinstance(v, str) and v.strip().lower() in ("true", "false"):
         return v.strip().lower() == "true"
     return None
+
+
+ABSTAIN_FIELD = {"R": "answer", "D": "answer", "U": "answer", "F": "answer", "S": "answer",
+                 "X": "current", "E": "reason_code", "M": "order", "C": "earlier"}
+
+
+def is_abstain(ptype, e):
+    """True if the main field of the entry is present with the value null (the model says it does not know)."""
+    f = ABSTAIN_FIELD.get(ptype)
+    return isinstance(e, dict) and f in e and e[f] is None
 
 
 def entry_for(answers, item_id):
@@ -99,15 +110,18 @@ def grade(ptype, items, raw):
             ok = False
             if ptype in FALLBACK_TYPES and len(found) == len(items):
                 ok = found[n] == it["answer"]
-            out.append({"id": it["id"], "parse_ok": False, "correct": ok, "parsed": None})
+            out.append({"id": it["id"], "parse_ok": False, "correct": ok, "parsed": None, "abstained": False})
         return out
     for it in items:
         e = entry_for(answers, it["id"])
         if e is None:
-            out.append({"id": it["id"], "parse_ok": False, "correct": False, "parsed": None})
+            out.append({"id": it["id"], "parse_ok": False, "correct": False, "parsed": None, "abstained": False})
+            continue
+        if is_abstain(ptype, e):
+            out.append({"id": it["id"], "parse_ok": True, "correct": False, "parsed": e, "abstained": True})
             continue
         pok, ok = check(ptype, it, e)
-        out.append({"id": it["id"], "parse_ok": pok, "correct": bool(ok), "parsed": e})
+        out.append({"id": it["id"], "parse_ok": pok, "correct": bool(ok), "parsed": e, "abstained": False})
     return out
 
 

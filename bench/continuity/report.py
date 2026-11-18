@@ -38,6 +38,7 @@ class Agg:
     def __init__(self, rows):
         self.c, self.t = {}, {}
         self.parse, self.look, self.dropped = {}, {}, 0
+        self.abst = {}
         self.seeds = set()
         for r in rows:
             if r["arm"] in ("A", "B", "O") and r["n_actual"] != r["n_target"]:
@@ -49,6 +50,9 @@ class Agg:
             pa = self.parse.setdefault(r["arm"], [0, 0])
             pa[0] += 1 if r["parse_ok"] else 0
             pa[1] += 1
+            ab = self.abst.setdefault(r["arm"], [0, 0])
+            ab[0] += 1 if r.get("abstained") else 0
+            ab[1] += 1
             la = self.look.setdefault(r["arm"], [0, 0])
             la[0] += 1 if r.get("used_lookup") else 0
             la[1] += 1
@@ -225,6 +229,10 @@ def build(run_id, draws=None):
                 gate("Parse rate, arm Z (info)", "none", "%s (%d/%d)" % (pct(ok / t), ok, t), "INFO")
             else:
                 gate("Parse rate, arm %s" % a, ">= %s" % pct(th["parse_rate_min"]), "%s (%d/%d)" % (pct(ok / t), ok, t), "PASS" if ok / t >= th["parse_rate_min"] else "FAIL")
+    for a in ("A", "B", "O", "Z"):
+        if a in ag.abst:
+            ab, t = ag.abst[a]
+            gate("Abstain rate, arm %s (info)" % a, "none", "%s (%d/%d)" % (pct(ab / t), ab, t), "INFO")
     scored = [s for s in sess if s["arm"] in ("A", "B")]
     planned = sum(len([n for n in cfg["n"]]) for _ in scored)
     missed = sum(len(s["missed"]) for s in scored)

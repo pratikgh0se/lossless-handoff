@@ -212,6 +212,49 @@ class ParseHandling(Base):
         self.assertTrue(grade.grade("D", [x], js([{"id": "1", "answer": x["answer"]}]))[0]["correct"])
 
 
+class Abstain(Base):
+    """An explicit null in the main field is an abstention: parsed, not correct, flagged."""
+    FIELD = {"R": "answer", "D": "answer", "U": "answer", "S": "answer", "X": "current",
+             "E": "reason_code", "M": "order", "C": "earlier"}
+
+    def test_null_for_every_type(self):
+        for t, f in self.FIELD.items():
+            items = self.I[t]
+            r = grade.grade(t, items, js([{"id": x["id"], f: None} for x in items]))
+            self.assertTrue(all(g["parse_ok"] and not g["correct"] and g["abstained"] for g in r), t)
+        items = self.s["fresh"]["3"]
+        r = grade.grade("F", items, js([{"id": x["id"], "answer": None} for x in items]))
+        self.assertTrue(all(g["parse_ok"] and not g["correct"] and g["abstained"] for g in r))
+
+    def test_null_with_other_fields(self):
+        e = self.I["E"][0]
+        for ent in ({"id": e["id"], "proceed": False, "reason_code": None}, {"id": e["id"], "proceed": None, "reason_code": None}):
+            g = grade.grade("E", [e], js([ent]))[0]
+            self.assertTrue(g["parse_ok"] and g["abstained"] and not g["correct"])
+        c = self.I["C"][0]
+        g = grade.grade("C", [c], js([{"id": c["id"], "conflict": True, "earlier": None}]))[0]
+        self.assertTrue(g["parse_ok"] and g["abstained"] and not g["correct"])
+
+    def test_missing_or_wrong_type_is_not_abstention(self):
+        for t, f in self.FIELD.items():
+            it = self.I[t][0]
+            for ent in ({"id": it["id"]}, {"id": it["id"], f: 5}):
+                g = grade.grade(t, [it], js([ent]))[0]
+                self.assertFalse(g["parse_ok"] or g["abstained"] or g["correct"], (t, ent))
+        g = grade.grade("R", self.I["R"][:1], "I do not know")[0]
+        self.assertFalse(g["parse_ok"] or g["abstained"])
+
+    def test_normal_answers_are_not_abstentions(self):
+        items = self.I["R"]
+        r = grade.grade("R", items, js([{"id": x["id"], "answer": x["answer"]} for x in items]))
+        self.assertTrue(all(g["correct"] and not g["abstained"] for g in r))
+
+    def test_mixed_reply(self):
+        a, b = self.I["R"][:2]
+        r = grade.grade("R", [a, b], js([{"id": a["id"], "answer": a["answer"]}, {"id": b["id"], "answer": None}]))
+        self.assertEqual([(g["parse_ok"], g["correct"], g["abstained"]) for g in r], [(True, True, False), (True, False, True)])
+
+
 class LookupFlag(unittest.TestCase):
     def rec(self, role, content):
         return {"type": role, "message": {"role": role, "content": content}}
