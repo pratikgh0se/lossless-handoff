@@ -6,7 +6,7 @@ cost per task, wall time, turns, workflow calls (arm A must show 0), compactions
 Cleaned set: a task is removed (for all arms, to keep the pairs) if the no-context control got it right
 or any arm's transcript has a contamination hit. The removed counts are printed.
 """
-import json, math, os, random, statistics, sys
+import glob, json, math, os, random, statistics, sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
@@ -45,7 +45,12 @@ def task_cost(r):
 
 def load(run):
     d = os.path.join(HERE, "results", run)
-    rows = [json.loads(x) for x in open(os.path.join(d, "results.jsonl"), encoding="utf-8")]
+    rows = [json.loads(x) for x in open(os.path.join(d, "results.jsonl"), encoding="utf-8") if x.strip()]
+    last = {}
+    for r in rows:        # after a resume a unit can have two rows. Keep the last one (file order is finish order).
+        last.pop(r["unit"], None)
+        last[r["unit"]] = r
+    rows = list(last.values())
     cfg = json.load(open(os.path.join(d, "config.json"), encoding="utf-8"))
     return d, cfg, rows
 
@@ -62,7 +67,16 @@ def rescan(d, rows):
             r.setdefault("recognition", [])
             r.setdefault("timed_out", r.get("stderr") == "timeout")
             continue
-        recs = cont.read_jsonl(p)
+        main_recs = cont.read_jsonl(p)
+        recs = list(main_recs)
+        for sp in sorted(glob.glob(os.path.join(d, "transcripts", r["unit"], "**", "*.jsonl"), recursive=True)):
+            recs += cont.read_jsonl(sp)          # subagent transcripts
+        errors, bash = harness.tool_error_stats(recs)
+        r.update(tool_errors=errors, bash_calls=bash["calls"], bash_started=bash["started"], bash_infra=bash["infra"],
+                 bash_denied=bash["denied"], infra_examples=bash["examples"])
+        lm = harness.llm_map_stats(recs)
+        r.update(llm_map_calls=lm["llm_map_calls"], llm_map_ok_calls=lm["llm_map_ok_calls"])
+        recs_all, recs = recs, main_recs
         texts = harness.assistant_texts(recs)
         was_timeout = r.get("stderr") == "timeout" or r.get("timed_out")
         r["timed_out"] = bool(was_timeout)
@@ -78,9 +92,9 @@ def rescan(d, rows):
         n = harness.count_turns(recs)
         if n:
             r["num_turns"] = n
-        r["hits"] = harness.scan_records(recs, final)
-        r["hits_old_rule"] = harness.scan_records(recs, final, "old")
-        r["recognition"] = harness.scan_records(recs, final, "recognition")
+        r["hits"] = harness.scan_records(recs_all, final)
+        r["hits_old_rule"] = harness.scan_records(recs_all, final, "old")
+        r["recognition"] = harness.scan_records(recs_all, final, "recognition")
     return rows
 
 
@@ -95,8 +109,18 @@ def main():
     rng = random.Random(20261118)
     out = []
     P = out.append
+    infra_msgs = harness.infra_scan(rows)
     P("# OOLONG run %s" % run)
     P("")
+    if infra_msgs:
+        P("# INVALID RUN: the Bash tool failed to start in this run. Do not use these scores.")
+        P("")
+        P("The stop rule of the harness trips on the stored transcripts (main and subagent). A Bash error whose text does not start with `Exit code` is an infrastructure error. Rules: a unit with %d or more Bash calls and none started, or more than %d%% infrastructure errors in %d finished units." % (
+            harness.INFRA_UNIT_MIN_CALLS, int(harness.INFRA_RATE * 100), harness.INFRA_WINDOW))
+        P("")
+        for m in infra_msgs[:10]:
+            P("- " + m)
+        P("")
     P("- Model: %s. Claude Code %s. Window setting: %s. Bench commit %s, decision.json commit %s, Lossless Handoff commit %s." % (
         cfg["model"], cfg["claude_version"], cfg["window"], cfg["bench_commit"], cfg["decision_commit"], cfg["lh_commit"]))
     P("- Data: %s, split validation (trec_coarse is a validation task), Hugging Face revision %s, OOLONG repo commit %s." % (
@@ -163,7 +187,7 @@ def main():
     P("")
     P("## Scores")
     P("")
-    P("| Length | Arm | n raw | Raw mean [95% CI] | n clean (new rule) | Clean mean, new rule [95% CI] | n clean (old rule) | Clean mean, old rule [95% CI] | Cost/task | Wall s/task | Turns/task | Workflow calls | Agent calls (tasks with 1+) | llm_map calls (tasks with 1+) | Compactions | Timed out (scored) | Errors |")
+    P("| Length | Arm | n raw | Raw mean [95% CI] | n clean (new rule) | Clean mean, new rule [95% CI] | n clean (old rule) | Clean mean, old rule [95% CI] | Cost/task | Wall s/task | Turns/task | Workflow calls | Agent calls (tasks with 1+) | llm_map attempts / successes (tasks with 1+) | Compactions | Timed out (scored) | Errors |")
     P("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|")
     flags = []
     for ln in lengths:
@@ -182,11 +206,30 @@ def main():
                 flags.append("arm %s shows %d workflow calls at %s: the Workflow tool must be disallowed" % (arm, wf, LEN_LABEL.get(ln, ln)))
             lmc = sum(r.get("llm_map_calls", 0) for r in rs)
             lmt = sum(1 for r in rs if r.get("llm_map_calls", 0) > 0)
-            P("| %s | %s | %d | %s | %d | %s | %d | %s | $%.3f | %.0f | %.1f | %d | %d (%d) | %d (%d) | %d | %d (%d) | %d |" % (
+            lmok = sum(r.get("llm_map_ok_calls", 0) for r in rs)
+            if arm == "C" and rs and lmok == 0:
+                flags.append("arm C has 0 llm_map successes at %s (%d attempt(s)): the llm_map tool changed nothing at this length" % (LEN_LABEL.get(ln, ln), lmc))
+            P("| %s | %s | %d | %s | %d | %s | %d | %s | $%.3f | %.0f | %.1f | %d | %d (%d) | %d / %d (%d) | %d | %d (%d) | %d |" % (
                 LEN_LABEL.get(ln, ln), arm, len(raw), fmt(mean(raw), boot_ci(raw, draws, rng)), len(cln), fmt(mean(cln), boot_ci(cln, draws, rng)),
                 len(clo), fmt(mean(clo), boot_ci(clo, draws, rng)),
                 mean([task_cost(r) for r in rs]), mean([r["wall_s"] for r in rs]), mean([r["num_turns"] or 0 for r in rs]),
-                wf, sum(r["subagent_calls"] for r in rs), wft, lmc, lmt, sum(r["compactions"] for r in rs), nto, ntos, sum(1 for r in rs if r["is_error"])))
+                wf, sum(r["subagent_calls"] for r in rs), wft, lmc, lmok, lmt, sum(r["compactions"] for r in rs), nto, ntos, sum(1 for r in rs if r["is_error"])))
+    P("")
+    P("## Tool errors (main and subagent transcripts)")
+    P("")
+    P("A tool error is a tool result with `is_error`. Infrastructure errors are Bash errors whose text does not start with `Exit code` (the shell did not start); they must be 0. Denials are permission refusals (the tool worked).")
+    P("")
+    tools_seen = sorted({t for r in rows for t in (r.get("tool_errors") or {})})
+    P("| Length | Arm | Bash calls | Bash started | Infrastructure errors | Denials (permission_denials) | " + " | ".join("%s errors" % t for t in tools_seen) + " |")
+    P("|---|---|---|---|---|---|" + "---|" * len(tools_seen))
+    for ln in lengths:
+        for arm in arms + (["N"] if any(r["arm"] == "N" for r in rows) else []):
+            rs = [r for r in rows if r["arm"] == arm and r["length"] == ln]
+            if not rs:
+                continue
+            P("| %s | %s | %d | %d | %d | %d | %s |" % (LEN_LABEL.get(ln, ln), arm, sum(r.get("bash_calls", 0) for r in rs), sum(r.get("bash_started", 0) for r in rs),
+                                                       sum(r.get("bash_infra", 0) for r in rs), sum(len(r.get("permission_denials") or []) for r in rs),
+                                                       " | ".join(str(sum((r.get("tool_errors") or {}).get(t, 0) for r in rs)) for t in tools_seen)))
     P("")
     P("## Paired difference (same tasks, score of the arm minus score of A)")
     P("")
@@ -213,7 +256,9 @@ def main():
             comp = sum(r["compactions"] for r in rows if r["arm"] == "C")
             lmu = sum(1 for r in rows if r["arm"] == "C" and r.get("llm_map_calls", 0) > 0)
             lmn = sum(1 for r in rows if r["arm"] == "C")
-            P("- Arm C llm_map use rate: %d of %d tasks. At 0 the llm_map tool changed nothing in practice." % (lmu, lmn))
+            lmok = sum(r.get("llm_map_ok_calls", 0) for r in rows if r["arm"] == "C")
+            lmat = sum(r.get("llm_map_calls", 0) for r in rows if r["arm"] == "C")
+            P("- Arm C llm_map use rate: %d of %d tasks; %d attempt(s), %d success(es) (a success is a summary line with 1 or more ok items). At 0 the llm_map tool changed nothing in practice." % (lmu, lmn, lmat, lmok))
             P("- Arm C compactions: %d. At lengths under the compaction window, arm C equals arm A apart from the session-start text; with 0 compactions it tests only that text." % comp)
     P("- Timed out (scored): rows that hit the unit time limit; the number in brackets is how many of them held a labelled final answer in the last assistant text and were scored (marked `timed_out`). A killed session has no result, so its cost is the last cost-state record or 0 (a lower bound).")
     P("- Turns are assistant messages over the whole session (a background wake-up adds turns). The final answer is the last assistant text of the session.")

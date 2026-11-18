@@ -152,6 +152,38 @@ Guards.
 - Run id: `harness.py run` prints a line `run_id: <id>`. `run.sh` reads that line for its report step (it does not use `results/.last`, which parallel runs overwrite). `run.sh resume <id>` uses the id you gave.
 - Tests: `python3 test_harness.py` (size for a 1200-unit run under 64 KB, pre-flight failure, E2BIG stop, `run.sh` run id, Read allow list).
 
+## Silent-failure guards (review fixes of PR 21)
+
+The E2BIG fix removed one cause. These guards catch the whole class "a tool fails and the scores still look plausible".
+A Bash error whose text does not start with `Exit code` is an infrastructure error (for example "Could not start", E2BIG, "Argument list too long", a sandbox spawn error).
+A permission denial is not one: the tool worked and refused the command. A denial counts as "started".
+
+1. Stop rule, one unit. A unit with 3 or more Bash calls and none started stops the run (`Fatal`). The message goes to `state.json` (`error`) and to stderr.
+2. Stop rule, window. If more than 20 percent of the Bash calls in the last 10 finished units are infrastructure errors, the run stops. The window needs 10 Bash calls at least. It is kept in `state.json` (`bash_window`).
+3. First unit of each arm. Before the pool starts, the first unit of arm A, B and C runs alone. For it the unit rule is strict: 1 Bash call and none started stops the run. A broken arm costs one unit.
+4. Counts per row. Each row has `bash_calls`, `bash_started`, `bash_infra`, `bash_denied`, `infra_examples`, `tool_errors` (error count per tool name) and `permission_denials` (from the result event). Main and subagent transcripts are both counted.
+5. E2BIG markers: "E2BIG", "exceed the OS exec argument limit", "Argument list too long".
+6. Missing transcript. If the result exists but the main transcript is missing or empty, the run stops.
+7. Resume. `resume` refuses if `bench_commit`, the Claude Code version or the config record hash differs from the run. Start a new run then.
+8. Report. `report.py` derives the Bash counts again from the stored transcripts (main and `transcripts/<unit>/` subagent copies) with the same rules. If a rule trips, `summary.md` starts with an INVALID banner. A unit with two rows (after a resume) counts once: the last row.
+   The report has a table of tool errors per tool, and `llm_map` attempts and successes per arm and length (a success is a summary line with 1 or more ok items). A note names arm C at a length with 0 successes.
+9. Own temp folder. `CLAUDE_CODE_TMPDIR` points to `<unit folder>/.cctmp` (the variable is a string in the 2.1.326 binary). Claude Code puts its session files there (selfcheck shows the folder filled). The sandbox denies the session folders of other chats in the shared `/tmp/claude-<uid>` (pattern `/tmp/claude-<uid>/-*`). `selfcheck` puts a token in such a folder, shows that the unit cannot read it, and shows that a temp file can still be written and read back.
+   Limit, probed: Claude Code 2.1.326 sets `TMPDIR` of every sandboxed Bash call to `/tmp/claude-<uid>`. It ignores `CLAUDE_CODE_TMPDIR`, `CLAUDE_TMPDIR` and a `TMPDIR` in `env` for this. So the whole shared folder cannot be denied (the unit could not read back its own temp files), and a loose file directly in it stays readable. Also macOS `mktemp` without arguments uses `/var/folders/...`, which the sandbox blocks; `mktemp -p $TMPDIR` works.
+10. Pre-flight also checks the size of the parent environment plus the unit overrides (limit 256 KB; the macOS limit for arguments plus environment is 1 MiB).
+11. Sandbox `denyRead` also holds the git top level and every path of `git worktree list --porcelain` (gold copies of `tasks.json` live there). The own unit folder stays readable (`allowRead`).
+12. Disallowed in every arm: Workflow, WebSearch, WebFetch, and ScheduleWakeup, Monitor, CronCreate, CronDelete, CronList. Reason: background jobs and wake-ups keep `claude -p` alive after the answer, or end it before a result returns.
+13. Transcripts: subagent transcripts of each unit are copied to `results/<run>/transcripts/<unit>/`.
+14. `selfcheck` probes: a subagent (Task tool) tries to read a sibling folder with Read and Bash; the `-state` folder of a sibling unit; the shared temp token.
+
+Limits.
+- The rules see only what the transcripts show. A tool that fails in a way the model hides, or a unit that makes fewer than 3 Bash calls (after the first unit of its arm), is not caught by the unit rule.
+- The window rule needs 10 Bash calls. A small run (2 tasks) may stay under it. The report scan applies the same rule, so it has the same limit.
+- Denials count as "started". A run in which the model only meets denials is not stopped; the report shows the denial count per arm and length.
+- Known limit, not fixed here: `hooks/llm_map.py` puts the batch prompt in argv (no size cap). With the default batch of 100 and short OOLONG items it stays far below ARG_MAX.
+  Measured in run 20261118T153108: 49 llm_map calls, the longest `--prompt` text 1.1 KB, at most 3182 items per call; the longest context line in the 128K data is 263 characters.
+  So one batch prompt is under 100 x 263 + 1.1 KB, about 28 KB (macOS ARG_MAX is 1 MiB; Linux allows 128 KiB for one argument). A very long item, or a batch size far over 100, would break this.
+- Tests: `python3 test_harness.py` (22 cases, including the stop rule with stub transcripts on the main and the subagent path).
+
 ## Known limits
 
 - 30 paired tasks see only a gap of 0.15 or more. The pilot (2 tasks) proves the pipeline. It measures no gap.

@@ -14,7 +14,7 @@ It never touches ~/.claude settings or hooks, ~/.local/state/claude-handoffs, or
 Exit: 0 finished, 1 a unit failed, 2 usage error, 3 paused (budget reached; resume later).
 """
 import argparse, concurrent.futures, datetime, glob, hashlib, json, os, random, re, shutil, signal, subprocess
-import sys, tempfile, threading, time, uuid
+import functools, sys, tempfile, threading, time, uuid
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.realpath(os.path.join(HERE, "..", ".."))
@@ -37,9 +37,20 @@ LEN_NAMES = {"32K": 32768, "128K": 131072, "8K": 8192, "16K": 16384, "64K": 6553
 # then need no list of sibling folders, so the size of the settings does not grow with the number of units (E2BIG, run 20261118T160603).
 ALLOWED_TOOLS = "Write Edit Bash Task"
 # Run stops at once if a unit shows this text: every Bash call of the unit failed to start (see README, "E2BIG").
-E2BIG_MARKERS = ("E2BIG", "exceed the OS exec argument limit")
+E2BIG_MARKERS = ("E2BIG", "exceed the OS exec argument limit", "Argument list too long")
 PREFLIGHT_MAX_BYTES = 64 * 1024
-DISALLOWED_BASE = ["WebSearch", "WebFetch", "Workflow"]
+PREFLIGHT_MAX_ENV = 256 * 1024     # parent environment plus overrides; the macOS limit for arguments plus environment is 1 MiB
+# Same in every arm. WebSearch and WebFetch: no network. Workflow: it runs in the background (see above).
+# ScheduleWakeup, Monitor and the Cron tools start background jobs or wake-ups. Under `claude -p` they keep the session alive after
+# the answer (a unit once ran to the time limit) or end it before the result returns. So they are off in every arm.
+DISALLOWED_BASE = ["WebSearch", "WebFetch", "Workflow", "ScheduleWakeup", "Monitor", "CronCreate", "CronDelete", "CronList"]
+# Silent-failure guards (README, "Silent-failure guards"). A Bash error whose text does not start with "Exit code" is an infrastructure
+# error: the shell did not start. A permission denial is not one: the tool worked and refused the command.
+INFRA_UNIT_MIN_CALLS = 3           # a unit with this many Bash calls and none started stops the run
+INFRA_WINDOW = 10                  # the last units finished
+INFRA_WINDOW_MIN_CALLS = 10        # no rate check below this many Bash calls in the window (one error of two calls is noise)
+INFRA_RATE = 0.20                  # more than this share of infrastructure errors in the window stops the run
+DENIAL_PREFIXES = ("Permission to use", "Claude requested permissions", "This command requires approval", "The user doesn't want")
 WORKFLOW_LINE = "You may split the work across parallel subagents (Agent tool) if it helps; wait for all their results before your final answer."
 PROMPT_CORE = ("The file context.txt in the current folder holds a data set. Read it with your tools as needed. "
                "Do not use the network. Answer the question below about the data set.\n\n{question}\n\n"
@@ -52,6 +63,7 @@ LLM_MAP_SKILL_REL = os.path.join("skills", "llm-map", "SKILL.md")
 LLM_MAP_HOOK_REL = os.path.join("hooks", "llm_map.py")
 LLM_MAP_SKILL_PATHS = ("~/.claude/hooks/llm_map.py", "$HOME/.claude/hooks/llm_map.py")
 LLM_MAP_SUMMARY = re.compile(r"llm_map:[^\n]*?cost \$([0-9]+(?:\.[0-9]+)?)")
+LLM_MAP_OK = re.compile(r"llm_map: (\d+) items, (\d+) ok")
 DENY_BASH = ["curl", "wget", "pip", "pip3", "huggingface", "hf_hub", "load_dataset", "git clone", "urllib", "requests", "http.client", "urlretrieve"]
 # Contamination patterns, searched in the text the model wrote and in its tool inputs. Tool results are not searched:
 # they print lines of the context (for example "hair curl"), which are not evidence.
@@ -69,7 +81,7 @@ RECOGNITION_PATTERNS = [("TREC word", r"\btrec\b")]
 HIT_RULE_ID = "2026-11-18-recognition-split"
 # Bash tool time limit (ms), the same in every arm. Claude Code 2.1.326 reads both names (checked in the binary).
 BASH_TIMEOUT_MS = "600000"
-COMMON_ENV = ("CLAUDE_CODE_AUTO_COMPACT_WINDOW", "BASH_DEFAULT_TIMEOUT_MS", "BASH_MAX_TIMEOUT_MS")
+COMMON_ENV = ("CLAUDE_CODE_AUTO_COMPACT_WINDOW", "BASH_DEFAULT_TIMEOUT_MS", "BASH_MAX_TIMEOUT_MS", "CLAUDE_CODE_TMPDIR")
 FINAL_LINE = re.compile(r"^\W*(answer|label|user|date)\s*:\s*\S", re.I)
 
 
@@ -183,6 +195,26 @@ def deny_rules(cfg):
     return sorted(set(rules))
 
 
+@functools.lru_cache(maxsize=None)
+def repo_roots():
+    """The git top level of this checkout and every worktree path (gold copies of tasks.json live in them). Real paths."""
+    out = {os.path.realpath(sh(["git", "rev-parse", "--show-toplevel"], cwd=REPO) or REPO)}
+    for ln in sh(["git", "worktree", "list", "--porcelain"], cwd=REPO).splitlines():
+        if ln.startswith("worktree "):
+            out.add(os.path.realpath(ln[len("worktree "):]))
+    return tuple(sorted(out))
+
+
+def shared_tmp_dirs():
+    """denyRead patterns for the session folders in the shared Claude Code temp folder (/tmp/claude-<uid>/-<slug of a cwd>/...). Other
+    sessions keep their scratchpads and task output there. A unit keeps its own session files in CLAUDE_CODE_TMPDIR.
+    Not the whole shared folder: Claude Code 2.1.326 sets TMPDIR of every Bash call to /tmp/claude-<uid> (probed: it ignores
+    CLAUDE_CODE_TMPDIR and an own TMPDIR for this), so denying all of it would stop a unit from reading back its own temp files.
+    Limit: a loose file directly in /tmp/claude-<uid> (not in a session folder) stays readable."""
+    u = os.getuid()
+    return {os.path.join(os.path.realpath("/tmp/claude-%d" % u), "-*"), os.path.join(os.path.realpath(os.path.join(tempfile.gettempdir(), "claude-%d" % u)), "-*")}
+
+
 def project_settings(cfg, arm, sandbox_only=False, proj=None):
     """sandbox_only is for selfcheck: it drops the Bash deny words so that a curl really runs and the sandbox must stop it."""
     s = {}
@@ -192,14 +224,18 @@ def project_settings(cfg, arm, sandbox_only=False, proj=None):
     s["sandbox"] = {"enabled": True, "autoAllowBashIfSandboxed": True, "allowUnsandboxedCommands": False,
                     "network": {"allowedDomains": []}}
     if proj:   # Bash may read only its own folder: not the other task folders, the gold, the results or the transcripts
-        s["sandbox"]["filesystem"] = {"denyRead": sorted({cfg["work_base"], os.path.realpath(HERE), os.path.realpath(cfg["cache"]), PROJECTS}),
-                                      "allowRead": [proj]}
+        deny = {cfg["work_base"], os.path.realpath(HERE), os.path.realpath(cfg["cache"]), PROJECTS} | set(repo_roots()) | shared_tmp_dirs()
+        s["sandbox"]["filesystem"] = {"denyRead": sorted(deny), "allowRead": [proj]}
     return s
 
 
-def env_for(cfg, arm, statedir):
+def env_for(cfg, arm, statedir, proj=None):
+    """proj: the folder of the unit. CLAUDE_CODE_TMPDIR points inside it, so the unit does not use the shared /tmp/claude-<uid>
+    (the sandbox denies that folder). The variable exists in Claude Code 2.1.326 (strings of the binary; proved by selfcheck)."""
     env = {"CLAUDE_CODE_AUTO_COMPACT_WINDOW": str(cfg["window"]),
            "BASH_DEFAULT_TIMEOUT_MS": BASH_TIMEOUT_MS, "BASH_MAX_TIMEOUT_MS": BASH_TIMEOUT_MS}
+    if proj:
+        env["CLAUDE_CODE_TMPDIR"] = os.path.join(proj, ".cctmp")
     if arm == "C":
         env.update({"HANDOFF_STATE_DIR": statedir, "HANDOFF_SUMMARY_MODEL": cfg["model"], "RECALL_EMBED_URL": "http://127.0.0.1:9"})
     return env
@@ -209,7 +245,7 @@ def config_record(cfg, task, arm):
     """What this unit runs with. Paths that differ per folder are left out. Compared across arms by check_fairness."""
     s = project_settings(cfg, arm)
     core_arm = "A" if arm == "N" else arm
-    env = env_for(cfg, core_arm, "<state>")
+    env = env_for(cfg, core_arm, "<state>", "<proj>")
     disallowed = list(DISALLOWED_BASE)
     base_settings = {k: v for k, v in s.items() if k != "hooks"}
     return {
@@ -305,7 +341,7 @@ def scan_records(records, final_text="", rule="new"):
 def llm_map_stats(records):
     """llm_map calls: Bash tool calls whose command holds llm_map.py. Cost: summed from the summary lines in the tool results
     (`llm_map: ... cost $x`). The main session's total_cost_usd does not include these child calls."""
-    calls, costs = 0, []
+    calls, costs, oks = 0, [], []
     for r in records:
         msg = r.get("message") if isinstance(r, dict) else None
         if not isinstance(msg, dict) or not isinstance(msg.get("content"), list):
@@ -320,7 +356,10 @@ def llm_map_stats(records):
                 c = b.get("content")
                 txt = c if isinstance(c, str) else " ".join(x.get("text", "") for x in c if isinstance(x, dict)) if isinstance(c, list) else ""
                 costs += [float(m) for m in LLM_MAP_SUMMARY.findall(txt)]
-    return {"llm_map_calls": calls, "llm_map_cost_usd": round(sum(costs), 6), "llm_map_summaries": len(costs)}
+                oks += [int(k) for _n, k in LLM_MAP_OK.findall(txt)]
+    # calls = attempts. A success is a summary line with 1 or more ok items. A call that only failed or crashed is no success.
+    return {"llm_map_calls": calls, "llm_map_ok_calls": sum(1 for k in oks if k > 0), "llm_map_cost_usd": round(sum(costs), 6),
+            "llm_map_summaries": len(costs)}
 
 
 def assistant_texts(records):
@@ -374,6 +413,83 @@ def tool_counts(records):
     return n
 
 
+def result_text_of(block):
+    c = block.get("content")
+    if isinstance(c, str):
+        return c
+    if isinstance(c, list):
+        return " ".join(x.get("text", "") for x in c if isinstance(x, dict))
+    return ""
+
+
+def tool_error_stats(records):
+    """Over main and subagent records. errors: tool name -> number of tool results with is_error. bash: calls (tool_use), started (the
+    Bash tool answered: success, an "Exit code" failure or a permission denial), infra (an error that does not start with "Exit code"
+    and is no denial: the shell did not start), examples (first 3 infra texts)."""
+    names, errors = {}, {}
+    bash = {"calls": 0, "started": 0, "infra": 0, "denied": 0, "examples": []}
+    for r in records:
+        msg = r.get("message") if isinstance(r, dict) else None
+        if not isinstance(msg, dict) or not isinstance(msg.get("content"), list):
+            continue
+        for b in msg["content"]:
+            if not isinstance(b, dict):
+                continue
+            if r.get("type") == "assistant" and b.get("type") == "tool_use":
+                names[b.get("id")] = b.get("name")
+                if b.get("name") == "Bash":
+                    bash["calls"] += 1
+            elif r.get("type") == "user" and b.get("type") == "tool_result":
+                name = names.get(b.get("tool_use_id"))
+                err = bool(b.get("is_error"))
+                if err:
+                    errors[name or "?"] = errors.get(name or "?", 0) + 1
+                if name != "Bash":
+                    continue
+                txt = result_text_of(b).lstrip()
+                if err and txt.startswith(DENIAL_PREFIXES):
+                    bash["denied"] += 1
+                    bash["started"] += 1
+                elif err and not txt.startswith("Exit code"):
+                    bash["infra"] += 1
+                    if len(bash["examples"]) < 3:
+                        bash["examples"].append(txt[:160])
+                else:
+                    bash["started"] += 1
+    return errors, bash
+
+
+def infra_unit_trip(bash, min_calls=INFRA_UNIT_MIN_CALLS):
+    """Message if the unit had min_calls or more Bash calls and none started, else None."""
+    if bash["calls"] >= min_calls and bash["started"] == 0:
+        return "%d Bash calls, none started (infrastructure errors: %d; first: %s)" % (bash["calls"], bash["infra"], "; ".join(bash.get("examples", [])[:1]))
+    return None
+
+
+def infra_window_trip(window):
+    """window: (calls, started, infra) tuples of the last finished units. Message if more than INFRA_RATE of the Bash calls are infra errors."""
+    calls, infra = sum(w[0] for w in window), sum(w[2] for w in window)
+    if calls >= INFRA_WINDOW_MIN_CALLS and infra > INFRA_RATE * calls:
+        return "%d of %d Bash calls in the last %d units are infrastructure errors (limit %d%%)" % (infra, calls, len(window), int(INFRA_RATE * 100))
+    return None
+
+
+def infra_scan(rows):
+    """For the report: apply both rules again over stored rows (in finish order). Return a list of messages, empty if no rule trips."""
+    msgs, win = [], []
+    for r in rows:
+        b = {"calls": r.get("bash_calls", 0), "started": r.get("bash_started", 0), "infra": r.get("bash_infra", 0), "examples": r.get("infra_examples", [])}
+        m = infra_unit_trip(b)
+        if m:
+            msgs.append("unit %s: %s" % (r["unit"], m))
+        win = (win + [(b["calls"], b["started"], b["infra"])])[-INFRA_WINDOW:]
+        m = infra_window_trip(win)
+        if m:
+            msgs.append("at unit %s: %s" % (r["unit"], m))
+            win = []
+    return msgs
+
+
 # ------------------------------------------------------------------ one unit
 class Ctx:
     def __init__(self, run_dir, cfg):
@@ -394,6 +510,13 @@ class Ctx:
         with self.lock:
             with open(os.path.join(self.dir, fname), "a", encoding="utf-8") as f:
                 f.write(json.dumps(obj, sort_keys=True) + "\n")
+
+    def trip(self, msg):
+        """Stop the run for a silent-failure reason: the message goes to state.json (error) and stderr. Raises Fatal."""
+        with self.lock:
+            self.fatal = msg
+            self.stop.set()
+        raise Fatal(msg)
 
     def check_budget(self):
         b = self.cfg.get("budget_usd")
@@ -416,6 +539,10 @@ def e2big_hit(recs, result_text=""):
     return any(m in blob for m in E2BIG_MARKERS)
 
 
+def env_size(env):
+    return sum(len(k) + len(str(v)) + 2 for k, v in env.items())
+
+
 def preflight(cfg, arms):
     """Build the settings of the largest unit (longest folder path, every arm) and fail early if one is over the limit.
     Returns a list of problems, empty if all is fine. Each size is the serialized JSON in bytes."""
@@ -423,15 +550,18 @@ def preflight(cfg, arms):
     probs = []
     for arm in sorted(set("A" if x == "N" else x for x in arms)):
         s = project_settings(cfg, arm, proj=longest)
-        t = trusted_settings(cfg, arm, env_for(cfg, arm, longest))
+        t = trusted_settings(cfg, arm, env_for(cfg, arm, longest, longest[:-len("-state")]))
         sizes = {"project settings": len(json.dumps(s)), "sandbox profile": len(json.dumps(s["sandbox"])), "--settings argument": len(json.dumps(t))}
         for name, n in sizes.items():
             if n > PREFLIGHT_MAX_BYTES:
                 probs.append("arm %s: %s is %d bytes, over the limit of %d. Bash would fail with E2BIG." % (arm, name, n, PREFLIGHT_MAX_BYTES))
+        envn = env_size(os.environ) + env_size(env_for(cfg, arm, longest, longest[:-len("-state")]))
+        if envn > PREFLIGHT_MAX_ENV:
+            probs.append("arm %s: the environment of a unit is %d bytes, over the limit of %d. Bash would fail with E2BIG. Unset large variables." % (arm, envn, PREFLIGHT_MAX_ENV))
     return probs
 
 
-def run_unit(ctx, task, arm, rec):
+def run_unit(ctx, task, arm, rec, canary=False):
     cfg = ctx.cfg
     uname = "%s-%s" % (task["task_id"], arm)
     if ctx.state["units"].get(uname, {}).get("status") == "done":
@@ -458,7 +588,8 @@ def run_unit(ctx, task, arm, rec):
         with open(os.path.join(proj, "context.txt"), "w", encoding="utf-8") as f:
             f.write(task["context"])
     sid = str(uuid.uuid4())
-    env_over = env_for(cfg, core_arm, statedir)
+    env_over = env_for(cfg, core_arm, statedir, proj)
+    os.makedirs(env_over["CLAUDE_CODE_TMPDIR"], exist_ok=True)
     disallowed = list(DISALLOWED_BASE)
     cmd = ["claude", "-p", "--session-id", sid, "--model", cfg["model"], "--setting-sources", "project",
            "--settings", json.dumps(trusted_settings(cfg, core_arm, env_over)), "--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}',
@@ -533,6 +664,14 @@ def run_unit(ctx, task, arm, rec):
     os.makedirs(tdir, exist_ok=True)
     if os.path.isfile(main):
         shutil.copyfile(main, os.path.join(tdir, uname + ".jsonl"))
+    pdir = os.path.dirname(main)
+    for f in _all:             # subagent transcripts: transcripts/<unit>/<path below the project folder>, so a report can be derived again
+        if f != main:
+            dst = os.path.join(tdir, uname, os.path.relpath(f, pdir))
+            os.makedirs(os.path.dirname(dst), exist_ok=True)
+            shutil.copyfile(f, dst)
+    terrors, bash = tool_error_stats(recs)
+    denials = [{"tool": x.get("tool_name"), "input": json.dumps(x.get("tool_input"))[:300]} for x in ((o or {}).get("permission_denials") or []) if isinstance(x, dict)]
     usage = (o or {}).get("modelUsage") or {}
     row = {
         "unit": uname, "task_id": task["task_id"], "length": task["length"], "arm": arm, "answer_type": task["answer_type"],
@@ -540,7 +679,8 @@ def run_unit(ctx, task, arm, rec):
         "gold": sc["gold"], "full_answer": final_text, "result_text": result_text, "cost_usd": cost, "cost_known": cost_known, "wall_s": round(wall, 1),
         "num_turns": turns, "num_turns_result": (o or {}).get("num_turns"), "timed_out": timed_out, "workflow_calls": tc.get("Workflow", 0),
         "subagent_calls": tc.get("Task", 0) + tc.get("Agent", 0), "tool_counts": tc, "compactions": boundaries,
-        **lm, "hits": hits, "hits_old_rule": hits_old, "recognition": recog, "session_id": sid,
+        **lm, "permission_denials": denials, "tool_errors": terrors, "bash_calls": bash["calls"], "bash_started": bash["started"],
+        "bash_infra": bash["infra"], "bash_denied": bash["denied"], "infra_examples": bash["examples"], "hits": hits, "hits_old_rule": hits_old, "recognition": recog, "session_id": sid,
         "is_error": bool((o or {}).get("is_error")) or (o is None and not salvaged),
         "subtype": "timeout_answered" if salvaged else (o or {}).get("subtype"), "stderr": (err_txt or "")[:300] if o is None and not salvaged else "",
         "models": sorted(usage), "config": rec, "config_sha": sha(rec), "finished": now_iso(),
@@ -549,14 +689,34 @@ def run_unit(ctx, task, arm, rec):
     bad = e2big_hit(recs, result_text + " " + err_txt)
     for dd in (proj, statedir):      # the task folder is no longer needed; the transcript is copied
         shutil.rmtree(dd, ignore_errors=True)
-    with ctx.lock:
-        ctx.state["units"][uname] = {"status": "failed" if bad else ("done" if (o is not None or salvaged) else "failed"), "cost": cost}
-    ctx.save()
+    # Silent-failure guards, in this order. The first that trips stops the run.
+    fatal = None
     if bad:
-        ctx.fatal = ("unit %s: Bash could not start (E2BIG, the command line or environment is too large). Every Bash call fails, so the "
-                     "run stops now. Nothing more is spent. Check the size of the settings (README, E2BIG)." % uname)
-        ctx.stop.set()
-        raise Fatal(ctx.fatal)
+        fatal = ("unit %s: Bash could not start (E2BIG, the command line or environment is too large). Every Bash call fails, so the "
+                 "run stops now. Nothing more is spent. Check the size of the settings (README, E2BIG)." % uname)
+    elif o is not None and not main_recs:
+        fatal = ("unit %s: the result exists but the main transcript is missing or empty (%s). The harness cannot check the tool calls, "
+                 "so the run stops now. Check ~/.claude/projects and the disk." % (uname, main))
+    else:
+        fatal = infra_unit_trip(bash, 1 if canary else INFRA_UNIT_MIN_CALLS)
+        if fatal:
+            fatal = "unit %s%s: %s. The Bash tool does not work in this run, so the scores would be wrong. The run stops now." % (uname, " (first unit of its arm)" if canary else "", fatal)
+        else:
+            with ctx.lock:
+                win = ctx.state.setdefault("bash_window", [])
+                win.append([bash["calls"], bash["started"], bash["infra"]])
+                del win[:-INFRA_WINDOW]
+                m = infra_window_trip([tuple(w) for w in win])
+            if m:
+                fatal = "after unit %s: %s. The Bash tool fails too often in this run, so the scores would be wrong. The run stops now." % (uname, m)
+    with ctx.lock:
+        ctx.state["units"][uname] = {"status": "failed" if fatal else ("done" if (o is not None or salvaged) else "failed"), "cost": cost}
+    ctx.save()
+    if fatal:
+        try:
+            ctx.trip(fatal)
+        finally:
+            ctx.save()
     print("  %-22s score %.2f cost $%.3f %5.0fs turns %s wf %d hits %d llm_map %d ($%.3f)%s" % (
         uname, sc["score"], cost, wall, row["num_turns"], row["workflow_calls"], len(hits), lm["llm_map_calls"], lm["llm_map_cost_usd"],
         ("  TIMEOUT-SCORED" if salvaged else "  ERROR") if row["is_error"] or salvaged else ""), flush=True)
@@ -633,25 +793,41 @@ def execute(ctx, tasks, arms, recs):
     if pre:
         print("PRE-FLIGHT FAILED:\n  " + "\n  ".join(pre), file=sys.stderr)
         return 1
-    print("pre-flight: settings size is under %d bytes for every arm" % PREFLIGHT_MAX_BYTES)
+    print("pre-flight: settings size is under %d bytes and the environment under %d bytes for every arm" % (PREFLIGHT_MAX_BYTES, PREFLIGHT_MAX_ENV))
     code = 0
     ctx.state["status"] = "running"
     ctx.save()
     units = [(t, arm) for t in tasks for arm in arms]
+
+    def collect(f):
+        nonlocal code
+        try:
+            f.result()
+        except Pause:
+            pass
+        except Fatal as e:
+            print("FATAL:", e, file=sys.stderr)
+            code = 1
+        except Exception as e:
+            print("ERROR:", repr(e), file=sys.stderr)
+            code = 1
     try:
-        with concurrent.futures.ThreadPoolExecutor(max_workers=cfg["jobs"]) as ex:
-            futs = [ex.submit(run_unit, ctx, t, arm, recs[(t["task_id"], arm)]) for t, arm in units]
-            for f in futs:
-                try:
-                    f.result()
-                except Pause:
-                    pass
-                except Fatal as e:
-                    print("FATAL:", e, file=sys.stderr)
-                    code = 1
-                except Exception as e:
-                    print("ERROR:", repr(e), file=sys.stderr)
-                    code = 1
+        # First unit of each arm (A, B, C; not the control) runs alone, before the pool. The Bash rule is strict for it: one Bash call
+        # and none started stops the run. So a broken arm costs one unit, not a pool of them.
+        firsts = []
+        for arm in arms:
+            if arm != "N" and units:
+                firsts.append(next((t, a) for t, a in units if a == arm))
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+            for t, arm in firsts:
+                collect(ex.submit(run_unit, ctx, t, arm, recs[(t["task_id"], arm)], True))
+                if ctx.stop.is_set():
+                    break
+        if not ctx.stop.is_set():
+            with concurrent.futures.ThreadPoolExecutor(max_workers=cfg["jobs"]) as ex:
+                futs = [ex.submit(run_unit, ctx, t, arm, recs[(t["task_id"], arm)]) for t, arm in units]
+                for f in futs:
+                    collect(f)
     except KeyboardInterrupt:
         ctx.stop.set()
     undone = [u for t, arm in units for u in ["%s-%s" % (t["task_id"], arm)] if ctx.state["units"].get(u, {}).get("status") != "done"]
@@ -691,6 +867,27 @@ def cmd_run(a):
     return execute(Ctx(run_dir, cfg), tasks, arms, recs)
 
 
+def resume_problems(cfg, run_dir, recs):
+    """Why this run may not resume: another bench commit, another Claude Code version, or another config record than the stored one."""
+    probs = []
+    now = sh(["git", "rev-parse", "--short", "HEAD"], cwd=REPO)
+    if cfg.get("bench_commit") != now:
+        probs.append("bench_commit is %s in the run, %s now" % (cfg.get("bench_commit"), now))
+    ver = sh(["claude", "--version"])
+    if cfg.get("claude_version") != ver:
+        probs.append("claude_version is %r in the run, %r now" % (cfg.get("claude_version"), ver))
+    try:
+        stored = json.load(open(os.path.join(run_dir, "config_records.json"), encoding="utf-8"))
+    except (OSError, ValueError):
+        return probs + ["config_records.json is missing or unreadable"]
+    cur = json.loads(json.dumps({"%s|%s" % k: v for k, v in recs.items()}))
+    if sha(cur) != sha(stored):
+        keys = sorted({k for k in set(cur) | set(stored) if cur.get(k) != stored.get(k)})
+        fields = sorted({f for k in keys for f in set(cur.get(k) or {}) | set(stored.get(k) or {}) if (cur.get(k) or {}).get(f) != (stored.get(k) or {}).get(f)})
+        probs.append("the config record hash differs (%s now, %s stored); fields: %s" % (sha(cur), sha(stored), ", ".join(fields[:8]) or "units"))
+    return probs
+
+
 def cmd_resume(a):
     run_dir = os.path.join(RESULTS, a.run_id)
     if not os.path.isfile(os.path.join(run_dir, "config.json")):
@@ -701,8 +898,13 @@ def cmd_resume(a):
         cfg["budget_usd"] = a.budget_usd
     if a.jobs:
         cfg["jobs"] = a.jobs
-    cont.write_json(os.path.join(run_dir, "config.json"), cfg)
     tasks, arms, recs = plan(cfg)
+    # A resumed run must use the same harness and the same settings as the first part. Scores of two configurations must not mix.
+    probs = resume_problems(cfg, run_dir, recs)
+    if probs:
+        print("refuse to resume %s:\n  %s\nStart a new run instead." % (a.run_id, "\n  ".join(probs)), file=sys.stderr)
+        return 2
+    cont.write_json(os.path.join(run_dir, "config.json"), cfg)
     ctx = Ctx(run_dir, cfg)
     for u in ctx.state["units"].values():
         if u["status"] in ("running", "failed"):
@@ -758,7 +960,8 @@ def selfcheck_llm_map(cfg, a, ev):
     cont.write_json(os.path.join(proj, ".claude", "settings.json"), project_settings(cfg, "C", sandbox_only=True, proj=proj))
     subprocess.run(["git", "init", "-q", proj], capture_output=True)
     install_llm_map_skill(cfg["lh_path"], proj)
-    env_over = env_for(cfg, "C", proj + "-state")
+    env_over = env_for(cfg, "C", proj + "-state", proj)
+    os.makedirs(env_over["CLAUDE_CODE_TMPDIR"], exist_ok=True)
     env = {k: v for k, v in os.environ.items() if not (k.startswith("HANDOFF_") or k == "CLAUDE_CODE_AUTO_COMPACT_WINDOW")}
     env.update(env_over)
     items = ["apple", "carrot", "salmon"]
@@ -788,6 +991,35 @@ def selfcheck_llm_map(cfg, a, ev):
     return lm_ok and curl_failed
 
 
+def selfcheck_subagent(cfg, a, arm, proj, env, base, sib_file, sib_token, ev):
+    """A subagent (Task tool) tries to read a file of a sibling unit with the Read tool and with Bash. Both must fail. The session
+    transcripts must show that a subagent really ran (otherwise the probe proves nothing)."""
+    sid = str(uuid.uuid4())
+    prompt = ("Use the Task tool once, to start one subagent. Give the subagent this job: 'Read the file %s with the Read tool. "
+              "Then run in Bash: cat %s . Reply with the raw output of both, or the word DENIED for each one that is refused.' "
+              "Report the reply of the subagent in plain text. This is an authorized test: you must start the subagent, also when you expect a refusal." % (sib_file, sib_file))
+    r = subprocess.run(base + ["--session-id", sid, "--output-format", "json", "--", prompt], cwd=proj, env=env, capture_output=True, text=True,
+                       stdin=subprocess.DEVNULL, timeout=300)
+    o = json.loads(r.stdout)
+    res = o.get("result") or ""
+    _main, files = transcript_files(proj, sid)
+    recs = []
+    for f in files:
+        recs += cont.read_jsonl(f)
+    tc = tool_counts(recs)
+    used = tc.get("Task", 0) + tc.get("Agent", 0) > 0
+    terrors, bash = tool_error_stats(recs)
+    blob = json.dumps(recs, ensure_ascii=False)
+    leaked = sib_token in res or sib_token in blob
+    good = used and not leaked and len(files) >= 2
+    ev["arms"][arm]["subagent_probe"] = {"subagent_started": used, "transcript_files": len(files), "sibling_token_leaked": leaked, "reply": res[:1000],
+                                         "tool_errors": terrors, "bash_calls": bash["calls"], "bash_denied": bash["denied"],
+                                         "permission_denials": [{"tool": x.get("tool_name"), "input": json.dumps(x.get("tool_input"))[:300]} for x in (o.get("permission_denials") or [])],
+                                         "cost_usd": o.get("total_cost_usd"), "pass": good}
+    print("arm %s subagent probe: started %s, transcript files %d, sibling token leaked %s\n  reply: %s" % (arm, used, len(files), leaked, res.replace("\n", " | ")[:400]))
+    return good
+
+
 def cmd_selfcheck(a):
     """Live proof of the sandbox. For each arm: list the tools, run one curl from inside a task session (it must fail),
     and try to read a file in the gold cache (it must be denied). Stores evidence/sandbox-<time>.json."""
@@ -809,6 +1041,18 @@ def cmd_selfcheck(a):
     sib_file = os.path.join(sib_dir, "secret.txt")
     sib_token = "SIBTOKEN-" + uuid.uuid4().hex[:8]
     open(sib_file, "w").write(sib_token)
+    sib_state_dir = sib_dir + "-state"      # the -state folder of a sibling unit (arm C keeps the handoff state there)
+    os.makedirs(sib_state_dir, exist_ok=True)
+    sib_state_file = os.path.join(sib_state_dir, "secret.txt")
+    sib_state_token = "SIBSTATE-" + uuid.uuid4().hex[:8]
+    open(sib_state_file, "w").write(sib_state_token)
+    shared_tmp = "/tmp/claude-%d" % os.getuid()      # the shared Claude Code temp folder: the unit must not read it
+    os.makedirs(shared_tmp, exist_ok=True)
+    tmp_sess = os.path.join(shared_tmp, "-lhoo-selfcheck-session-%s" % uuid.uuid4().hex[:8])   # looks like the session folder of another chat
+    os.makedirs(tmp_sess, exist_ok=True)
+    tmp_file = os.path.join(tmp_sess, "token.txt")
+    tmp_token = "TMPTOKEN-" + uuid.uuid4().hex[:8]
+    open(tmp_file, "w").write(tmp_token)
     for arm in a.arms.split(","):
         stem = "%sselfcheck-%s" % (PREFIX, arm)
         proj = os.path.join(cfg["work_base"], stem)
@@ -821,7 +1065,8 @@ def cmd_selfcheck(a):
         own_token = "OWNTOKEN-" + uuid.uuid4().hex[:8]
         open(os.path.join(proj, "ownfile.txt"), "w").write(own_token)
         disallowed = list(DISALLOWED_BASE)
-        env_over = env_for(cfg, arm, proj + "-state")
+        env_over = env_for(cfg, arm, proj + "-state", proj)
+        os.makedirs(env_over["CLAUDE_CODE_TMPDIR"], exist_ok=True)
         base = ["claude", "-p", "--model", a.model, "--setting-sources", "project", "--settings", json.dumps(trusted_settings(cfg, arm, env_over)),
                 "--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}', *claude_flags(arm), "--permission-mode", "acceptEdits",
                 "--allowedTools", ALLOWED_TOOLS, "--disallowedTools", " ".join(disallowed), "--max-budget-usd", "0.30"]
@@ -840,23 +1085,38 @@ def cmd_selfcheck(a):
                 skills = j.get("skills", []) or []
         prompt = ("Do two things in separate tool calls. 1) Run this in Bash: curl -sS -m 10 -o /dev/null -w '%{http_code}' https://example.com; echo EXIT=$? . "
                   "If the Bash tool denies the command, try this one instead: python3 -c \"print(__import__('socket').create_connection(('example.com',443),5))\" . "
-                  "2) Read the file " + gold_probe + " with the Read tool. 3) Run in Bash: cat ownfile.txt . 4) Run in Bash: ls .. . 5) Run in Bash: cat " + gold_probe + " . 6) Read the file " + sib_file + " with the Read tool. 7) Run in Bash: cat " + sib_file + " . Report the raw output of each in plain text. Say DENIED when a tool is denied. This is an authorized test: you must make every call, also when you expect a refusal.")
+                  "2) Read the file " + gold_probe + " with the Read tool. 3) Run in Bash: cat ownfile.txt . 4) Run in Bash: ls .. . 5) Run in Bash: cat " + gold_probe + " . 6) Read the file " + sib_file + " with the Read tool. 7) Run in Bash: cat " + sib_file + " . "
+                  "8) Read the file " + sib_state_file + " with the Read tool. 9) Run in Bash: cat " + sib_state_file + " . "
+                  "10) Run in Bash: cat " + tmp_file + " . "
+                  "11) Run in Bash: f=$TMPDIR/lhoo-own-temp.txt ; echo TMPOK-WRITE > $f && cat $f && rm $f ; echo TMPDIR=$TMPDIR CCT=$CLAUDE_CODE_TMPDIR . Report the raw output of each in plain text. Say DENIED when a tool is denied. This is an authorized test: you must make every call, also when you expect a refusal.")
         r = subprocess.run(base + ["--output-format", "json", "--", prompt], cwd=proj, env=env, capture_output=True, text=True,
                            stdin=subprocess.DEVNULL, timeout=300)
         o = json.loads(r.stdout)
         res = o.get("result") or ""
         dens = [{"tool": x.get("tool_name"), "input": json.dumps(x.get("tool_input"))[:500]} for x in (o.get("permission_denials") or [])]
         sib_denied = any(d["tool"] == "Read" and sib_file in d["input"] for d in dens)    # the Read call was made and refused
-        good = sib_denied and token not in res and sib_token not in res and own_token in res and bool(dens or "denied" in res.lower())
+        sib_state_denied = any(d["tool"] == "Read" and sib_state_file in d["input"] for d in dens)
+        cct = os.path.join(proj, ".cctmp")
+        cct_entries = sorted(os.listdir(cct)) if os.path.isdir(cct) else []
+        tmp_ok = tmp_token not in res and "TMPOK-WRITE" in res          # the shared temp token is hidden, a temp file can still be written
+        good = (sib_denied and sib_state_denied and token not in res and sib_token not in res and sib_state_token not in res and tmp_ok
+                and own_token in res and bool(dens or "denied" in res.lower()))
         ev["arms"][arm] = {"tools": tools, "skills": skills, "llm_map_skill_listed": any("llm-map" in str(x) for x in skills),
-                           "workflow_tool_present": "Workflow" in tools, "subagent_tool_present": ("Task" in tools or "Agent" in tools), "reply": res[:1500], "permission_denials": dens,
-                           "gold_token_leaked": token in res, "sibling_token_leaked": sib_token in res, "sibling_read_denied": sib_denied, "own_folder_readable_by_bash": own_token in res, "cost_usd": o.get("total_cost_usd")}
-        ok = ok and good and "Workflow" not in tools and ("Task" in tools or "Agent" in tools)
+                           "workflow_tool_present": "Workflow" in tools, "subagent_tool_present": ("Task" in tools or "Agent" in tools), "reply": res[:6000], "permission_denials": dens,
+                           "gold_token_leaked": token in res, "sibling_token_leaked": sib_token in res, "sibling_read_denied": sib_denied,
+                           "sibling_state_token_leaked": sib_state_token in res, "sibling_state_read_denied": sib_state_denied,
+                           "shared_tmp_token_leaked": tmp_token in res, "temp_write_works": "TMPOK-WRITE" in res,
+                           "claude_code_tmpdir": cct, "claude_code_tmpdir_entries_after_run": cct_entries,
+                           "extra_tools_absent": not any(x in tools for x in DISALLOWED_BASE), "own_folder_readable_by_bash": own_token in res, "cost_usd": o.get("total_cost_usd")}
+        ok = ok and good and not any(x in tools for x in DISALLOWED_BASE) and bool(cct_entries) and ("Task" in tools or "Agent" in tools)
+        ok = selfcheck_subagent(cfg, a, arm, proj, env, base, sib_file, sib_token, ev) and ok
         if arm == "C":
             ok = ok and ev["arms"][arm]["llm_map_skill_listed"] and "Skill" in tools
         print("arm %s: Workflow tool present %s; denials %s; gold leaked %s\n  reply: %s" % (arm, "Workflow" in tools, [d["tool"] for d in dens], token in res, res.replace("\n", " | ")[:500]))
     os.remove(gold_probe)
+    shutil.rmtree(tmp_sess, ignore_errors=True)
     shutil.rmtree(sib_dir, ignore_errors=True)
+    shutil.rmtree(sib_state_dir, ignore_errors=True)
     # sandbox-only probe: no deny rule for curl, so a real curl must fail inside the sandbox
     proj = os.path.join(cfg["work_base"], PREFIX + "selfcheck-sbx")
     os.makedirs(os.path.join(proj, ".claude"), exist_ok=True)
