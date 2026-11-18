@@ -52,6 +52,14 @@ bench/continuity/run.sh slice --seeds 1 --arms A,B --n 1 --types R,X
 bench/continuity/run.sh cleanup
 ```
 
+## Generator v4 in short
+
+- S (exact string) and E (dead-end code) facts live in tool output only (a file that the agent reads). R, D, X, C are user-stated. Each item has 2 look-alike decoys.
+- 4 items for each scored type, planted in epochs 0, 1, 2 and 4. The probe at N asks about items of epochs up to N-1, oldest first. The JSONL has `epoch` and `age`.
+- Long user text (600 to 1,200 characters) in plant and filler turns.
+- The report has a headroom table (oracle minus arm A at N, 15 points minimum, from `thresholds.json`), an accuracy-by-age table, and prints "BENCHMARK TOO EASY at this N: no claim either way" when the headroom is too small.
+- Arm Z parse rate is info only. `SPEC.md` section 14 has the reasons.
+
 ## Seeds and thresholds
 
 - `seeds-dev.txt`: seeds for work on the harness. Never use them in a report.

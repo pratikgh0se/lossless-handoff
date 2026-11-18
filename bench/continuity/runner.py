@@ -231,7 +231,7 @@ class Session:
             if self.st["next_turn"] > 0 or not self.st["first"]:
                 # the folder is gone: the old session cannot continue. Start again from turn 0.
                 self.st.update({"next_turn": 0, "ckpt_i": 0, "boundaries": 0, "last_cost": 0.0, "done_forks": [],
-                                "f_planted": [], "missed": [], "first": True, "sid": None})
+                                "f_planted": [], "missed": [], "first": True, "sid": None, "events_done": 0, "fill_done": 0})
         self.proj = os.path.realpath(self.proj)
         if not self.st.get("sid"):
             self.st["sid"] = str(uuid.uuid4())
@@ -332,15 +332,22 @@ class Session:
         """Run one probe type. Fork of the main session (arms A, B, O) or a fresh session (arm Z). Write the result lines."""
         cfg, st, script = self.ctx.cfg, self.st, self.script
         marker = "PROBE-%d-%s-%d-%s" % (self.seed, self.arm, ckpt, ptype)
-        prompt = gen.probe_prompt(ptype, script, marker, ckpt)
+        if ptype == "F":
+            items = script["fresh"][str(ckpt)]
+        else:
+            em = None if self.arm == "Z" else need_epoch(cfg, self.arm, ckpt)
+            items = gen.select(script, ptype, em)      # planted so far, oldest first
+        if not items:
+            return      # nothing of this type is planted yet (M needs 3 epochs)
+        prompt = gen.probe_prompt(ptype, script, marker, ckpt, items=items)
         if fork_of:
             o = self.call(prompt, "fork", fork_of=fork_of)
         else:
             o = self.call(prompt, "z", sid=z_sid, first=True)
         raw = o.get("result") if isinstance(o.get("result"), str) else ""
         fsid = o.get("session_id")
-        items = script["fresh"][str(ckpt)] if ptype == "F" else script["items"][ptype]
         graded = grade.grade(ptype, items, raw)
+        epochs = {x["id"]: x.get("epoch") for x in items}
         used = grade.lookup_used(read_jsonl(self.transcript(fsid)), marker) if fsid else False
         if fsid:    # a later recall must not find this answer: delete the probe transcript
             ft = self.transcript(fsid)
@@ -355,6 +362,7 @@ class Session:
             self.ctx.append("results.jsonl", {
                 "run": cfg["run_id"], "gen_version": cfg["gen_version"], "seed": self.seed, "arm": self.arm,
                 "n_target": ckpt, "n_actual": n_actual, "precomputed_boundaries": pre, "type": ptype, "item": g["id"],
+                "epoch": epochs.get(g["id"]), "age": (ckpt - epochs[g["id"]] if self.arm in ("A", "B") and epochs.get(g["id"]) is not None else None),
                 "fork_sid": fsid, "raw": raw, "parsed": g["parsed"], "parse_ok": g["parse_ok"], "correct": g["correct"],
                 "used_lookup": used, "tokens": {"in": u.get("input_tokens"), "out": u.get("output_tokens")},
                 "fork_cost_usd": round(o["_delta"], 6), "claude_version": cfg["claude_version"], "model": cfg["model"],
@@ -370,78 +378,79 @@ def checkpoints(cfg, arm):
     return [(n, 0) for n in cfg["n"]]
 
 
-def next_m_plant(cfg, ss, b, fill_done):
-    """Which M decision (2 or 3) to plant now, else 0. Decision k goes in after compaction k-1.
-    Arm O never compacts, so it gets them on consecutive filler turns."""
-    st = ss.st
-    if "M" not in cfg["types"] or st["next_turn"] < len(ss.script["plant_turns"]):
-        return 0
-    for k in (2, 3):
-        if k in st.get("m_planted", []):
-            continue
-        ready = (fill_done >= k - 1) if ss.arm == "O" else (b >= k - 1)
-        return k if ready else 0
-    return 0
+def need_epoch(cfg, arm, target):
+    """Items of epochs up to this value must be planted before the probe."""
+    return (max(cfg["n"]) - 1) if arm == "O" else target - 1
+
+
+def event_ready(cfg, ss, ev, b):
+    """Plant event of epoch e goes in after compaction e. Arm O never compacts, so all its events go in at once."""
+    return ev["epoch"] <= (max(cfg["n"]) - 1 if ss.arm == "O" else b)
+
+
+def run_event(ctx, ss, ev):
+    for fname, content in (ev.get("files") or {}).items():
+        path = os.path.join(ss.proj, fname)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(content)
+    ss.turn(ev["prompt"])
+    for fname in ev.get("delete_after") or []:
+        try:
+            os.remove(os.path.join(ss.proj, fname))   # the fact must live in the transcript only
+        except OSError:
+            pass
 
 
 def run_main_session(ctx, ss):
     cfg, st, script = ctx.cfg, ss.st, ss.script
-    P = len(script["plant_turns"])
+    events = script["events"]
+    n0 = sum(1 for e in events if e["epoch"] == 0)
     cks = checkpoints(cfg, ss.arm)
     per = cfg["files_per_turn"]
     quiet = 0           # filler turns in a row with no new boundary
     while st["ckpt_i"] < len(cks):
         target, min_fill = cks[st["ckpt_i"]]
         b = st["boundaries"]
-        fill_done = max(0, st["next_turn"] - P)
+        ei = st.get("events_done", 0)
+        fill_done = st.get("fill_done", 0)
         if b > target:  # a turn added two compactions: this checkpoint is missed
             st["missed"].append({"target": target, "actual": b})
             st["ckpt_i"] += 1
             ctx.save()
             continue
-        if st["next_turn"] >= P and b == target and fill_done >= min_fill:
+        pending = ei < len(events) and events[ei]["epoch"] <= need_epoch(cfg, ss.arm, target)
+        if not pending and b == target and fill_done >= min_fill:
             checkpoint(ctx, ss, target)
             st["ckpt_i"] += 1
             ctx.save()
             continue
         ctx.check_budget()
-        mk = next_m_plant(cfg, ss, b, fill_done)
-        if mk:      # type M: plant decision k in its own epoch (does not use a plan turn)
-            ss.turn("Remember this for later work in this project. %s Reply only `ok`." % script["items"]["M"][0]["plants"][mk - 1])
-            st.setdefault("m_planted", []).append(mk)
+        if ei < len(events) and event_ready(cfg, ss, events[ei], b):
+            run_event(ctx, ss, events[ei])
+            st["events_done"] = ei + 1
+            st["next_turn"] += 1
+            if st["events_done"] == n0:      # all epoch-0 items are planted: no compaction may have happened yet
+                st["boundaries_at_plant_end"] = st["boundaries"]
             ctx.save()
             continue
-        t = st["next_turn"]
         before = b
-        if t < P:
-            pt = script["plant_turns"][t]
-            for fname, content in (pt.get("files") or {}).items():
-                with open(os.path.join(ss.proj, fname), "w", encoding="utf-8") as f:
-                    f.write(content)
-            ss.turn(pt["prompt"])
-            for fname in pt.get("delete_after") or []:
-                try:
-                    os.remove(os.path.join(ss.proj, fname))   # the key must live in the transcript only
-                except OSError:
-                    pass
-        else:
-            ft = t - P
-            names = []
-            for j in range(per):
-                name, text = gen.filler_file(ss.seed, ft, j, version=cfg["gen_version"])
-                if any(s in text for s in script["secrets"]):
-                    raise Fatal("a filler file holds an answer token")
-                with open(os.path.join(ss.proj, name), "w", encoding="utf-8") as f:
-                    f.write(text)
-                names.append(name)
-            ss.turn(gen.filler_prompt(script, ft, names))
-            quiet = quiet + 1 if st["boundaries"] == before else 0
-            if quiet >= MAX_NO_BOUNDARY:
-                st["status"], st["reason"] = "invalid", "no compaction in %d filler turns" % MAX_NO_BOUNDARY
-                return
-        st["next_turn"] = t + 1
-        if st["next_turn"] == P:      # every item is planted: record the compactions so far (must be 0)
-            st["boundaries_at_plant_end"] = st["boundaries"]
+        ft = fill_done
+        names = []
+        for j in range(per):
+            name, text = gen.filler_file(ss.seed, ft, j, version=cfg["gen_version"])
+            if any(x in text for x in script["secrets"]):
+                raise Fatal("a filler file holds an answer token")
+            with open(os.path.join(ss.proj, name), "w", encoding="utf-8") as f:
+                f.write(text)
+            names.append(name)
+        ss.turn(gen.filler_prompt(script, ft, names))
+        quiet = quiet + 1 if st["boundaries"] == before else 0
+        if quiet >= MAX_NO_BOUNDARY:
+            st["status"], st["reason"] = "invalid", "no compaction in %d filler turns" % MAX_NO_BOUNDARY
+            return
+        st["fill_done"] = ft + 1
+        st["next_turn"] += 1
         ctx.save()
 
 
@@ -460,8 +469,6 @@ def checkpoint(ctx, ss, target):
     for t in types:
         if "%d:%s" % (target, t) in st["done_forks"]:
             continue
-        if t == "M" and ss.arm != "O" and target < 3:
-            continue        # three epochs need at least 3 compactions
         ss.probe(t, target, fork_of=st["sid"])
     # leak check: no probe marker may appear in the main timeline
     prefix = "PROBE-%d-%s-" % (ss.seed, ss.arm)
@@ -556,7 +563,7 @@ def parse_common(ap):
     ap.add_argument("--lh-path", help="pinned checkout of Lossless Handoff for arm B (default: this repo)")
     ap.add_argument("--files-per-turn", type=int, help="filler files read in one turn (default from the window)")
     ap.add_argument("--o-window", type=int, default=None, help="window of arm O (default 200000)")
-    ap.add_argument("--oracle-turns", type=int, default=None, help="filler turns of arm O before its probes (default 6)")
+    ap.add_argument("--oracle-turns", type=int, default=None, help="filler turns of arm O before its probes (default 3)")
     ap.add_argument("--work-base", help="folder for the temp project folders (default: the temp dir)")
     ap.add_argument("--call-cap-usd", type=float, default=None, help="--max-budget-usd of each claude call (default 1.50)")
     ap.add_argument("--turn-timeout-s", type=int, default=None)
@@ -585,7 +592,7 @@ def build_cfg(kind, a):
         "lh_path": lh, "lh_commit": sh(["git", "rev-parse", "--short", "HEAD"], cwd=lh) + ("+dirty" if dirty else ""),
         "bench_commit": sh(["git", "rev-parse", "--short", "HEAD"], cwd=REPO),
         "files_per_turn": a.files_per_turn or max(1, min(12, round(window * 0.4 / 6000))),
-        "o_window": a.o_window or 200000, "oracle_turns": a.oracle_turns or 6,
+        "o_window": a.o_window or 200000, "oracle_turns": a.oracle_turns or 3,
         "work_base": work_base(a.work_base), "call_cap_usd": a.call_cap_usd or 1.50,
         "turn_timeout_s": a.turn_timeout_s or (420 if "haiku" in (a.model or k["model"]) else 900),
         "jobs": a.jobs or 2, "budget_usd": a.budget_usd, "claude_version": sh(["claude", "--version"]),
