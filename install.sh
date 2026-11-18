@@ -2,14 +2,15 @@
 # Lossless Handoff installer (formerly claude-handoff): copies the hooks and merges them into ~/.claude/settings.json.
 set -euo pipefail
 
-VERSION="0.10.0"
+VERSION="0.11.0"
 usage() {
   cat <<EOF
 Lossless Handoff $VERSION (formerly claude-handoff)
 Copies the hooks (three handoff hooks plus the recall command) into ~/.claude/hooks and merges them into ~/.claude/settings.json.
 Also sets up automatic recall indexing: an end-of-chat hook, an optional bge-m3 model pull, a nightly job (macOS) and a first index.
-Hooks 1.12.0 keep the chat store: handoff files live 365 days, and --keep-transcripts raises Claude Code's transcript retention.
+Hooks 1.13.0 keep the chat store: handoff files live 365 days, and --keep-transcripts raises Claude Code's transcript retention.
 The PreCompact hook also gives Claude Code guidance for its own summary.
+A SubagentStart hook gives each new subagent the standing rules of the project.
 It also installs the recall subagent (~/.claude/agents/recall.md), unless a file of that name that is not ours is there.
 
 Usage: ./install.sh [--dry-run] [--force] [--window N] [--no-window] [--yes] [--no-nightly] [--no-nudge] [--canary] [--managed-hooks] [--keep-transcripts[=DAYS]] [--version] [-h|--help]
@@ -144,6 +145,7 @@ want = {
         {"matcher": "startup", "hooks": led + [chk]},
         {"matcher": "resume", "hooks": led + [chk]}],
     "SessionEnd": [{"hooks": [{"type": "command", "command": "python3 %s/recall.py session-end" % h, "timeout": 5}]}],
+    "SubagentStart": [{"hooks": [{"type": "command", "command": pi + " --subagent-start", "timeout": 10}]}],
 }
 hooks = cur.setdefault("hooks", {})
 if not isinstance(hooks, dict):
@@ -233,6 +235,7 @@ post_led = ["python3 %s/postcompact-inject.py --ledger --part %d" % (hooks_dir, 
 start_led = "python3 %s/postcompact-inject.py --ledger" % hooks_dir  # pre-0.5.0 startup/resume form, migrated away
 sess_end = "python3 %s/recall.py session-end" % hooks_dir
 check_cmd = "python3 %s/postcompact-inject.py --check" % hooks_dir
+subagent_cmd = "python3 %s/postcompact-inject.py --subagent-start" % hooks_dir  # F58.c
 allow_rule = "Edit(~/.local/state/claude-handoffs/**)"
 recall_rule = "Bash(python3 ~/.claude/hooks/recall.py:*)"
 marker_path = os.path.join(hooks_dir, ".claude-handoff-install.json")
@@ -258,7 +261,7 @@ if not isinstance(hooks, dict):
     sys.exit("settings.json: hooks is not an object")
 
 # conflict check: the same hook scripts registered from a different path would run twice
-own_cmds = set([pre, nudge, start_led, check_cmd] + post + post_led)
+own_cmds = set([pre, nudge, start_led, check_cmd, subagent_cmd] + post + post_led)
 names = ("precompact-handoff.py", "postcompact-inject.py", "handoff-nudge.py")
 conflicts = []
 for ev, groups_ in hooks.items():
@@ -374,6 +377,15 @@ else:
     session_end_added = True
     changes.append("add SessionEnd recall hook (timeout 5)")
 
+groups = hooks.setdefault("SubagentStart", [])
+subagent_added = False
+if has_cmd(groups, subagent_cmd):
+    changes.append("SubagentStart rules hook already present")
+else:
+    groups.append({"hooks": [{"type": "command", "command": subagent_cmd, "timeout": 10}]})
+    subagent_added = True
+    changes.append("add SubagentStart rules hook (timeout 10)")
+
 # permission so the model can write its handoff without a prompt
 perms = data.setdefault("permissions", {})
 if not isinstance(perms, dict):
@@ -424,6 +436,8 @@ else:
 
 for c in changes:
     print("%ssettings: %s" % (tag, c))
+if subagent_added:
+    print("%sNew hook event (SubagentStart): restart open Claude Code sessions to load it." % tag)
 
 changed = json.dumps(data, sort_keys=True) != before
 if not changed:

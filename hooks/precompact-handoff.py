@@ -10,7 +10,7 @@ if os.environ.get("HANDOFF_HOOK_CHILD"):  # spawned by our own summary call: nev
     sys.exit(0)
 
 _T0 = time.monotonic()
-HOOK_VERSION = "1.12.0"
+HOOK_VERSION = "1.13.0"
 HOME = os.path.expanduser("~")
 HANDOFFS_DIR = (os.environ.get("HANDOFF_STATE_DIR") or "").strip() or os.path.join(HOME, ".local", "state", "claude-handoffs")
 HEALTH_FILE = os.path.join(HANDOFFS_DIR, "health.jsonl")
@@ -1405,6 +1405,10 @@ def append_health(line):
         with open(HEALTH_FILE, "rb") as f:
             lines = f.readlines()
         if len(lines) > HEALTH_MAX_LINES:
+            # F58.d: SubagentStart rows go first, so they never push compaction rows out
+            keep = [x for x in lines if b'"event": "subagent_start"' not in x and b'"event":"subagent_start"' not in x]
+            if len(keep) > HEALTH_MAX_LINES // 2:
+                lines = keep
             tmp = HEALTH_FILE + f".tmp{os.getpid()}"
             with open(tmp, "wb") as f:
                 f.writelines(lines[-HEALTH_MAX_LINES:])
@@ -1813,6 +1817,8 @@ def reconcile(days=7):
                     r = json.loads(line)
                 except Exception:
                     continue
+                if isinstance(r, dict) and r.get("event") == "subagent_start":
+                    continue  # F58.d: SubagentStart rows are not compactions
                 if isinstance(r, dict) and r.get("canary_child"):
                     canary_sids.add(str(r.get("sid") or ""))  # F45.c: canary sessions are excluded from every count
                 if not isinstance(r, dict) or r.get("canary_child") or r.get("trigger") == "canary":
@@ -2353,7 +2359,7 @@ def prove(days=7):
     pfile = os.path.join(HANDOFFS_DIR, "proofs.jsonl")
     proofs = _read_jsonl(pfile)
     have = {(str(p.get("receipt_ts")), str(p.get("sid")), str(p.get("agent_id") or "")): p for p in proofs}
-    health = _read_jsonl(HEALTH_FILE)
+    health = [r for r in _read_jsonl(HEALTH_FILE) if r.get("event") != "subagent_start"]  # F58.d
     new_rows = []
     for rc in receipts:
         k = _rkey(rc)

@@ -34,6 +34,7 @@ ours |= {"python3 %s/postcompact-inject.py --ledger --part %d" % (hooks_dir, n) 
 ours.add("python3 %s/postcompact-inject.py --ledger" % hooks_dir)
 ours.add("python3 %s/postcompact-inject.py" % hooks_dir)  # --part-less form
 ours.add("python3 %s/postcompact-inject.py --check" % hooks_dir)  # hooks 1.10.0 install check (startup, resume)
+ours.add("python3 %s/postcompact-inject.py --subagent-start" % hooks_dir)  # hooks 1.13.0 SubagentStart rules
 sess_end = "python3 %s/recall.py session-end" % hooks_dir
 allow_rule = "Edit(~/.local/state/claude-handoffs/**)"
 recall_rule = "Bash(python3 ~/.claude/hooks/recall.py:*)"
