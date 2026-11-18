@@ -449,11 +449,18 @@ def build(run_id, draws=None):
         mcost = sum(c["delta_usd"] for c in cl if c["kind"] == "turn")
         fk = [c["delta_usd"] for c in cl if c["kind"] in ("fork", "z")]
         tot = sum(c["delta_usd"] for c in cl)
-        cost_tab[a] = {"sessions": len(ss), "turns": turns, "compactions": comp, "main_cost": mcost, "forks": len(fk), "fork_cost": sum(fk), "total": tot}
+        cost_tab[a] = {"sessions": len(ss), "filler_no_read_turns": sum(s.get("filler_no_read_turns", 0) for s in ss),
+                       "filler_retries": sum(s.get("filler_retries", 0) for s in ss), "turns": turns, "compactions": comp, "main_cost": mcost, "forks": len(fk), "fork_cost": sum(fk), "total": tot}
         md.append("| %s | %d | %d | %d | %s | %s | %s | $%.4f |" % (
             names[a], len(ss), turns, comp, "%.1f" % (turns / comp) if comp else "n/a",
             "$%.4f" % (mcost / comp) if comp else "n/a", "$%.4f" % (sum(fk) / len(fk)) if fk else "n/a", tot))
     out["cost"] = cost_tab
+    md.append("\n### Filler turns without a Read call (gen v5 guard)\n")
+    md.append("| Arm | Sessions | Turns with no Read call | Retry turns sent |")
+    md.append("|---|---|---|---|")
+    for a, v in cost_tab.items():
+        md.append("| %s | %d | %d | %d |" % (names[a], v["sessions"], v["filler_no_read_turns"], v["filler_retries"]))
+    md.append("\nA filler turn with no Read call gets one retry turn before the quiet counter counts it. Runs of gen v4 or older have no data here (shown as 0).\n")
     md.append("\nThe plant turns (epoch 0) are part of the main-turn cost, so a short run overstates the cost per compaction. Predict a full run as: sessions x (plant cost + compactions x cost per compaction + forks x cost per fork). Take the numbers from a pilot at the same model and window.\n")
 
     # ---- head

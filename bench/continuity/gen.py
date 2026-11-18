@@ -8,7 +8,7 @@ Usage: gen.py --seed S [--out FILE]
 """
 import argparse, json, random, re, sys
 
-GEN_VERSION = "4"
+GEN_VERSION = "5"
 K = 3                                   # instances of each probe type for each seed
 TYPES = ["R", "D", "X", "S", "E", "U", "C", "M"]
 CHECKPOINTS = [1, 3, 10, 30]
@@ -258,10 +258,28 @@ def secrets(script):
 TOKEN_ANY = re.compile(r"[A-HJ-NP-Z2-9]{4}-\d{4}-[A-HJ-NP-Z2-9]{4}")
 
 
-def filler_file(seed, t, j, lines=330, version=GEN_VERSION):
-    """File j of filler turn t. About 20 KB, about 6k tokens. Random words and noise tokens."""
+FILLER_LINES_V4 = 330           # gen v4 and older: every filler file has this many lines
+FILLER_LINES_RANGE = (280, 380)  # gen v5: lines of a file, from the seed and the file name. Mean 330, as in v4.
+
+
+def filler_lines(seed, name, version=GEN_VERSION):
+    """Line count of a filler file. v4: fixed. v5: random in FILLER_LINES_RANGE, from the seed and the name only.
+    The count is in no file name and in no header, so a model has to read the file to know it."""
+    try:
+        old = int(version) < 5
+    except ValueError:
+        old = False
+    if old:
+        return FILLER_LINES_V4
+    return random.Random("%s:%s" % (seed, name)).randint(*FILLER_LINES_RANGE)
+
+
+def filler_file(seed, t, j, lines=None, version=GEN_VERSION):
+    """File j of filler turn t. About 20 KB, about 6k tokens on average. Random words and noise tokens."""
     r = random.Random("lhbench-filler-%s-%d-%d-%d" % (version, seed, t, j))
     name = "pad-%03d-%d.txt" % (t, j)
+    if lines is None:
+        lines = filler_lines(seed, name, version)
     out = []
     for ln in range(1, lines + 1):
         row = "%d.%04d " % (j + 1, ln) + " ".join(r.choice(WORDS) for _ in range(8))
