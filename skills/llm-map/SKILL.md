@@ -7,7 +7,7 @@ Use llm_map when a task needs an answer for each item of a large list. Do not re
 
 Steps:
 1. Write the items to a file with a short script. Write one item per line, or a `.jsonl` file with `id` and `text`.
-2. Run llm_map. A small model labels each item.
+2. Run llm_map as its own Bash call (no `cd`, no `&&` chain, no redirect in the same call). A small model labels each item.
 3. Read the `out` values of the output file with a script. Count or aggregate them there.
 
 Command:
@@ -20,9 +20,9 @@ Command:
 - The last line on stdout is a summary: items, ok, failed, batches and cost.
 - The exit code is 0 when all items have `out`, 3 when some failed, and 2 on a usage error.
 
-Example (the items are already in `items.txt`, one per line):
+Example (customer reviews are already in `reviews.txt`, one per line):
 ```
-python3 ~/.claude/hooks/llm_map.py --in items.txt --out labels.jsonl --prompt "Label each question as one of: ABBR, ENTY, DESC, HUM, LOC, NUM. Answer with the label only."
+python3 ~/.claude/hooks/llm_map.py --in reviews.txt --out labels.jsonl --prompt "Label each review as one of: positive, negative, mixed. Answer with the label only."
 python3 -c "import json,collections; print(collections.Counter(json.loads(l)['out'] for l in open('labels.jsonl')))"
 ```
 
