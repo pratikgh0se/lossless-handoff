@@ -940,3 +940,20 @@ ACs:
 - 267. After AC 261's run, `health.jsonl` has a row with `event` `subagent_start`, `rules` 2, `chars` > 0, `hook_version` `1.13.0`.
 
 Version: hooks 1.13.0; release 0.11.0. `HOOK_VERSION` in both hooks and `hook_version` in health rows and sidecars is `1.13.0`. This amends the version value in ACs 136, 150, 172, 180, 188 again.
+
+## F59 Find what a subagent read (2026-11-18)
+Why: the continuity benchmark (slice 4, run 20261118T122851-slice) planted a fact that only a subagent saw. Hooks 1.13.0 search found it, but the probe model still failed, for two reasons. (1) The question says "ledger key" and the file says "ledger-key", so a keyword search with a space finds nothing. (2) A search for the file name hits the subagent's Read call, and the value is in the next line (the tool result), which the hit line does not point to.
+
+**F59.a Loose separators.** In keyword search (all modes that run the keyword part), when `--fixed` is not set and the pattern holds only letters, digits, spaces, `-`, `_` and `.`, and holds at least one space, `-` or `_`, each run of spaces, `-` and `_` in the pattern matches any run of 1 or more spaces, `-` or `_` in the text. Other patterns keep their current meaning. With `--fixed`, the match stays exact (case-insensitive, as now).
+**F59.b Result pointer.** When a keyword hit line comes from a `tool_use` block, and a later line in the same transcript holds a `tool_result` with the same `tool_use_id`, the hit line ends with ` -> result <id>`, where `<id>` is that result's message id in the normal form (`<sid8>:<line>` or `<sid8>/<agent8>:<line>`). `open <id>` prints that result. If there is no matching result, the hit line is unchanged.
+**F59.c Text.** `agents/recall.md` and the injected recall line say: if a hit is a tool call that shows `-> result <id>`, open that id to see what the tool returned. The recall line gets at most one more short sentence.
+
+ACs (fixture: an in-scope session with one subagent transcript. The subagent has an assistant `tool_use` Read of `led-1.txt` on line L, and the `tool_result` with the same id on a later line R, which holds `ledger-key: AH8X-2548-MJ8D`):
+- 268. `search "ledger key"` finds the result line R hit (its text holds `AH8X-2548-MJ8D`).
+- 269. `search "ledger key" --fixed` finds no hit with `AH8X-2548-MJ8D`.
+- 270. `search "led-1.txt"` shows the line L hit, and that hit line ends with ` -> result <sid8>/<agent8>:R`.
+- 271. `open <sid8>/<agent8>:R` (the id from AC 270) prints text that holds `AH8X-2548-MJ8D`.
+- 272. A regex pattern such as `ledger.key` and a pattern with a `|` keep their current meaning (the `ledger.key` regex finds R; a pattern `zzz|ledger-key` finds R).
+- 273. The installed `recall.md` and the SessionStart `compact` recall line both hold the text `-> result`.
+
+Version: hooks 1.13.1; release 0.11.1. `HOOK_VERSION` in both hooks and `hook_version` in health rows and sidecars is `1.13.1`. This amends the version value in ACs 136, 150, 172, 180, 188 and 267 again.
