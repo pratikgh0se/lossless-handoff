@@ -107,6 +107,14 @@ if ws is not None:
         if not env:
             del data["env"]
 
+# F52.c: never lower cleanupPeriodDays (a lower value deletes chats); only tell the user
+raised = marker.get("cleanup_raised_to")
+if isinstance(raised, int) and not isinstance(raised, bool):
+    now_v = data.get("cleanupPeriodDays")
+    if isinstance(now_v, bool) or not isinstance(now_v, int):
+        now_v = raised
+    print("cleanupPeriodDays was left at %d; lower it yourself if you want." % now_v)
+
 if json.dumps(data, sort_keys=True) == before:
     print("%ssettings: no change needed" % tag)
 elif not dry:
@@ -148,6 +156,7 @@ if [ -f "$HOOKS_DIR/.claude-handoff-install.json" ] && grep -q managed_settings_
     *) MS_SYS="/etc/claude-code/managed-settings.json" ;;
   esac
   [ -n "${HANDOFF_MANAGED_SETTINGS_PATH:-}" ] && MS_SYS="$HANDOFF_MANAGED_SETTINGS_PATH"
+  [ -n "${LOSSLESS_HANDOFF_MANAGED_SETTINGS:-}" ] && MS_SYS="$LOSSLESS_HANDOFF_MANAGED_SETTINGS"
   if [ -f "$MS_SYS" ]; then
     echo "Managed settings: $MS_SYS may still hold the handoff hook entries. This script never uses sudo; edit that file yourself (or remove it if it holds nothing else)."
   fi

@@ -1,0 +1,528 @@
+test_ac218_managed_settings_branch (test_f52_store.Check.test_ac218_managed_settings_branch) ... skipped "the spec defines no test override for the managed settings path (/Library/Application Support/ClaudeCode/managed-settings.json), so the managed branch of F52.a and the installer rule 'do not override a managed value' cannot be tested safely"
+test_ac218_value_30 (test_f52_store.Check.test_ac218_value_30) ... FAIL
+test_ac219_no_key (test_f52_store.Check.test_ac219_no_key) ... FAIL
+test_ac219_no_settings_file (test_f52_store.Check.test_ac219_no_settings_file) ... FAIL
+test_ac220_partner_90_silent_but_30_warns (test_f52_store.Check.test_ac220_partner_90_silent_but_30_warns) ... FAIL
+test_ac220_value_365 (test_f52_store.Check.test_ac220_value_365) ... ok
+test_ac220_value_89_warns (test_f52_store.Check.test_ac220_value_89_warns) ... FAIL
+test_ac220_value_90 (test_f52_store.Check.test_ac220_value_90) ... ok
+test_ac221_invalid_json (test_f52_store.Check.test_ac221_invalid_json) ... FAIL
+test_ac221_value_negative (test_f52_store.Check.test_ac221_value_negative) ... FAIL
+test_ac221_value_string (test_f52_store.Check.test_ac221_value_string) ... FAIL
+test_ac222_custom_days_raises (test_f52_store.Installer.test_ac222_custom_days_raises) ... FAIL
+test_ac222_raises_to_365_and_is_idempotent (test_f52_store.Installer.test_ac222_raises_to_365_and_is_idempotent) ... FAIL
+test_ac222_sets_value_when_key_missing (test_f52_store.Installer.test_ac222_sets_value_when_key_missing) ... FAIL
+test_ac223_never_lowers (test_f52_store.Installer.test_ac223_never_lowers) ... FAIL
+test_ac224_days_below_90 (test_f52_store.Installer.test_ac224_days_below_90) ... ok
+test_ac224_days_not_integer (test_f52_store.Installer.test_ac224_days_not_integer) ... ok
+test_ac224_partner_valid_value_works_in_same_setup (test_f52_store.Installer.test_ac224_partner_valid_value_works_in_same_setup) ... FAIL
+test_ac225_dry_run (test_f52_store.Installer.test_ac225_dry_run) ... FAIL
+test_ac226_no_warning_when_value_is_high (test_f52_store.Installer.test_ac226_no_warning_when_value_is_high) ... ok
+test_ac226_non_interactive_no_flag (test_f52_store.Installer.test_ac226_non_interactive_no_flag) ... FAIL
+test_ac227_uninstall_keeps_value (test_f52_store.Installer.test_ac227_uninstall_keeps_value) ... FAIL
+test_ac227_uninstall_silent_when_installer_did_not_raise (test_f52_store.Installer.test_ac227_uninstall_silent_when_installer_did_not_raise) ... ok
+test_ac228_custom_value (test_f52_store.Retention.test_ac228_custom_value) ... ok
+test_ac228_default_retention (test_f52_store.Retention.test_ac228_default_retention) ... FAIL
+test_ac228_degraded_and_health_json_keep_14_day_rule (test_f52_store.Retention.test_ac228_degraded_and_health_json_keep_14_day_rule) ... ok
+test_ac228_invalid_value_counts_as_365 (test_f52_store.Retention.test_ac228_invalid_value_counts_as_365) ... FAIL
+test_ac228_pending_json_keeps_14_day_rule (test_f52_store.Retention.test_ac228_pending_json_keeps_14_day_rule) ... ok
+test_ac228_pending_json_removed_even_with_retention_zero (test_f52_store.Retention.test_ac228_pending_json_removed_even_with_retention_zero) ... ok
+test_ac228_projects_folder_untouched (test_f52_store.Retention.test_ac228_projects_folder_untouched) ... ok
+test_ac228_zero_keeps_forever (test_f52_store.Retention.test_ac228_zero_keeps_forever) ... FAIL
+test_ac229_auto_prints_block (test_f53_steer.Steer.test_ac229_auto_prints_block) ... FAIL
+test_ac229_block_printed_once (test_f53_steer.Steer.test_ac229_block_printed_once) ... FAIL
+test_ac230_custom_instructions_still_print_block (test_f53_steer.Steer.test_ac230_custom_instructions_still_print_block) ... FAIL
+test_ac230_partner_block_printed_once_for_custom_and_auto (test_f53_steer.Steer.test_ac230_partner_block_printed_once_for_custom_and_auto) ... FAIL
+test_ac231_empty_custom_instructions (test_f53_steer.Steer.test_ac231_empty_custom_instructions) ... FAIL
+test_ac232_off_switch (test_f53_steer.Steer.test_ac232_off_switch) ... ok
+test_ac232_partner_default_prints_block_in_same_setup (test_f53_steer.Steer.test_ac232_partner_default_prints_block_in_same_setup) ... FAIL
+test_ac233_cli_modes_print_no_guidance (test_f53_steer.Steer.test_ac233_cli_modes_print_no_guidance) ... ok
+test_ac233_partner_precompact_prints_block_in_same_home (test_f53_steer.Steer.test_ac233_partner_precompact_prints_block_in_same_home) ... FAIL
+test_ac234_subagent_prints_block (test_f53_steer.Steer.test_ac234_subagent_prints_block) ... FAIL
+test_ac235_health_row_off (test_f53_steer.Steer.test_ac235_health_row_off) ... ERROR
+test_ac235_health_row_printed (test_f53_steer.Steer.test_ac235_health_row_printed) ... ERROR
+test_ac235_health_row_printed_with_custom_instructions (test_f53_steer.Steer.test_ac235_health_row_printed_with_custom_instructions) ... ERROR
+test_ac235_subagent_row_printed (test_f53_steer.Steer.test_ac235_subagent_row_printed) ... ERROR
+
+======================================================================
+ERROR: test_ac235_health_row_off (test_f53_steer.Steer.test_ac235_health_row_off)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f53_steer.py", line 122, in test_ac235_health_row_off
+    self.assertEqual(self.health()["steer"], "off")
+                     ~~~~~~~~~~~~~^^^^^^^^^
+KeyError: 'steer'
+
+======================================================================
+ERROR: test_ac235_health_row_printed (test_f53_steer.Steer.test_ac235_health_row_printed)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f53_steer.py", line 112, in test_ac235_health_row_printed
+    self.assertEqual(self.health()["steer"], "printed")
+                     ~~~~~~~~~~~~~^^^^^^^^^
+KeyError: 'steer'
+
+======================================================================
+ERROR: test_ac235_health_row_printed_with_custom_instructions (test_f53_steer.Steer.test_ac235_health_row_printed_with_custom_instructions)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f53_steer.py", line 118, in test_ac235_health_row_printed_with_custom_instructions
+    self.assertEqual(self.health()["steer"], "printed")
+                     ~~~~~~~~~~~~~^^^^^^^^^
+KeyError: 'steer'
+
+======================================================================
+ERROR: test_ac235_subagent_row_printed (test_f53_steer.Steer.test_ac235_subagent_row_printed)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f53_steer.py", line 126, in test_ac235_subagent_row_printed
+    self.assertEqual(self.health()["steer"], "printed")
+                     ~~~~~~~~~~~~~^^^^^^^^^
+KeyError: 'steer'
+
+======================================================================
+FAIL: test_ac218_value_30 (test_f52_store.Check.test_ac218_value_30)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f52_store.py", line 94, in test_ac218_value_30
+    self.assert_warns(30)
+    ~~~~~~~~~~~~~~~~~^^^^
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f52_store.py", line 87, in assert_warns
+    self.assertEqual([l for l in lines if l.startswith(MARK)], [line(n)], out)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: Lists differ: [] != ['HANDOFF CHECK: Claude Code deletes chat [172 chars]ts.']
+
+Second list contains 1 additional elements.
+First extra element 0:
+'HANDOFF CHECK: Claude Code deletes chat transcripts after 30 days (cleanupPeriodDays), so recall loses older messages. Set "cleanupPeriodDays": 365 in ~/.claude/settings.json, or run ./install.sh --keep-transcripts.'
+
+- []
++ ['HANDOFF CHECK: Claude Code deletes chat transcripts after 30 days '
++  '(cleanupPeriodDays), so recall loses older messages. Set '
++  '"cleanupPeriodDays": 365 in ~/.claude/settings.json, or run ./install.sh '
++  '--keep-transcripts.'] : HANDOFF CHECK: no PreCompact hook runs precompact-handoff.py; no SessionStart compact hook runs postcompact-inject.py; hook file missing: precompact-handoff.py; hook file missing: postcompact-inject.py. Run the installer again, then restart Claude Code.
+
+
+======================================================================
+FAIL: test_ac219_no_key (test_f52_store.Check.test_ac219_no_key)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f52_store.py", line 98, in test_ac219_no_key
+    self.assert_warns(30)
+    ~~~~~~~~~~~~~~~~~^^^^
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f52_store.py", line 87, in assert_warns
+    self.assertEqual([l for l in lines if l.startswith(MARK)], [line(n)], out)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: Lists differ: [] != ['HANDOFF CHECK: Claude Code deletes chat [172 chars]ts.']
+
+Second list contains 1 additional elements.
+First extra element 0:
+'HANDOFF CHECK: Claude Code deletes chat transcripts after 30 days (cleanupPeriodDays), so recall loses older messages. Set "cleanupPeriodDays": 365 in ~/.claude/settings.json, or run ./install.sh --keep-transcripts.'
+
+- []
++ ['HANDOFF CHECK: Claude Code deletes chat transcripts after 30 days '
++  '(cleanupPeriodDays), so recall loses older messages. Set '
++  '"cleanupPeriodDays": 365 in ~/.claude/settings.json, or run ./install.sh '
++  '--keep-transcripts.'] : HANDOFF CHECK: no PreCompact hook runs precompact-handoff.py; no SessionStart compact hook runs postcompact-inject.py; hook file missing: precompact-handoff.py; hook file missing: postcompact-inject.py. Run the installer again, then restart Claude Code.
+
+
+======================================================================
+FAIL: test_ac219_no_settings_file (test_f52_store.Check.test_ac219_no_settings_file)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f52_store.py", line 102, in test_ac219_no_settings_file
+    self.assert_warns(30)
+    ~~~~~~~~~~~~~~~~~^^^^
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f52_store.py", line 87, in assert_warns
+    self.assertEqual([l for l in lines if l.startswith(MARK)], [line(n)], out)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: Lists differ: [] != ['HANDOFF CHECK: Claude Code deletes chat [172 chars]ts.']
+
+Second list contains 1 additional elements.
+First extra element 0:
+'HANDOFF CHECK: Claude Code deletes chat transcripts after 30 days (cleanupPeriodDays), so recall loses older messages. Set "cleanupPeriodDays": 365 in ~/.claude/settings.json, or run ./install.sh --keep-transcripts.'
+
+- []
++ ['HANDOFF CHECK: Claude Code deletes chat transcripts after 30 days '
++  '(cleanupPeriodDays), so recall loses older messages. Set '
++  '"cleanupPeriodDays": 365 in ~/.claude/settings.json, or run ./install.sh '
++  '--keep-transcripts.'] : HANDOFF CHECK: settings.json unreadable; hook file missing: precompact-handoff.py; hook file missing: postcompact-inject.py. Run the installer again, then restart Claude Code.
+
+
+======================================================================
+FAIL: test_ac220_partner_90_silent_but_30_warns (test_f52_store.Check.test_ac220_partner_90_silent_but_30_warns)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f52_store.py", line 117, in test_ac220_partner_90_silent_but_30_warns
+    self.assert_warns(30)
+    ~~~~~~~~~~~~~~~~~^^^^
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f52_store.py", line 87, in assert_warns
+    self.assertEqual([l for l in lines if l.startswith(MARK)], [line(n)], out)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: Lists differ: [] != ['HANDOFF CHECK: Claude Code deletes chat [172 chars]ts.']
+
+Second list contains 1 additional elements.
+First extra element 0:
+'HANDOFF CHECK: Claude Code deletes chat transcripts after 30 days (cleanupPeriodDays), so recall loses older messages. Set "cleanupPeriodDays": 365 in ~/.claude/settings.json, or run ./install.sh --keep-transcripts.'
+
+- []
++ ['HANDOFF CHECK: Claude Code deletes chat transcripts after 30 days '
++  '(cleanupPeriodDays), so recall loses older messages. Set '
++  '"cleanupPeriodDays": 365 in ~/.claude/settings.json, or run ./install.sh '
++  '--keep-transcripts.'] : HANDOFF CHECK: no PreCompact hook runs precompact-handoff.py; no SessionStart compact hook runs postcompact-inject.py; hook file missing: precompact-handoff.py; hook file missing: postcompact-inject.py. Run the installer again, then restart Claude Code.
+
+
+======================================================================
+FAIL: test_ac220_value_89_warns (test_f52_store.Check.test_ac220_value_89_warns)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f52_store.py", line 122, in test_ac220_value_89_warns
+    self.assert_warns(89)
+    ~~~~~~~~~~~~~~~~~^^^^
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f52_store.py", line 87, in assert_warns
+    self.assertEqual([l for l in lines if l.startswith(MARK)], [line(n)], out)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: Lists differ: [] != ['HANDOFF CHECK: Claude Code deletes chat [172 chars]ts.']
+
+Second list contains 1 additional elements.
+First extra element 0:
+'HANDOFF CHECK: Claude Code deletes chat transcripts after 89 days (cleanupPeriodDays), so recall loses older messages. Set "cleanupPeriodDays": 365 in ~/.claude/settings.json, or run ./install.sh --keep-transcripts.'
+
+- []
++ ['HANDOFF CHECK: Claude Code deletes chat transcripts after 89 days '
++  '(cleanupPeriodDays), so recall loses older messages. Set '
++  '"cleanupPeriodDays": 365 in ~/.claude/settings.json, or run ./install.sh '
++  '--keep-transcripts.'] : HANDOFF CHECK: no PreCompact hook runs precompact-handoff.py; no SessionStart compact hook runs postcompact-inject.py; hook file missing: precompact-handoff.py; hook file missing: postcompact-inject.py. Run the installer again, then restart Claude Code.
+
+
+======================================================================
+FAIL: test_ac221_invalid_json (test_f52_store.Check.test_ac221_invalid_json)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f52_store.py", line 134, in test_ac221_invalid_json
+    self.assert_warns(30)
+    ~~~~~~~~~~~~~~~~~^^^^
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f52_store.py", line 87, in assert_warns
+    self.assertEqual([l for l in lines if l.startswith(MARK)], [line(n)], out)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: Lists differ: [] != ['HANDOFF CHECK: Claude Code deletes chat [172 chars]ts.']
+
+Second list contains 1 additional elements.
+First extra element 0:
+'HANDOFF CHECK: Claude Code deletes chat transcripts after 30 days (cleanupPeriodDays), so recall loses older messages. Set "cleanupPeriodDays": 365 in ~/.claude/settings.json, or run ./install.sh --keep-transcripts.'
+
+- []
++ ['HANDOFF CHECK: Claude Code deletes chat transcripts after 30 days '
++  '(cleanupPeriodDays), so recall loses older messages. Set '
++  '"cleanupPeriodDays": 365 in ~/.claude/settings.json, or run ./install.sh '
++  '--keep-transcripts.'] : HANDOFF CHECK: settings.json unreadable; hook file missing: precompact-handoff.py; hook file missing: postcompact-inject.py. Run the installer again, then restart Claude Code.
+
+
+======================================================================
+FAIL: test_ac221_value_negative (test_f52_store.Check.test_ac221_value_negative)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f52_store.py", line 130, in test_ac221_value_negative
+    self.assert_warns(30)
+    ~~~~~~~~~~~~~~~~~^^^^
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f52_store.py", line 87, in assert_warns
+    self.assertEqual([l for l in lines if l.startswith(MARK)], [line(n)], out)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: Lists differ: [] != ['HANDOFF CHECK: Claude Code deletes chat [172 chars]ts.']
+
+Second list contains 1 additional elements.
+First extra element 0:
+'HANDOFF CHECK: Claude Code deletes chat transcripts after 30 days (cleanupPeriodDays), so recall loses older messages. Set "cleanupPeriodDays": 365 in ~/.claude/settings.json, or run ./install.sh --keep-transcripts.'
+
+- []
++ ['HANDOFF CHECK: Claude Code deletes chat transcripts after 30 days '
++  '(cleanupPeriodDays), so recall loses older messages. Set '
++  '"cleanupPeriodDays": 365 in ~/.claude/settings.json, or run ./install.sh '
++  '--keep-transcripts.'] : HANDOFF CHECK: no PreCompact hook runs precompact-handoff.py; no SessionStart compact hook runs postcompact-inject.py; hook file missing: precompact-handoff.py; hook file missing: postcompact-inject.py. Run the installer again, then restart Claude Code.
+
+
+======================================================================
+FAIL: test_ac221_value_string (test_f52_store.Check.test_ac221_value_string)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f52_store.py", line 126, in test_ac221_value_string
+    self.assert_warns(30)
+    ~~~~~~~~~~~~~~~~~^^^^
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f52_store.py", line 87, in assert_warns
+    self.assertEqual([l for l in lines if l.startswith(MARK)], [line(n)], out)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: Lists differ: [] != ['HANDOFF CHECK: Claude Code deletes chat [172 chars]ts.']
+
+Second list contains 1 additional elements.
+First extra element 0:
+'HANDOFF CHECK: Claude Code deletes chat transcripts after 30 days (cleanupPeriodDays), so recall loses older messages. Set "cleanupPeriodDays": 365 in ~/.claude/settings.json, or run ./install.sh --keep-transcripts.'
+
+- []
++ ['HANDOFF CHECK: Claude Code deletes chat transcripts after 30 days '
++  '(cleanupPeriodDays), so recall loses older messages. Set '
++  '"cleanupPeriodDays": 365 in ~/.claude/settings.json, or run ./install.sh '
++  '--keep-transcripts.'] : HANDOFF CHECK: no PreCompact hook runs precompact-handoff.py; no SessionStart compact hook runs postcompact-inject.py; hook file missing: precompact-handoff.py; hook file missing: postcompact-inject.py. Run the installer again, then restart Claude Code.
+
+
+======================================================================
+FAIL: test_ac222_custom_days_raises (test_f52_store.Installer.test_ac222_custom_days_raises)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f52_store.py", line 176, in test_ac222_custom_days_raises
+    self.install("--keep-transcripts=120")
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f52_store.py", line 62, in install
+    self.assertEqual(r.returncode, expect, r.stdout + r.stderr)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 2 != 0 : unknown option: --keep-transcripts=120
+
+
+======================================================================
+FAIL: test_ac222_raises_to_365_and_is_idempotent (test_f52_store.Installer.test_ac222_raises_to_365_and_is_idempotent)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f52_store.py", line 155, in test_ac222_raises_to_365_and_is_idempotent
+    self.install("--keep-transcripts")
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f52_store.py", line 62, in install
+    self.assertEqual(r.returncode, expect, r.stdout + r.stderr)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 2 != 0 : unknown option: --keep-transcripts
+
+
+======================================================================
+FAIL: test_ac222_sets_value_when_key_missing (test_f52_store.Installer.test_ac222_sets_value_when_key_missing)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f52_store.py", line 164, in test_ac222_sets_value_when_key_missing
+    self.install("--keep-transcripts")
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f52_store.py", line 62, in install
+    self.assertEqual(r.returncode, expect, r.stdout + r.stderr)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 2 != 0 : unknown option: --keep-transcripts
+
+
+======================================================================
+FAIL: test_ac223_never_lowers (test_f52_store.Installer.test_ac223_never_lowers)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f52_store.py", line 170, in test_ac223_never_lowers
+    self.install("--keep-transcripts=120")
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f52_store.py", line 62, in install
+    self.assertEqual(r.returncode, expect, r.stdout + r.stderr)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 2 != 0 : unknown option: --keep-transcripts=120
+
+
+======================================================================
+FAIL: test_ac224_partner_valid_value_works_in_same_setup (test_f52_store.Installer.test_ac224_partner_valid_value_works_in_same_setup)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f52_store.py", line 196, in test_ac224_partner_valid_value_works_in_same_setup
+    self.install("--keep-transcripts=120")
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f52_store.py", line 62, in install
+    self.assertEqual(r.returncode, expect, r.stdout + r.stderr)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 2 != 0 : unknown option: --keep-transcripts=120
+
+
+======================================================================
+FAIL: test_ac225_dry_run (test_f52_store.Installer.test_ac225_dry_run)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f52_store.py", line 203, in test_ac225_dry_run
+    r = self.install("--keep-transcripts", "--dry-run")
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f52_store.py", line 62, in install
+    self.assertEqual(r.returncode, expect, r.stdout + r.stderr)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 2 != 0 : unknown option: --keep-transcripts
+
+
+======================================================================
+FAIL: test_ac226_non_interactive_no_flag (test_f52_store.Installer.test_ac226_non_interactive_no_flag)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f52_store.py", line 212, in test_ac226_non_interactive_no_flag
+    self.assertIn(line(30), r.stdout + r.stderr)
+    ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'HANDOFF CHECK: Claude Code deletes chat transcripts after 30 days (cleanupPeriodDays), so recall loses older messages. Set "cleanupPeriodDays": 365 in ~/.claude/settings.json, or run ./install.sh --keep-transcripts.' not found in 'settings: add PreCompact hook (timeout 150)\nsettings: add PostToolUse nudge hook (matcher *, timeout 5)\nsettings: add SessionStart compact --part 1 (timeout 10)\nsettings: add SessionStart compact --part 2 (timeout 10)\nsettings: add SessionStart compact --part 3 (timeout 10)\nsettings: add SessionStart compact --ledger --part 1 (timeout 10)\nsettings: add SessionStart compact --ledger --part 2 (timeout 10)\nsettings: add SessionStart compact --ledger --part 3 (timeout 10)\nsettings: add SessionStart startup --ledger --part 1 (timeout 10)\nsettings: add SessionStart startup --ledger --part 2 (timeout 10)\nsettings: add SessionStart startup --ledger --part 3 (timeout 10)\nsettings: add SessionStart startup --check (timeout 5)\nsettings: add SessionStart resume --ledger --part 1 (timeout 10)\nsettings: add SessionStart resume --ledger --part 2 (timeout 10)\nsettings: add SessionStart resume --ledger --part 3 (timeout 10)\nsettings: add SessionStart resume --check (timeout 5)\nsettings: add SessionEnd recall hook (timeout 5)\nsettings: add permissions.allow Edit(~/.local/state/claude-handoffs/**)\nsettings: add permissions.allow Bash(python3 ~/.claude/hooks/recall.py:*)\nsettings: set env.CLAUDE_CODE_AUTO_COMPACT_WINDOW = 400000\nsettings: backup -> /private/var/folders/_l/jd5t82r93gv28qgpkm5qv8_h0000gn/T/f52-vaew45er/home/.claude/settings.json.bak-20261118T022627Z\nsettings: written /private/var/folders/_l/jd5t82r93gv28qgpkm5qv8_h0000gn/T/f52-vaew45er/home/.claude/settings.json\ninstall hook: /private/var/folders/_l/jd5t82r93gv28qgpkm5qv8_h0000gn/T/f52-vaew45er/home/.claude/hooks/precompact-handoff.py\ninstall hook: /private/var/folders/_l/jd5t82r93gv28qgpkm5qv8_h0000gn/T/f52-vaew45er/home/.claude/hooks/postcompact-inject.py\ninstall hook: /private/var/folders/_l/jd5t82r93gv28qgpkm5qv8_h0000gn/T/f52-vaew45er/home/.claude/hooks/handoff-nudge.py\ninstall hook: /private/var/folders/_l/jd5t82r93gv28qgpkm5qv8_h0000gn/T/f52-vaew45er/home/.claude/hooks/recall.py\ninstall hook: /private/var/folders/_l/jd5t82r93gv28qgpkm5qv8_h0000gn/T/f52-vaew45er/home/.claude/hooks/claims.json\nmanifest: /private/var/folders/_l/jd5t82r93gv28qgpkm5qv8_h0000gn/T/f52-vaew45er/home/.claude/hooks/.handoff-manifest.json\ncreate state dir: /private/var/folders/_l/jd5t82r93gv28qgpkm5qv8_h0000gn/T/f52-vaew45er/home/.local/state/claude-handoffs\n\nMeaning search: skipped the model pull (not interactive). Run: ollama pull bge-m3   (or rerun install with --yes)\nnightly index job: skipped (--no-nightly)\nnightly reconcile job: skipped (--no-nightly)\n\nInstalled.\nRestart open Claude Code sessions: hooks load when a session starts.\n\nRecall: the first index of your earlier chats is building in the background (log: /private/var/folders/_l/jd5t82r93gv28qgpkm5qv8_h0000gn/T/f52-vaew45er/home/.local/state/claude-handoffs/recall/index-all.log).\nChats are indexed automatically when they end. Search from a project folder:  python3 ~/.claude/hooks/recall.py search "words"\n\nVerify after the first compaction: tail -n 3 /private/var/folders/_l/jd5t82r93gv28qgpkm5qv8_h0000gn/T/f52-vaew45er/home/.local/state/claude-handoffs/health.jsonl\nHeadless runs (claude -p, SDK) load these hooks too, except with --bare. To keep them under --setting-sources without user, run ./install.sh --managed-hooks.\n'
+
+======================================================================
+FAIL: test_ac227_uninstall_keeps_value (test_f52_store.Installer.test_ac227_uninstall_keeps_value)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f52_store.py", line 222, in test_ac227_uninstall_keeps_value
+    self.install("--keep-transcripts")
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f52_store.py", line 62, in install
+    self.assertEqual(r.returncode, expect, r.stdout + r.stderr)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 2 != 0 : unknown option: --keep-transcripts
+
+
+======================================================================
+FAIL: test_ac228_default_retention (test_f52_store.Retention.test_ac228_default_retention)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f52_store.py", line 261, in test_ac228_default_retention
+    self.assertTrue(os.path.exists(p20))
+    ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^
+AssertionError: False is not true
+
+======================================================================
+FAIL: test_ac228_invalid_value_counts_as_365 (test_f52_store.Retention.test_ac228_invalid_value_counts_as_365)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f52_store.py", line 275, in test_ac228_invalid_value_counts_as_365
+    self.assertTrue(os.path.exists(p20))
+    ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^
+AssertionError: False is not true
+
+======================================================================
+FAIL: test_ac228_zero_keeps_forever (test_f52_store.Retention.test_ac228_zero_keeps_forever)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f52_store.py", line 268, in test_ac228_zero_keeps_forever
+    self.assertTrue(os.path.exists(p20))
+    ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^
+AssertionError: False is not true
+
+======================================================================
+FAIL: test_ac229_auto_prints_block (test_f53_steer.Steer.test_ac229_auto_prints_block)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f53_steer.py", line 49, in test_ac229_auto_prints_block
+    self.assert_block(r)
+    ~~~~~~~~~~~~~~~~~^^^
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f53_steer.py", line 45, in assert_block
+    self.assertEqual(r.stdout.rstrip("\n"), BLOCK.rstrip("\n"), repr(r.stdout))
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: '' != "Lossless Handoff guidance for this summa[519 chars]ete."
++ Lossless Handoff guidance for this summary:
++ - Quote the user's own words for every decision, rule and correction, with the date if known.
++ - Keep exact commands, file paths, numbers, ids and error text. Do not paraphrase them.
++ - List work that is still running (agents, jobs, background commands) with its ids and state.
++ - End with the exact next step.
++ - A structured handoff and the project decisions list are injected after this compaction, and the full transcript stays searchable with recall, so keep old history short and keep the current state complete.
+ : ''
+
+======================================================================
+FAIL: test_ac229_block_printed_once (test_f53_steer.Steer.test_ac229_block_printed_once)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f53_steer.py", line 54, in test_ac229_block_printed_once
+    self.assertEqual(r.stdout.count(HEAD), 1)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 0 != 1
+
+======================================================================
+FAIL: test_ac230_custom_instructions_still_print_block (test_f53_steer.Steer.test_ac230_custom_instructions_still_print_block)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f53_steer.py", line 61, in test_ac230_custom_instructions_still_print_block
+    self.assert_block(r)
+    ~~~~~~~~~~~~~~~~~^^^
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f53_steer.py", line 45, in assert_block
+    self.assertEqual(r.stdout.rstrip("\n"), BLOCK.rstrip("\n"), repr(r.stdout))
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: '' != "Lossless Handoff guidance for this summa[519 chars]ete."
++ Lossless Handoff guidance for this summary:
++ - Quote the user's own words for every decision, rule and correction, with the date if known.
++ - Keep exact commands, file paths, numbers, ids and error text. Do not paraphrase them.
++ - List work that is still running (agents, jobs, background commands) with its ids and state.
++ - End with the exact next step.
++ - A structured handoff and the project decisions list are injected after this compaction, and the full transcript stays searchable with recall, so keep old history short and keep the current state complete.
+ : ''
+
+======================================================================
+FAIL: test_ac230_partner_block_printed_once_for_custom_and_auto (test_f53_steer.Steer.test_ac230_partner_block_printed_once_for_custom_and_auto)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f53_steer.py", line 68, in test_ac230_partner_block_printed_once_for_custom_and_auto
+    self.assertEqual(r.stdout.count(HEAD), 1)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 0 != 1
+
+======================================================================
+FAIL: test_ac231_empty_custom_instructions (test_f53_steer.Steer.test_ac231_empty_custom_instructions)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f53_steer.py", line 75, in test_ac231_empty_custom_instructions
+    self.assert_block(r)
+    ~~~~~~~~~~~~~~~~~^^^
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f53_steer.py", line 45, in assert_block
+    self.assertEqual(r.stdout.rstrip("\n"), BLOCK.rstrip("\n"), repr(r.stdout))
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: '' != "Lossless Handoff guidance for this summa[519 chars]ete."
++ Lossless Handoff guidance for this summary:
++ - Quote the user's own words for every decision, rule and correction, with the date if known.
++ - Keep exact commands, file paths, numbers, ids and error text. Do not paraphrase them.
++ - List work that is still running (agents, jobs, background commands) with its ids and state.
++ - End with the exact next step.
++ - A structured handoff and the project decisions list are injected after this compaction, and the full transcript stays searchable with recall, so keep old history short and keep the current state complete.
+ : ''
+
+======================================================================
+FAIL: test_ac232_partner_default_prints_block_in_same_setup (test_f53_steer.Steer.test_ac232_partner_default_prints_block_in_same_setup)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f53_steer.py", line 85, in test_ac232_partner_default_prints_block_in_same_setup
+    self.assert_block(self.run_event(self.payload("S")))
+    ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f53_steer.py", line 45, in assert_block
+    self.assertEqual(r.stdout.rstrip("\n"), BLOCK.rstrip("\n"), repr(r.stdout))
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: '' != "Lossless Handoff guidance for this summa[519 chars]ete."
++ Lossless Handoff guidance for this summary:
++ - Quote the user's own words for every decision, rule and correction, with the date if known.
++ - Keep exact commands, file paths, numbers, ids and error text. Do not paraphrase them.
++ - List work that is still running (agents, jobs, background commands) with its ids and state.
++ - End with the exact next step.
++ - A structured handoff and the project decisions list are injected after this compaction, and the full transcript stays searchable with recall, so keep old history short and keep the current state complete.
+ : ''
+
+======================================================================
+FAIL: test_ac233_partner_precompact_prints_block_in_same_home (test_f53_steer.Steer.test_ac233_partner_precompact_prints_block_in_same_home)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f53_steer.py", line 91, in test_ac233_partner_precompact_prints_block_in_same_home
+    self.assert_block(self.run_event(self.payload("S")))
+    ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f53_steer.py", line 45, in assert_block
+    self.assertEqual(r.stdout.rstrip("\n"), BLOCK.rstrip("\n"), repr(r.stdout))
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: '' != "Lossless Handoff guidance for this summa[519 chars]ete."
++ Lossless Handoff guidance for this summary:
++ - Quote the user's own words for every decision, rule and correction, with the date if known.
++ - Keep exact commands, file paths, numbers, ids and error text. Do not paraphrase them.
++ - List work that is still running (agents, jobs, background commands) with its ids and state.
++ - End with the exact next step.
++ - A structured handoff and the project decisions list are injected after this compaction, and the full transcript stays searchable with recall, so keep old history short and keep the current state complete.
+ : ''
+
+======================================================================
+FAIL: test_ac234_subagent_prints_block (test_f53_steer.Steer.test_ac234_subagent_prints_block)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f53_steer.py", line 107, in test_ac234_subagent_prints_block
+    self.assert_block(r)
+    ~~~~~~~~~~~~~~~~~^^^
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f53_steer.py", line 45, in assert_block
+    self.assertEqual(r.stdout.rstrip("\n"), BLOCK.rstrip("\n"), repr(r.stdout))
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: '' != "Lossless Handoff guidance for this summa[519 chars]ete."
++ Lossless Handoff guidance for this summary:
++ - Quote the user's own words for every decision, rule and correction, with the date if known.
++ - Keep exact commands, file paths, numbers, ids and error text. Do not paraphrase them.
++ - List work that is still running (agents, jobs, background commands) with its ids and state.
++ - End with the exact next step.
++ - A structured handoff and the project decisions list are injected after this compaction, and the full transcript stays searchable with recall, so keep old history short and keep the current state complete.
+ : ''
+
+----------------------------------------------------------------------
+Ran 45 tests in 5.760s
+
+FAILED (failures=27, errors=4, skipped=1)

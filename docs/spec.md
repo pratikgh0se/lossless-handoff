@@ -764,3 +764,64 @@ Acceptance (temp HOME; fixtures with `last-health.json` ts, `latest.md` and a tr
 - 215. Newest boundary 20 s ago (precomputed true), the one before it 3 h ago, H 100 min ago: as 212 (the 20 s record is ignored).
 - 216. H 5 min ago: unchanged 1.10.0 output; no `Note: this compaction was prepared` line.
 - 217. Subagent key (`agent_id` set): the same rule uses the subagent's own transcript and `<sid>-a-<agent_id>` files (the 212 fixture for a subagent gives the 212 result).
+
+## F52 Protect the store (2026-11-18)
+Why: LCM keeps every message in a store that is "never modified". Two deletes break that here. Claude Code deletes transcripts older than `cleanupPeriodDays` (default 30), so recall loses older messages on a default install. The hooks delete every handoff file older than 14 days. Users run work over weeks and months.
+
+**F52.a Retention floor.** The effective `cleanupPeriodDays` is the integer value in the macOS managed settings file `/Library/Application Support/ClaudeCode/managed-settings.json` if that file is readable and has the key, else the value in `~/.claude/settings.json`, else 30 (Claude Code's default). A value that is missing, not an integer, or below 0 counts as 30. The floor is 90.
+
+**F52.b `--check`.** If the effective value is below 90, `postcompact-inject.py --check` prints one line (in addition to its other lines, and still exit 0):
+`HANDOFF CHECK: Claude Code deletes chat transcripts after <N> days (cleanupPeriodDays), so recall loses older messages. Set "cleanupPeriodDays": 365 in ~/.claude/settings.json, or run ./install.sh --keep-transcripts.`
+At 90 or more it prints nothing for this check. An unreadable or invalid settings file gives no crash and no traceback.
+
+**F52.c Installer.**
+- `--keep-transcripts[=DAYS]` (DAYS default 365, an integer of 90 or more; anything else is a usage error, exit 2, nothing changed). It sets `cleanupPeriodDays` to DAYS in `~/.claude/settings.json` only when the current user value is missing or lower. It never lowers the value. It keeps all other keys and formatting rules of the existing settings write, and makes the same backup as other settings changes. `--dry-run` prints the change and writes nothing.
+- Without the flag: if the effective value is below 90 and stdin is a terminal, ask `Claude Code deletes chat transcripts after <N> days. Keep them for 365 days so recall can find older messages? [y/N]`. `y` or `Y` acts like `--keep-transcripts`. Any other answer, or no terminal, changes nothing and prints the F52.b line as a warning.
+- If the managed settings file sets the value, the installer does not try to override it; it prints the warning only.
+- `uninstall.sh` never changes `cleanupPeriodDays` (lowering it would delete chats). If the installer had raised it, uninstall prints one line: `cleanupPeriodDays was left at <N>; lower it yourself if you want.` The marker records that the installer raised it.
+
+**F52.d Handoff retention.** The cleanup in `precompact-handoff.py` removes `*.md` files in the handoffs folder only when they are older than `HANDOFF_RETENTION_DAYS` days (default 365). `HANDOFF_RETENTION_DAYS=0` keeps them forever. A value that is not a non-negative integer counts as 365. The `*-degraded.json`, `*-last-health.json` and `*-pending.json` files keep the 14-day rule. The `projects/` folder is never touched by this cleanup (as before).
+
+**F52.e Docs.** README (Files, Configuration, FAQ) and SECURITY.md state both retention rules, the floor, the flag, and that more chat text is kept for longer.
+
+ACs:
+- 218. Settings `{"cleanupPeriodDays": 30}`: `--check` prints exactly the F52.b line with `30`, exit 0.
+- 219. No key, and no settings file: as 218 with `30`.
+- 220. `{"cleanupPeriodDays": 90}` and `365`: no F52.b line.
+- 221. `{"cleanupPeriodDays": "abc"}`, `-5`, or a settings file that is not valid JSON: as 218 with `30`, no traceback.
+- 222. `install.sh --keep-transcripts` with value 30: value becomes 365; other keys unchanged; a second run changes nothing.
+- 223. `install.sh --keep-transcripts=120` with value 400: value stays 400.
+- 224. `install.sh --keep-transcripts=10` or `=abc`: exit 2, settings unchanged.
+- 225. `install.sh --keep-transcripts --dry-run`: settings unchanged; output names the change.
+- 226. Non-interactive install with value 30 and no flag: settings unchanged; output holds the F52.b text.
+- 227. `uninstall.sh` after 222: value stays 365; output holds `cleanupPeriodDays was left at 365`.
+- 228. Handoff `.md` files 20 days and 400 days old, after one PreCompact run: the 20-day file stays, the 400-day file is removed. With `HANDOFF_RETENTION_DAYS=0` both stay. A `-pending.json` 20 days old is removed.
+
+## F53 Steer Claude Code's own summary (2026-11-18)
+Why: the PreCompact hook's stdout is used by Claude Code "as instructions for the compaction summary" (hooks reference, up to 10,000 characters). The hook printed nothing, so Claude Code's summary followed no guidance. The LCM paper asks summaries to "preserve_details".
+
+**F53.a Output.** On a PreCompact event (not on CLI modes such as `--check`, `--reconcile`, `--prove`, `--ledger`), `precompact-handoff.py` writes this block to stdout, once, at the start of the run, flushed, before any model call (so a later timeout does not lose it), and nothing else to stdout:
+```
+Lossless Handoff guidance for this summary:
+- Quote the user's own words for every decision, rule and correction, with the date if known.
+- Keep exact commands, file paths, numbers, ids and error text. Do not paraphrase them.
+- List work that is still running (agents, jobs, background commands) with its ids and state.
+- End with the exact next step.
+- A structured handoff and the project decisions list are injected after this compaction, and the full transcript stays searchable with recall, so keep old history short and keep the current state complete.
+```
+**F53.b User instructions.** Claude Code adds the hook's stdout to the text of a manual `/compact <text>`; it does not replace it (verified live 2026-11-18: a summary held both the user's token and the hook's token). So the block is printed for every PreCompact event, also when `custom_instructions` is non-empty.
+**F53.c Off switch.** `HANDOFF_COMPACT_STEER=0` prints nothing.
+**F53.d Safety.** Exit code and all other behaviour are unchanged. The hook never blocks compaction (never exit 2).
+
+ACs:
+- 229. PreCompact `{"trigger":"auto", ...}`: stdout equals the F53.a block exactly (trailing newline allowed), exit 0, and the handoff is written as before.
+- 230. `{"trigger":"manual","custom_instructions":"keep the API notes"}`: as 229 (stdout equals the F53.a block, exit 0, handoff written).
+- 231. `{"trigger":"manual","custom_instructions":""}`: as 229.
+- 232. `HANDOFF_COMPACT_STEER=0`: stdout empty.
+- 233. `--check`, `--reconcile --days 1`, `--prove --days 1`: no F53.a text in their output.
+- 234. A subagent PreCompact (`agent_id` set): as 229.
+
+**F53.e Proof field.** Each PreCompact health row (the row the hook already writes) gets `"steer"` with one of: `"printed"` (the F53.a block was written), `"off"` (`HANDOFF_COMPACT_STEER=0`). Rows written before 1.11.0 have no field.
+- 235. After AC 229's run and after AC 230's run, the new health row has `"steer": "printed"`; after 232, `"off"`.
+
+Version: hooks 1.11.0; release 0.9.0. `HOOK_VERSION` in both hooks and the `hook_version` in health rows and sidecars is `1.11.0`. This amends the version value in ACs 136, 150, 172, 180, 188 again.
