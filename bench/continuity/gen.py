@@ -8,7 +8,7 @@ Usage: gen.py --seed S [--out FILE]
 """
 import argparse, json, random, re, sys
 
-GEN_VERSION = "1"
+GEN_VERSION = "2"
 K = 3                                   # instances of each probe type for each seed
 TYPES = ["R", "D", "X", "S", "E", "U", "C"]
 CHECKPOINTS = [1, 3, 10, 30]
