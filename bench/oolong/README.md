@@ -59,8 +59,8 @@ Arm B tests parallel subagents instead.
 - Proof: `run.sh selfcheck` runs one real `curl` from inside a task session with no curl deny rule. The sandbox must stop it. It stores `evidence/sandbox-<time>.json` with the tool list of each arm.
   With arm C it also checks that the session lists the `llm-map` skill, that one `llm_map` run of 3 items succeeds from inside the sandbox, and that a curl to example.com in the same session still fails.
 - Control N: each question runs once with no context file. A task that is right without context leaves the cleaned score (also by chance: a label question has a 1 in 6 chance).
-- Transcript search: the text the model wrote and its tool inputs (not tool results, which print context lines) are searched for the data set name, "oolong", "ground truth", Hugging Face, download commands and URLs in commands. The report lists the hits per task.
-- A task with a control hit or any transcript hit leaves the cleaned score in all arms (so the pairs stay). The report prints raw and cleaned scores and the counts removed.
+- Transcript search: the text the model wrote and its tool inputs (not tool results, which print context lines) are searched for `trec_coarse`, "oolong", "ground truth", Hugging Face, download commands and URLs in commands. The report lists the hits per task. The plain word "TREC" is a recognition note, not a hit (see "Harness rules of 2026-11-18").
+- A task with a control hit or any transcript hit leaves the cleaned score in all arms (so the pairs stay). The report prints raw and cleaned scores and the counts removed, under the new rule and the old rule.
 
 ## Scoring
 
@@ -93,13 +93,40 @@ Exit codes: 0 finished, 1 a unit failed or the fairness check failed, 2 usage er
 ## Report
 
 `results/<run-id>/summary.md`. Per length and arm: mean score (raw and cleaned) with a 95 percent bootstrap CI, paired difference B-A and C-A,
-cost per task, wall time, turns, workflow calls, llm_map calls, compactions.
+cost per task, wall time, turns, workflow calls, llm_map calls, compactions, timed-out rows, and the clean columns under the new and the old hit rule.
 
 How cost is counted: the main session's `total_cost_usd` does not include the child `claude -p` calls of `llm_map`.
 The harness counts `llm_map_calls` (Bash tool calls whose command holds `llm_map.py`) and reads `llm_map_cost_usd` from the summary line `llm_map: ... cost $x` in the tool results.
 Cost per task in the report is the main cost plus `llm_map_cost_usd`. The column "llm_map calls (tasks with 1+)" gives the call count and the number of tasks that used it.
 If a call has no readable summary line (for example a crash), the report says that the cost is a lower bound.
 The budget guard (`--budget-usd`) still counts only the main session cost. Leave margin for arm C. It applies the decision rule only with 10 or more paired clean tasks at 128K.
+
+## Harness rules of 2026-11-18
+
+These four changes were made on 2026-11-18, after the decision run (20261118T132316) and the arm C slice (20261118T142600), and before the full eval.
+Each change applies to all arms in the same way. The config record holds them (`harness_rules`, `env_bash_timeout_ms`, `timeout_s`).
+`check_fairness` compares them across arms like any other setting.
+
+1. Timeout. The unit time limit is now 1200 s (it was 900 s). Reason: in run 20261118T142600, unit 17000213-C wrote its final answer at 07:35:39,
+   but a background task kept `claude -p` alive to the 900 s limit, so a correct answer scored 0 as an ERROR.
+   At a timeout the harness still kills the whole process group. Then it reads the last assistant text of the session transcript.
+   If the last line of that text is a labelled final answer (`Answer:`, `Label:`, `User:` or `Date:`), the harness scores it and sets `timed_out: true` (subtype `timeout_answered`).
+   Any other timeout stays an ERROR with score 0 (also `timed_out: true`). The report shows a count of timed-out rows per arm, and how many of them were scored.
+   A killed session has no result event, so its cost is the last `cost-state` record of the transcript, or 0 if none exists. That cost is a lower bound.
+2. Turns, final text and cost. The turn count is the number of assistant messages (distinct message ids) over the whole session, not `num_turns` of the last result.
+   A background job can wake the session for one more turn (unit 17000220-C showed "turns 1"). The final answer is the last assistant text of the whole session.
+   Cost: the `total_cost_usd` of the result is the session total, not the cost of the last turn. For 17000220-C the result cost ($0.1040844) equals `totalCostUSD` in the transcript `cost-state` record,
+   although a wake-up turn came after the first answer. So the harness does not sum several results. It takes the one result cost.
+   Each row also keeps `num_turns_result` (the old figure) and `result_text` (the old text).
+3. Bash time limit. Every arm's `claude -p` process gets `BASH_DEFAULT_TIMEOUT_MS=600000` and `BASH_MAX_TIMEOUT_MS=600000` (also in the `--settings` env).
+   Claude Code 2.1.326 reads both names (found as strings in the installed binary).
+   Reason: the default Bash limit is 120 s, and a long `llm_map` call needs more.
+4. Contamination rule. The old pattern `\btrec(_coarse)?\b` also matched the plain word "TREC".
+   Models write that word when they recognise the label set, also inside their own `llm_map --prompt` text. That is recognition, not a lookup of the data.
+   New rule: hits are `trec_coarse`, "oolong", "ground truth", Hugging Face names, download commands, and URLs in commands. The plain word "TREC" is a recognition note.
+   Recognition notes are counted and listed in the report. They do not remove a task from the cleaned score. The no-context control rule is unchanged.
+   The report shows both columns: the clean score under the new rule and the clean score under the old rule, and the decision rule under both. Nothing is hidden.
+   The report derives all of this again from the stored transcripts, so older runs can be shown under the new rules (a re-rendered report scores a timed-out unit from its transcript and counts turns again; cost stays as stored).
 
 ## Known limits
 

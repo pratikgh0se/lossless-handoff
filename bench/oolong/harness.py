@@ -49,12 +49,22 @@ LLM_MAP_SUMMARY = re.compile(r"llm_map:[^\n]*?cost \$([0-9]+(?:\.[0-9]+)?)")
 DENY_BASH = ["curl", "wget", "pip", "pip3", "huggingface", "hf_hub", "load_dataset", "git clone", "urllib", "requests", "http.client", "urlretrieve"]
 # Contamination patterns, searched in the text the model wrote and in its tool inputs. Tool results are not searched:
 # they print lines of the context (for example "hair curl"), which are not evidence.
+# Rule of 2026-11-18 (made after the decision run, before the full eval): the plain word "TREC" is a recognition note,
+# not a contamination hit. Models write it when they recognise the label set, also inside their own llm_map --prompt text.
+# HIT_PATTERNS_OLD is the earlier rule. The report shows the clean score under both rules.
 HIT_PATTERNS = [
-    ("data set name", r"\btrec(_coarse)?\b"), ("oolong", r"oolong"), ("ground truth", r"ground[ _-]?truth"),
+    ("data set name", r"\btrec_coarse\b"), ("oolong", r"oolong"), ("ground truth", r"ground[ _-]?truth"),
     ("huggingface", r"hugging[ _-]?face|hf_hub|load_dataset|datasets\.load"),
     ("download command", r"\b(curl|wget)\b\s+(-|https?:)|pip3? install|git clone|urllib|requests\.(get|post)|urlretrieve"),
 ]
 URL_PATTERN = ("url in a command", r"https?://")
+HIT_PATTERNS_OLD = [("data set name", r"\btrec(_coarse)?\b")] + [p for p in HIT_PATTERNS if p[0] != "data set name"]
+RECOGNITION_PATTERNS = [("TREC word", r"\btrec\b")]
+HIT_RULE_ID = "2026-11-18-recognition-split"
+# Bash tool time limit (ms), the same in every arm. Claude Code 2.1.326 reads both names (checked in the binary).
+BASH_TIMEOUT_MS = "600000"
+COMMON_ENV = ("CLAUDE_CODE_AUTO_COMPACT_WINDOW", "BASH_DEFAULT_TIMEOUT_MS", "BASH_MAX_TIMEOUT_MS")
+FINAL_LINE = re.compile(r"^\W*(answer|label|user|date)\s*:\s*\S", re.I)
 
 
 class Pause(Exception):
@@ -184,7 +194,8 @@ def project_settings(cfg, arm, sandbox_only=False, proj=None, siblings=()):
 
 
 def env_for(cfg, arm, statedir):
-    env = {"CLAUDE_CODE_AUTO_COMPACT_WINDOW": str(cfg["window"])}
+    env = {"CLAUDE_CODE_AUTO_COMPACT_WINDOW": str(cfg["window"]),
+           "BASH_DEFAULT_TIMEOUT_MS": BASH_TIMEOUT_MS, "BASH_MAX_TIMEOUT_MS": BASH_TIMEOUT_MS}
     if arm == "C":
         env.update({"HANDOFF_STATE_DIR": statedir, "HANDOFF_SUMMARY_MODEL": cfg["model"], "RECALL_EMBED_URL": "http://127.0.0.1:9"})
     return env
@@ -205,7 +216,12 @@ def config_record(cfg, task, arm):
         "prompt_core_sha": sha(PROMPT_CORE.format(question=task["question"])),
         "prompt_extra": WORKFLOW_LINE if core_arm == "B" else "",
         "env_window": env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"],
-        "env_handoff": sorted(k for k in env if k != "CLAUDE_CODE_AUTO_COMPACT_WINDOW"),
+        "env_handoff": sorted(k for k in env if k not in COMMON_ENV),
+        "env_bash_timeout_ms": [env["BASH_DEFAULT_TIMEOUT_MS"], env["BASH_MAX_TIMEOUT_MS"]],
+        "harness_rules": {"final_text": "last assistant text of the session", "turns": "assistant messages of the session",
+                          "cost": "total_cost_usd of the result (cumulative for the session)",
+                          "timeout": "last assistant text is scored if it ends with a labelled answer; row timed_out true",
+                          "hit_rule": HIT_RULE_ID},
         "hooks": sorted(s.get("hooks", {}).keys()), "recall_agent": core_arm == "C",
         "llm_map_skill": ({"project_skill": "llm-map", "skills_flag_dropped": True} if core_arm == "C" else None),
         "llm_map_sandbox_exception": llm_map_excluded(cfg, core_arm) or None,
@@ -266,10 +282,12 @@ def iter_text_fields(records):
                     yield "tool input (%s)" % b.get("name"), json.dumps(b.get("input", {}))
 
 
-def scan_records(records, final_text=""):
+def scan_records(records, final_text="", rule="new"):
+    """rule new: HIT_PATTERNS and urls. rule old: the earlier patterns. rule recognition: only the plain word TREC (no urls)."""
     hits = []
-    pats = [(n, re.compile(p, re.I)) for n, p in HIT_PATTERNS]
-    url = (URL_PATTERN[0], re.compile(URL_PATTERN[1], re.I))
+    table = {"new": HIT_PATTERNS, "old": HIT_PATTERNS_OLD, "recognition": RECOGNITION_PATTERNS}[rule]
+    pats = [(n, re.compile(p, re.I)) for n, p in table]
+    url = (URL_PATTERN[0], re.compile(URL_PATTERN[1], re.I)) if rule != "recognition" else ("", re.compile(r"(?!x)x"))
     fields = list(iter_text_fields(records)) + [("final answer", final_text or "")]
     for where, text in fields:
         for name, rx in pats + ([url] if where.startswith("tool input") else []):
@@ -299,6 +317,46 @@ def llm_map_stats(records):
                 txt = c if isinstance(c, str) else " ".join(x.get("text", "") for x in c if isinstance(x, dict)) if isinstance(c, list) else ""
                 costs += [float(m) for m in LLM_MAP_SUMMARY.findall(txt)]
     return {"llm_map_calls": calls, "llm_map_cost_usd": round(sum(costs), 6), "llm_map_summaries": len(costs)}
+
+
+def assistant_texts(records):
+    """Text blocks the model wrote, in order (main session records)."""
+    out = []
+    for r in records:
+        msg = r.get("message") if isinstance(r, dict) else None
+        if r.get("type") == "assistant" and isinstance(msg, dict) and isinstance(msg.get("content"), list):
+            for b in msg["content"]:
+                if isinstance(b, dict) and b.get("type") == "text" and (b.get("text") or "").strip():
+                    out.append(b["text"])
+    return out
+
+
+def count_turns(records):
+    """Turns over the whole session: distinct assistant messages (one per model call). A background wake-up adds turns."""
+    ids, n = set(), 0
+    for r in records:
+        msg = r.get("message") if isinstance(r, dict) else None
+        if r.get("type") == "assistant" and isinstance(msg, dict):
+            if msg.get("id"):
+                ids.add(msg["id"])
+            else:
+                n += 1
+    return len(ids) + n
+
+
+def last_cost_state(records):
+    """totalCostUSD of the last cost-state record (session total). None if the session wrote none (for example it was killed)."""
+    v = None
+    for r in records:
+        if isinstance(r, dict) and r.get("type") == "cost-state" and r.get("totalCostUSD") is not None:
+            v = float(r["totalCostUSD"])
+    return v
+
+
+def has_final_answer(text):
+    """True if the last non-empty line is a labelled final answer (for example `Answer: more common`)."""
+    lines = [x for x in (text or "").splitlines() if x.strip()]
+    return bool(lines) and bool(FINAL_LINE.match(lines[-1]))
 
 
 def tool_counts(records):
@@ -409,20 +467,40 @@ def run_unit(ctx, task, arm, rec):
                 raise Fatal("claude is not logged in")
             if err_txt == "timeout":
                 break           # a timeout is a result (score 0), not a reason to run twice
-    cost = float(o.get("total_cost_usd") or 0) if o else 0.0
-    with ctx.lock:
-        ctx.state["spent"] += cost
-        ctx.state["max_unit_cost"] = max(ctx.state.get("max_unit_cost", 0.0), cost)
-    result_text = (o or {}).get("result") or ""
-    sc = scorer.score(task["answer"], task["answer_type"], result_text if isinstance(result_text, str) else "")
+    timed_out = err_txt == "timeout"
     main, _all = transcript_files(proj, sid)
     recs = []
     for f in _all:
         recs += cont.read_jsonl(f)
+    main_recs = cont.read_jsonl(main) if os.path.isfile(main) else []
+    # cost: total_cost_usd of the result is the session total (the cost-state record of the transcript holds the same number)
+    cost_known = o is not None
+    cost = float(o.get("total_cost_usd") or 0) if o else 0.0
+    if o is None:
+        cs = last_cost_state(main_recs)
+        if cs is not None:
+            cost, cost_known = cs, True
+    with ctx.lock:
+        ctx.state["spent"] += cost
+        ctx.state["max_unit_cost"] = max(ctx.state.get("max_unit_cost", 0.0), cost)
+    result_text = (o or {}).get("result") or ""
+    result_text = result_text if isinstance(result_text, str) else ""
+    texts = assistant_texts(main_recs)
+    final_text = texts[-1] if texts else result_text       # last assistant text of the whole session
+    salvaged = False
+    if o is None:
+        if timed_out and has_final_answer(final_text):
+            salvaged = True
+        else:
+            final_text = ""
+    sc = scorer.score(task["answer"], task["answer_type"], final_text)
     boundaries, _pre = cont.count_boundaries(main)
     tc = tool_counts(recs)
     lm = llm_map_stats(recs)
-    hits = scan_records(recs, result_text if isinstance(result_text, str) else "")
+    hits = scan_records(recs, final_text)
+    hits_old = scan_records(recs, final_text, "old")
+    recog = scan_records(recs, final_text, "recognition")
+    turns = count_turns(main_recs) or (o or {}).get("num_turns")
     tdir = os.path.join(ctx.dir, "transcripts")
     os.makedirs(tdir, exist_ok=True)
     if os.path.isfile(main):
@@ -431,22 +509,23 @@ def run_unit(ctx, task, arm, rec):
     row = {
         "unit": uname, "task_id": task["task_id"], "length": task["length"], "arm": arm, "answer_type": task["answer_type"],
         "task": task["task"], "score": sc["score"], "parsed": sc["parsed"], "parse_confidence": sc["parse_confidence"],
-        "gold": sc["gold"], "full_answer": result_text, "cost_usd": cost, "wall_s": round(wall, 1),
-        "num_turns": (o or {}).get("num_turns"), "workflow_calls": tc.get("Workflow", 0),
+        "gold": sc["gold"], "full_answer": final_text, "result_text": result_text, "cost_usd": cost, "cost_known": cost_known, "wall_s": round(wall, 1),
+        "num_turns": turns, "num_turns_result": (o or {}).get("num_turns"), "timed_out": timed_out, "workflow_calls": tc.get("Workflow", 0),
         "subagent_calls": tc.get("Task", 0) + tc.get("Agent", 0), "tool_counts": tc, "compactions": boundaries,
-        **lm, "hits": hits, "session_id": sid, "is_error": bool((o or {}).get("is_error")) or o is None,
-        "subtype": (o or {}).get("subtype"), "stderr": (err_txt or "")[:300] if o is None else "",
+        **lm, "hits": hits, "hits_old_rule": hits_old, "recognition": recog, "session_id": sid,
+        "is_error": bool((o or {}).get("is_error")) or (o is None and not salvaged),
+        "subtype": "timeout_answered" if salvaged else (o or {}).get("subtype"), "stderr": (err_txt or "")[:300] if o is None and not salvaged else "",
         "models": sorted(usage), "config": rec, "config_sha": sha(rec), "finished": now_iso(),
     }
     ctx.append("results.jsonl", row)
     for dd in (proj, statedir):      # the task folder is no longer needed; the transcript is copied
         shutil.rmtree(dd, ignore_errors=True)
     with ctx.lock:
-        ctx.state["units"][uname] = {"status": "done" if o is not None else "failed", "cost": cost}
+        ctx.state["units"][uname] = {"status": "done" if (o is not None or salvaged) else "failed", "cost": cost}
     ctx.save()
     print("  %-22s score %.2f cost $%.3f %5.0fs turns %s wf %d hits %d llm_map %d ($%.3f)%s" % (
         uname, sc["score"], cost, wall, row["num_turns"], row["workflow_calls"], len(hits), lm["llm_map_calls"], lm["llm_map_cost_usd"],
-        "  ERROR" if row["is_error"] else ""), flush=True)
+        ("  TIMEOUT-SCORED" if salvaged else "  ERROR") if row["is_error"] or salvaged else ""), flush=True)
 
 
 # ------------------------------------------------------------------ commands
@@ -470,7 +549,7 @@ def parse_common(r):
     r.add_argument("--cache", default=os.environ.get("OOLONG_CACHE") or os.path.join(HERE, "cache"), help="folder made by fetch.py; holds the gold")
     r.add_argument("--work-base", help="folder for task folders (default: the temp dir)")
     r.add_argument("--call-cap-usd", type=float, default=0.60, help="--max-budget-usd of each claude call")
-    r.add_argument("--timeout-s", type=int, default=900, help="time limit of each call, the same in all arms")
+    r.add_argument("--timeout-s", type=int, default=1200, help="time limit of each call, the same in all arms")
     r.add_argument("--jobs", type=int, default=2)
     r.add_argument("--budget-usd", type=float, default=None, help="pause cleanly: no new unit starts when the total reaches this value minus the largest unit cost seen so far")
 
