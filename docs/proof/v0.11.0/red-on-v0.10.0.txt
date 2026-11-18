@@ -1,0 +1,859 @@
+test_ac259_hybrid_hit_is_tagged_both_with_agent_id (test_f57_subagent_search.Meaning.test_ac259_hybrid_hit_is_tagged_both_with_agent_id) ... FAIL
+test_ac259_index_is_incremental_for_subagent_transcripts (test_f57_subagent_search.Meaning.test_ac259_index_is_incremental_for_subagent_transcripts) ... FAIL
+test_ac259_meaning_search_returns_subagent_chunk_and_second_index_adds_nothing (test_f57_subagent_search.Meaning.test_ac259_meaning_search_returns_subagent_chunk_and_second_index_adds_nothing) ... FAIL
+test_ac259_subagent_text_is_redacted_before_embedding (test_f57_subagent_search.Meaning.test_ac259_subagent_text_is_redacted_before_embedding) ... ok
+test_ac260_out_of_scope_subagent_is_never_indexed_or_found_by_meaning (test_f57_subagent_search.Meaning.test_ac260_out_of_scope_subagent_is_never_indexed_or_found_by_meaning) ... FAIL
+test_f57d_recall_agent_file_mentions_subagent_hits (test_f57_subagent_search.RecallAgentText.test_f57d_recall_agent_file_mentions_subagent_hits) ... FAIL
+test_ac255_agent_tag_comes_after_the_source_tag (test_f57_subagent_search.Search.test_ac255_agent_tag_comes_after_the_source_tag) ... ERROR
+test_ac255_default_search_finds_subagent_hit_with_id_and_tag (test_f57_subagent_search.Search.test_ac255_default_search_finds_subagent_hit_with_id_and_tag) ... FAIL
+test_ac255_main_transcript_ids_are_unchanged (test_f57_subagent_search.Search.test_ac255_main_transcript_ids_are_unchanged) ... ok
+test_ac255_older_fixture_subagent_hit_has_the_same_id_form (test_f57_subagent_search.Search.test_ac255_older_fixture_subagent_hit_has_the_same_id_form) ... FAIL
+test_ac255_role_user_also_reaches_subagent_prompts (test_f57_subagent_search.Search.test_ac255_role_user_also_reaches_subagent_prompts) ... FAIL
+test_ac256_no_subagents_finds_zero_hits (test_f57_subagent_search.Search.test_ac256_no_subagents_finds_zero_hits) ... FAIL
+test_ac256_no_subagents_restores_the_old_scope_for_all_hits (test_f57_subagent_search.Search.test_ac256_no_subagents_restores_the_old_scope_for_all_hits) ... FAIL
+test_ac256_subagents_flag_gives_the_same_output_as_no_flag (test_f57_subagent_search.Search.test_ac256_subagents_flag_gives_the_same_output_as_no_flag) ... FAIL
+test_ac257_open_subagent_id_prints_message_with_heading (test_f57_subagent_search.Search.test_ac257_open_subagent_id_prints_message_with_heading) ... FAIL
+test_ac257_open_unknown_subagent_id_exits_2 (test_f57_subagent_search.Search.test_ac257_open_unknown_subagent_id_exits_2) ... ok
+test_ac257_open_uses_the_id_printed_by_search (test_f57_subagent_search.Search.test_ac257_open_uses_the_id_printed_by_search) ... ERROR
+test_ac258_user_reads_main_transcripts_only (test_f57_subagent_search.Search.test_ac258_user_reads_main_transcripts_only) ... FAIL
+test_ac260_open_does_not_read_out_of_scope_subagent (test_f57_subagent_search.Search.test_ac260_open_does_not_read_out_of_scope_subagent) ... ok
+test_ac260_out_of_scope_subagent_never_appears (test_f57_subagent_search.Search.test_ac260_out_of_scope_subagent_never_appears) ... 
+  test_ac260_out_of_scope_subagent_never_appears (test_f57_subagent_search.Search.test_ac260_out_of_scope_subagent_never_appears) (args=('search', 'PRIVSUBQ', '--no-subagents')) ... FAIL
+test_ac260_out_of_scope_subagent_never_appears (test_f57_subagent_search.Search.test_ac260_out_of_scope_subagent_never_appears) ... FAIL
+test_ac260_private_root_sees_its_own_subagent_only (test_f57_subagent_search.Search.test_ac260_private_root_sees_its_own_subagent_only) ... FAIL
+test_ac261_finishes_within_two_seconds (test_f58_subagent_start.Content.test_ac261_finishes_within_two_seconds) ... FAIL
+test_ac261_header_rules_newest_first_recall_line (test_f58_subagent_start.Content.test_ac261_header_rules_newest_first_recall_line) ... FAIL
+test_ac261_no_decision_and_no_task (test_f58_subagent_start.Content.test_ac261_no_decision_and_no_task) ... FAIL
+test_ac261_only_active_rules_are_listed (test_f58_subagent_start.Content.test_ac261_only_active_rules_are_listed) ... FAIL
+test_ac261_rules_of_another_project_are_not_listed (test_f58_subagent_start.Content.test_ac261_rules_of_another_project_are_not_listed) ... FAIL
+test_ac261_subdirectory_cwd_uses_the_project_root (test_f58_subagent_start.Content.test_ac261_subdirectory_cwd_uses_the_project_root) ... FAIL
+test_ac261_works_for_any_agent_type_and_empty_type (test_f58_subagent_start.Content.test_ac261_works_for_any_agent_type_and_empty_type) ... 
+  test_ac261_works_for_any_agent_type_and_empty_type (test_f58_subagent_start.Content.test_ac261_works_for_any_agent_type_and_empty_type) (atype='Explore') ... FAIL
+  test_ac261_works_for_any_agent_type_and_empty_type (test_f58_subagent_start.Content.test_ac261_works_for_any_agent_type_and_empty_type) (atype='recall') ... FAIL
+  test_ac261_works_for_any_agent_type_and_empty_type (test_f58_subagent_start.Content.test_ac261_works_for_any_agent_type_and_empty_type) (atype='') ... FAIL
+test_f58a_recall_line_has_f55c_sentence_when_agent_file_has_marker (test_f58_subagent_start.Content.test_f58a_recall_line_has_f55c_sentence_when_agent_file_has_marker) ... FAIL
+test_f58a_recall_line_has_no_sentence_for_a_foreign_agent_file (test_f58_subagent_start.Content.test_f58a_recall_line_has_no_sentence_for_a_foreign_agent_file) ... FAIL
+test_ac263_context_cut_at_4000_at_an_entry_boundary (test_f58_subagent_start.Cut.test_ac263_context_cut_at_4000_at_an_entry_boundary) ... FAIL
+test_ac263_cut_with_the_agent_file_sentence_still_within_4000 (test_f58_subagent_start.Cut.test_ac263_cut_with_the_agent_file_sentence_still_within_4000) ... FAIL
+test_ac263_no_more_rules_line_when_everything_fits (test_f58_subagent_start.Cut.test_ac263_no_more_rules_line_when_everything_fits) ... FAIL
+test_ac264_decisions_only_and_no_recall_script_prints_nothing (test_f58_subagent_start.Empty.test_ac264_decisions_only_and_no_recall_script_prints_nothing) ... FAIL
+test_ac264_empty_ledger_file_only_the_recall_line (test_f58_subagent_start.Empty.test_ac264_empty_ledger_file_only_the_recall_line) ... FAIL
+test_ac264_ledger_without_active_rule_only_the_recall_line (test_f58_subagent_start.Empty.test_ac264_ledger_without_active_rule_only_the_recall_line) ... FAIL
+test_ac264_no_ledger_and_no_recall_script_prints_nothing (test_f58_subagent_start.Empty.test_ac264_no_ledger_and_no_recall_script_prints_nothing) ... FAIL
+test_ac264_no_ledger_only_the_recall_line (test_f58_subagent_start.Empty.test_ac264_no_ledger_only_the_recall_line) ... FAIL
+test_f58b_rules_without_recall_script_have_no_recall_line (test_f58_subagent_start.Empty.test_f58b_rules_without_recall_script_have_no_recall_line) ... FAIL
+test_ac267_each_run_appends_one_row (test_f58_subagent_start.Health.test_ac267_each_run_appends_one_row) ... FAIL
+test_ac267_health_row_after_ac261_run (test_f58_subagent_start.Health.test_ac267_health_row_after_ac261_run) ... FAIL
+test_ac267_row_without_rules_counts_zero (test_f58_subagent_start.Health.test_ac267_row_without_rules_counts_zero) ... FAIL
+test_ac266_dry_run_keeps_existing_settings_without_the_entry (test_f58_subagent_start.Install.test_ac266_dry_run_keeps_existing_settings_without_the_entry) ... ok
+test_ac266_dry_run_writes_nothing (test_f58_subagent_start.Install.test_ac266_dry_run_writes_nothing) ... ok
+test_ac266_one_subagent_start_entry_with_the_command (test_f58_subagent_start.Install.test_ac266_one_subagent_start_entry_with_the_command) ... FAIL
+test_ac266_restart_line_prints_again_only_when_the_entry_is_added_again (test_f58_subagent_start.Install.test_ac266_restart_line_prints_again_only_when_the_entry_is_added_again) ... ERROR
+test_ac266_second_install_adds_none_and_no_restart_line (test_f58_subagent_start.Install.test_ac266_second_install_adds_none_and_no_restart_line) ... FAIL
+test_ac266_uninstall_after_plain_install_leaves_no_subagent_start_entry (test_f58_subagent_start.Install.test_ac266_uninstall_after_plain_install_leaves_no_subagent_start_entry) ... ok
+test_ac266_uninstall_removes_it_and_keeps_other_hooks (test_f58_subagent_start.Install.test_ac266_uninstall_removes_it_and_keeps_other_hooks) ... FAIL
+test_ac262_main_handoff_and_agent_note_never_appear (test_f58_subagent_start.Isolation.test_ac262_main_handoff_and_agent_note_never_appear) ... FAIL
+test_ac262_works_when_the_handoff_files_exist_without_a_ledger (test_f58_subagent_start.Isolation.test_ac262_works_when_the_handoff_files_exist_without_a_ledger) ... /private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/helpers.py:372: ResourceWarning: unclosed file <_io.TextIOWrapper name='/private/var/folders/_l/jd5t82r93gv28qgpkm5qv8_h0000gn/T/hh-zi_m326l/home/.local/state/claude-handoffs/58585858-0000-4000-8000-000000000058-latest.md' mode='w' encoding='utf-8'>
+  open(os.path.join(self.hd, sid + "-latest.md"), "w").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+ok
+test_ac265_garbage_and_empty_stdin_print_nothing (test_f58_subagent_start.Off.test_ac265_garbage_and_empty_stdin_print_nothing) ... ok
+test_ac265_missing_cwd_prints_nothing (test_f58_subagent_start.Off.test_ac265_missing_cwd_prints_nothing) ... FAIL
+test_ac265_never_exits_non_zero (test_f58_subagent_start.Off.test_ac265_never_exits_non_zero) ... ok
+test_ac265_no_stdin_prints_nothing (test_f58_subagent_start.Off.test_ac265_no_stdin_prints_nothing) ... ok
+test_ac265_rules_off_prints_nothing (test_f58_subagent_start.Off.test_ac265_rules_off_prints_nothing) ... FAIL
+test_ac265_rules_on_value_still_works (test_f58_subagent_start.Off.test_ac265_rules_on_value_still_works) ... FAIL
+test_ac137_scope_three_sessions_not_private_default_has_subagent (test_f44_recall.Recall.test_ac137_scope_three_sessions_not_private_default_has_subagent) ... FAIL
+test_ac137_no_subagents_flag_removes_the_subagent_hit (test_f44_recall.Recall.test_ac137_no_subagents_flag_removes_the_subagent_hit) ... FAIL
+test_ac137_subagents_flag_is_accepted_and_changes_nothing (test_f44_recall.Recall.test_ac137_subagents_flag_is_accepted_and_changes_nothing) ... FAIL
+
+======================================================================
+ERROR: test_ac255_agent_tag_comes_after_the_source_tag (test_f57_subagent_search.Search.test_ac255_agent_tag_comes_after_the_source_tag)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f57_subagent_search.py", line 65, in test_ac255_agent_tag_comes_after_the_source_tag
+    line = self.sub_lines(self.ok("search", WORD))[0]
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^
+IndexError: list index out of range
+
+======================================================================
+ERROR: test_ac257_open_uses_the_id_printed_by_search (test_f57_subagent_search.Search.test_ac257_open_uses_the_id_printed_by_search)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f57_subagent_search.py", line 118, in test_ac257_open_uses_the_id_printed_by_search
+    line = self.sub_lines(self.ok("search", WORD))[0]
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^
+IndexError: list index out of range
+
+======================================================================
+ERROR: test_ac266_restart_line_prints_again_only_when_the_entry_is_added_again (test_f58_subagent_start.Install.test_ac266_restart_line_prints_again_only_when_the_entry_is_added_again)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f58_subagent_start.py", line 366, in test_ac266_restart_line_prints_again_only_when_the_entry_is_added_again
+    del s["hooks"]["SubagentStart"]
+        ~~~~~~~~~~^^^^^^^^^^^^^^^^^
+KeyError: 'SubagentStart'
+
+======================================================================
+FAIL: test_ac259_hybrid_hit_is_tagged_both_with_agent_id (test_f57_subagent_search.Meaning.test_ac259_hybrid_hit_is_tagged_both_with_agent_id)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f57_subagent_search.py", line 216, in test_ac259_hybrid_hit_is_tagged_both_with_agent_id
+    self.assertEqual(len(lines), 1, out.stdout)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 0 != 1 : mode: hybrid (meaning index covers 14 of 14 messages)
+a1a1a1a1:2 2026-03-01 12:02 assistant [meaning]: Pomodoro it is, 25 minutes ASST2
+c3c3c3c3:1 2026-03-03 12:01 user [meaning]: Pomodoro in sub dir session SUBONE
+b2b2b2b2:1 2026-03-02 12:01 user [meaning]: Pomodoro second chat typed SECOND1
+b2b2b2b2:3 2026-03-02 12:03 assistant [meaning]: LONGSTARTxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+b2b2b2b2:4 2026-03-02 12:04 user [meaning]: Pomodoro follow up FOLLOWUP
+a1a1a1a1:1 2026-03-01 12:01 user [meaning]: Let's use a Pomodoro timer for the planner TYPED1
+a1a1a1a1:5 2026-03-01 12:05 user [meaning]: Typed TYPED5 words  done
+a1a1a1a1:9 2026-03-01 12:09 user [meaning]: BLOCKTYPED9 Pomodoro via blocks typed
+a1a1a1a1:10 2026-03-01 12:10 user [meaning]: my key [redacted] and password=[redacted] end SECRET10
+a1a1a1a1:11 2026-03-01 12:11 user [meaning]: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+a1a1a1a1:12 2026-03-01 12:12 user [meaning]: line one / line two NEEDLE7 tail
+a1a1a1a1:13 2026-03-01 12:13 user [meaning]: FIXEDTEST a.b present here
+a1a1a1a1:14 2026-03-01 12:14 user [meaning]: FIXEDTEST axb present here
+a1a1a1a1:15 2026-03-01 12:15 user [meaning]: Postpone the quarterly offsite until autumn PLANTED77
+14 hits shown of 14 (3 sessions searched)
+
+
+======================================================================
+FAIL: test_ac259_index_is_incremental_for_subagent_transcripts (test_f57_subagent_search.Meaning.test_ac259_index_is_incremental_for_subagent_transcripts)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f57_subagent_search.py", line 228, in test_ac259_index_is_incremental_for_subagent_transcripts
+    self.assertEqual(len(self.rows()), n + 1)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 20 != 21
+
+======================================================================
+FAIL: test_ac259_meaning_search_returns_subagent_chunk_and_second_index_adds_nothing (test_f57_subagent_search.Meaning.test_ac259_meaning_search_returns_subagent_chunk_and_second_index_adds_nothing)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f57_subagent_search.py", line 195, in test_ac259_meaning_search_returns_subagent_chunk_and_second_index_adds_nothing
+    self.assertTrue(any(WORD in t for t in self.fe.all_texts()), "subagent text was not embedded")
+    ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: False is not true : subagent text was not embedded
+
+======================================================================
+FAIL: test_ac260_out_of_scope_subagent_is_never_indexed_or_found_by_meaning (test_f57_subagent_search.Meaning.test_ac260_out_of_scope_subagent_is_never_indexed_or_found_by_meaning)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f57_subagent_search.py", line 245, in test_ac260_out_of_scope_subagent_is_never_indexed_or_found_by_meaning
+    self.assertTrue(any(WORD in t for t in self.fe.all_texts()))
+    ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: False is not true
+
+======================================================================
+FAIL: test_f57d_recall_agent_file_mentions_subagent_hits (test_f57_subagent_search.RecallAgentText.test_f57d_recall_agent_file_mentions_subagent_hits)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f57_subagent_search.py", line 271, in test_f57d_recall_agent_file_mentions_subagent_hits
+    self.assertIn("[agent", t)
+    ~~~~~~~~~~~~~^^^^^^^^^^^^^
+AssertionError: '[agent' not found in '---\nname: recall\ndescription: Searches this project\'s earlier chats word for word with Lossless Handoff recall. It returns short quoted findings with message ids. Use it for wide lookups (many hits, long messages, a whole summary node), so the main context stays small.\ntools: Bash, Read\nmodel: haiku\n---\n<!-- lossless-handoff:recall-agent -->\nYou search the earlier chats of this project with Lossless Handoff recall. You never change files.\n\nUse these commands. Run them from the project folder.\n- Map of summary nodes: `python3 ~/.claude/hooks/recall.py map`\n- Search by words or meaning: `python3 ~/.claude/hooks/recall.py search "<words or regex>"` (add `--node <id>` to search one node)\n- One node and its summary: `python3 ~/.claude/hooks/recall.py describe <node id>`\n- One message and its neighbours: `python3 ~/.claude/hooks/recall.py open <session8>:<line>` (add `--full` for a whole long message)\n\nRules:\n- Return at most 15 findings.\n- Write each finding as a quote of at most 300 characters, with its message id (`<session8>:<line>`) and its node id.\n- If nothing matches, answer `not found`.\n- Do not guess. Do not add a fact that is not in a quote.\n- If a quote and the project decisions list disagree, say so. The decisions list and the user\'s latest words win over old messages.\n'
+
+======================================================================
+FAIL: test_ac255_default_search_finds_subagent_hit_with_id_and_tag (test_f57_subagent_search.Search.test_ac255_default_search_finds_subagent_hit_with_id_and_tag)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f57_subagent_search.py", line 55, in test_ac255_default_search_finds_subagent_hit_with_id_and_tag
+    self.assertEqual(len(lines), 1, out)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^
+AssertionError: 0 != 1 : mode: keyword only (meaning search off: no meaning index yet (run: recall.py index))
+0 hits shown of 0 (3 sessions searched)
+
+
+======================================================================
+FAIL: test_ac255_older_fixture_subagent_hit_has_the_same_id_form (test_f57_subagent_search.Search.test_ac255_older_fixture_subagent_hit_has_the_same_id_form)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f57_subagent_search.py", line 75, in test_ac255_older_fixture_subagent_hit_has_the_same_id_form
+    self.assertEqual(len(lines), 1, out)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^
+AssertionError: 0 != 1 : mode: keyword only (meaning search off: no meaning index yet (run: recall.py index))
+0 hits shown of 0 (3 sessions searched)
+
+
+======================================================================
+FAIL: test_ac255_role_user_also_reaches_subagent_prompts (test_f57_subagent_search.Search.test_ac255_role_user_also_reaches_subagent_prompts)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f57_subagent_search.py", line 88, in test_ac255_role_user_also_reaches_subagent_prompts
+    self.assertEqual(len([l for l in out.split("\n") if l.startswith("%s/%s:1 " % (S8, A8))]), 1, out)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 0 != 1 : mode: keyword only (meaning search off: no meaning index yet (run: recall.py index))
+0 hits shown of 0 (3 sessions searched)
+
+
+======================================================================
+FAIL: test_ac256_no_subagents_finds_zero_hits (test_f57_subagent_search.Search.test_ac256_no_subagents_finds_zero_hits)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f57_subagent_search.py", line 92, in test_ac256_no_subagents_finds_zero_hits
+    out = self.ok("search", WORD, "--no-subagents")
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f44_recall.py", line 218, in ok
+    self.assertEqual((r.returncode, r.stderr), (0, ""), r.stdout)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: Tuples differ: (2, 'recall.py: unrecognized arguments: --no-subagents\n') != (0, '')
+
+First differing element 0:
+2
+0
+
+- (2, 'recall.py: unrecognized arguments: --no-subagents\n')
++ (0, '') : 
+
+======================================================================
+FAIL: test_ac256_no_subagents_restores_the_old_scope_for_all_hits (test_f57_subagent_search.Search.test_ac256_no_subagents_restores_the_old_scope_for_all_hits)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f57_subagent_search.py", line 106, in test_ac256_no_subagents_restores_the_old_scope_for_all_hits
+    out = self.ok("search", "Pomodoro", "--no-subagents")
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f44_recall.py", line 218, in ok
+    self.assertEqual((r.returncode, r.stderr), (0, ""), r.stdout)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: Tuples differ: (2, 'recall.py: unrecognized arguments: --no-subagents\n') != (0, '')
+
+First differing element 0:
+2
+0
+
+- (2, 'recall.py: unrecognized arguments: --no-subagents\n')
++ (0, '') : 
+
+======================================================================
+FAIL: test_ac256_subagents_flag_gives_the_same_output_as_no_flag (test_f57_subagent_search.Search.test_ac256_subagents_flag_gives_the_same_output_as_no_flag)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f57_subagent_search.py", line 102, in test_ac256_subagents_flag_gives_the_same_output_as_no_flag
+    self.assertEqual(flag.stdout, plain.stdout)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'mode[77 chars]x))\nq7f3c9d2:2 2026-03-07 12:02 assistant [wo[103 chars]d)\n' != 'mode[77 chars]x))\n0 hits shown of 0 (3 sessions searched)\n'
+  mode: keyword only (meaning search off: no meaning index yet (run: recall.py index))
+- q7f3c9d2:2 2026-03-07 12:02 assistant [word]: Quokkasub found that the nightly cache job fails at warm up
+- 1 hits shown of 1 (5 sessions searched)
+? ^               ^  ^
++ 0 hits shown of 0 (3 sessions searched)
+? ^               ^  ^
+
+
+======================================================================
+FAIL: test_ac257_open_subagent_id_prints_message_with_heading (test_f57_subagent_search.Search.test_ac257_open_subagent_id_prints_message_with_heading)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f57_subagent_search.py", line 112, in test_ac257_open_subagent_id_prints_message_with_heading
+    out = self.ok("open", hit_id)
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f44_recall.py", line 218, in ok
+    self.assertEqual((r.returncode, r.stderr), (0, ""), r.stdout)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: Tuples differ: (2, 'recall.py: id must look like <sid8>:<line>\n') != (0, '')
+
+First differing element 0:
+2
+0
+
+- (2, 'recall.py: id must look like <sid8>:<line>\n')
++ (0, '') : 
+
+======================================================================
+FAIL: test_ac258_user_reads_main_transcripts_only (test_f57_subagent_search.Search.test_ac258_user_reads_main_transcripts_only)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f57_subagent_search.py", line 131, in test_ac258_user_reads_main_transcripts_only
+    self.assertEqual(len(self.sub_lines(self.ok("search", WORD))), 1)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 0 != 1
+
+======================================================================
+FAIL: test_ac260_out_of_scope_subagent_never_appears (test_f57_subagent_search.Search.test_ac260_out_of_scope_subagent_never_appears) (args=('search', 'PRIVSUBQ', '--no-subagents'))
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f57_subagent_search.py", line 144, in test_ac260_out_of_scope_subagent_never_appears
+    out = self.ok(*args)
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f44_recall.py", line 218, in ok
+    self.assertEqual((r.returncode, r.stderr), (0, ""), r.stdout)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: Tuples differ: (2, 'recall.py: unrecognized arguments: --no-subagents\n') != (0, '')
+
+First differing element 0:
+2
+0
+
+- (2, 'recall.py: unrecognized arguments: --no-subagents\n')
++ (0, '') : 
+
+======================================================================
+FAIL: test_ac260_out_of_scope_subagent_never_appears (test_f57_subagent_search.Search.test_ac260_out_of_scope_subagent_never_appears)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f57_subagent_search.py", line 148, in test_ac260_out_of_scope_subagent_never_appears
+    self.assertEqual(len(self.sub_lines(self.ok("search", WORD))), 1)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 0 != 1
+
+======================================================================
+FAIL: test_ac260_private_root_sees_its_own_subagent_only (test_f57_subagent_search.Search.test_ac260_private_root_sees_its_own_subagent_only)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f57_subagent_search.py", line 153, in test_ac260_private_root_sees_its_own_subagent_only
+    self.assertEqual(len(lines), 1, out)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^
+AssertionError: 0 != 1 : mode: keyword only (meaning search off: no meaning index yet (run: recall.py index))
+0 hits shown of 0 (1 sessions searched)
+
+
+======================================================================
+FAIL: test_ac261_finishes_within_two_seconds (test_f58_subagent_start.Content.test_ac261_finishes_within_two_seconds)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f58_subagent_start.py", line 120, in test_ac261_finishes_within_two_seconds
+    self.sub_ctx()
+    ~~~~~~~~~~~~^^
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f58_subagent_start.py", line 78, in sub_ctx
+    self.assertEqual(h["hookEventName"], "SubagentStart")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'SessionStart' != 'SubagentStart'
+- SessionStart
++ SubagentStart
+
+
+======================================================================
+FAIL: test_ac261_header_rules_newest_first_recall_line (test_f58_subagent_start.Content.test_ac261_header_rules_newest_first_recall_line)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f58_subagent_start.py", line 99, in test_ac261_header_rules_newest_first_recall_line
+    ctx = self.sub_ctx()
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f58_subagent_start.py", line 78, in sub_ctx
+    self.assertEqual(h["hookEventName"], "SubagentStart")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'SessionStart' != 'SubagentStart'
+- SessionStart
++ SubagentStart
+
+
+======================================================================
+FAIL: test_ac261_no_decision_and_no_task (test_f58_subagent_start.Content.test_ac261_no_decision_and_no_task)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f58_subagent_start.py", line 115, in test_ac261_no_decision_and_no_task
+    ctx = self.sub_ctx()
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f58_subagent_start.py", line 78, in sub_ctx
+    self.assertEqual(h["hookEventName"], "SubagentStart")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'SessionStart' != 'SubagentStart'
+- SessionStart
++ SubagentStart
+
+
+======================================================================
+FAIL: test_ac261_only_active_rules_are_listed (test_f58_subagent_start.Content.test_ac261_only_active_rules_are_listed)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f58_subagent_start.py", line 129, in test_ac261_only_active_rules_are_listed
+    ctx = self.sub_ctx()
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f58_subagent_start.py", line 78, in sub_ctx
+    self.assertEqual(h["hookEventName"], "SubagentStart")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'SessionStart' != 'SubagentStart'
+- SessionStart
++ SubagentStart
+
+
+======================================================================
+FAIL: test_ac261_rules_of_another_project_are_not_listed (test_f58_subagent_start.Content.test_ac261_rules_of_another_project_are_not_listed)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f58_subagent_start.py", line 143, in test_ac261_rules_of_another_project_are_not_listed
+    ctx = self.sub_ctx()
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f58_subagent_start.py", line 78, in sub_ctx
+    self.assertEqual(h["hookEventName"], "SubagentStart")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'SessionStart' != 'SubagentStart'
+- SessionStart
++ SubagentStart
+
+
+======================================================================
+FAIL: test_ac261_subdirectory_cwd_uses_the_project_root (test_f58_subagent_start.Content.test_ac261_subdirectory_cwd_uses_the_project_root)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f58_subagent_start.py", line 152, in test_ac261_subdirectory_cwd_uses_the_project_root
+    ctx = self.sub_ctx(payload=self.start_input(cwd=sub))
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f58_subagent_start.py", line 78, in sub_ctx
+    self.assertEqual(h["hookEventName"], "SubagentStart")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'SessionStart' != 'SubagentStart'
+- SessionStart
++ SubagentStart
+
+
+======================================================================
+FAIL: test_ac261_works_for_any_agent_type_and_empty_type (test_f58_subagent_start.Content.test_ac261_works_for_any_agent_type_and_empty_type) (atype='Explore')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f58_subagent_start.py", line 169, in test_ac261_works_for_any_agent_type_and_empty_type
+    ctx = self.sub_ctx(payload=self.start_input(atype=atype))
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f58_subagent_start.py", line 78, in sub_ctx
+    self.assertEqual(h["hookEventName"], "SubagentStart")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'SessionStart' != 'SubagentStart'
+- SessionStart
++ SubagentStart
+
+
+======================================================================
+FAIL: test_ac261_works_for_any_agent_type_and_empty_type (test_f58_subagent_start.Content.test_ac261_works_for_any_agent_type_and_empty_type) (atype='recall')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f58_subagent_start.py", line 169, in test_ac261_works_for_any_agent_type_and_empty_type
+    ctx = self.sub_ctx(payload=self.start_input(atype=atype))
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f58_subagent_start.py", line 78, in sub_ctx
+    self.assertEqual(h["hookEventName"], "SubagentStart")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'SessionStart' != 'SubagentStart'
+- SessionStart
++ SubagentStart
+
+
+======================================================================
+FAIL: test_ac261_works_for_any_agent_type_and_empty_type (test_f58_subagent_start.Content.test_ac261_works_for_any_agent_type_and_empty_type) (atype='')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f58_subagent_start.py", line 169, in test_ac261_works_for_any_agent_type_and_empty_type
+    ctx = self.sub_ctx(payload=self.start_input(atype=atype))
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f58_subagent_start.py", line 78, in sub_ctx
+    self.assertEqual(h["hookEventName"], "SubagentStart")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'SessionStart' != 'SubagentStart'
+- SessionStart
++ SubagentStart
+
+
+======================================================================
+FAIL: test_f58a_recall_line_has_f55c_sentence_when_agent_file_has_marker (test_f58_subagent_start.Content.test_f58a_recall_line_has_f55c_sentence_when_agent_file_has_marker)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f58_subagent_start.py", line 157, in test_f58a_recall_line_has_f55c_sentence_when_agent_file_has_marker
+    ctx = self.sub_ctx()
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f58_subagent_start.py", line 78, in sub_ctx
+    self.assertEqual(h["hookEventName"], "SubagentStart")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'SessionStart' != 'SubagentStart'
+- SessionStart
++ SubagentStart
+
+
+======================================================================
+FAIL: test_f58a_recall_line_has_no_sentence_for_a_foreign_agent_file (test_f58_subagent_start.Content.test_f58a_recall_line_has_no_sentence_for_a_foreign_agent_file)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f58_subagent_start.py", line 164, in test_f58a_recall_line_has_no_sentence_for_a_foreign_agent_file
+    self.assertNotIn(SENTENCE, self.sub_ctx())
+                               ~~~~~~~~~~~~^^
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f58_subagent_start.py", line 78, in sub_ctx
+    self.assertEqual(h["hookEventName"], "SubagentStart")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'SessionStart' != 'SubagentStart'
+- SessionStart
++ SubagentStart
+
+
+======================================================================
+FAIL: test_ac263_context_cut_at_4000_at_an_entry_boundary (test_f58_subagent_start.Cut.test_ac263_context_cut_at_4000_at_an_entry_boundary)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f58_subagent_start.py", line 205, in test_ac263_context_cut_at_4000_at_an_entry_boundary
+    ctx = self.sub_ctx()
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f58_subagent_start.py", line 78, in sub_ctx
+    self.assertEqual(h["hookEventName"], "SubagentStart")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'SessionStart' != 'SubagentStart'
+- SessionStart
++ SubagentStart
+
+
+======================================================================
+FAIL: test_ac263_cut_with_the_agent_file_sentence_still_within_4000 (test_f58_subagent_start.Cut.test_ac263_cut_with_the_agent_file_sentence_still_within_4000)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f58_subagent_start.py", line 230, in test_ac263_cut_with_the_agent_file_sentence_still_within_4000
+    self.assertLessEqual(len(self.sub_ctx()), 4000)
+                             ~~~~~~~~~~~~^^
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f58_subagent_start.py", line 78, in sub_ctx
+    self.assertEqual(h["hookEventName"], "SubagentStart")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'SessionStart' != 'SubagentStart'
+- SessionStart
++ SubagentStart
+
+
+======================================================================
+FAIL: test_ac263_no_more_rules_line_when_everything_fits (test_f58_subagent_start.Cut.test_ac263_no_more_rules_line_when_everything_fits)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f58_subagent_start.py", line 225, in test_ac263_no_more_rules_line_when_everything_fits
+    self.assertNotIn("[more rules:", self.sub_ctx())
+                                     ~~~~~~~~~~~~^^
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f58_subagent_start.py", line 78, in sub_ctx
+    self.assertEqual(h["hookEventName"], "SubagentStart")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'SessionStart' != 'SubagentStart'
+- SessionStart
++ SubagentStart
+
+
+======================================================================
+FAIL: test_ac264_decisions_only_and_no_recall_script_prints_nothing (test_f58_subagent_start.Empty.test_ac264_decisions_only_and_no_recall_script_prints_nothing)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/helpers.py", line 138, in wrapper
+    return fn(*a, **kw)
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f58_subagent_start.py", line 256, in test_ac264_decisions_only_and_no_recall_script_prints_nothing
+    self.assert_silent(self.sub())
+    ~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f58_subagent_start.py", line 89, in assert_silent
+    self.assertEqual((r.returncode, r.stdout, r.stderr), (0, "", ""), (r.stdout, r.stderr))
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: Tuples differ: (0, '{"hookSpecificOutput": {"hookEventName": [153 chars], '') != (0, '', '')
+
+First differing element 1:
+'{"hookSpecificOutput": {"hookEventName": [148 chars]}}\n'
+''
+
++ (0, '', '')
+- (0,
+-  '{"hookSpecificOutput": {"hookEventName": "SessionStart", '
+-  '"additionalContext": "HANDOFF DEGRADED: no handoff file for this session. '
+-  'Read the transcript (see session metadata) before acting."}}\n',
+-  '') : ('{"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": "HANDOFF DEGRADED: no handoff file for this session. Read the transcript (see session metadata) before acting."}}\n', '')
+
+======================================================================
+FAIL: test_ac264_empty_ledger_file_only_the_recall_line (test_f58_subagent_start.Empty.test_ac264_empty_ledger_file_only_the_recall_line)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f58_subagent_start.py", line 247, in test_ac264_empty_ledger_file_only_the_recall_line
+    self.assertEqual(self.sub_ctx().strip(), RECALL_LINE)
+                     ~~~~~~~~~~~~^^
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f58_subagent_start.py", line 78, in sub_ctx
+    self.assertEqual(h["hookEventName"], "SubagentStart")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'SessionStart' != 'SubagentStart'
+- SessionStart
++ SubagentStart
+
+
+======================================================================
+FAIL: test_ac264_ledger_without_active_rule_only_the_recall_line (test_f58_subagent_start.Empty.test_ac264_ledger_without_active_rule_only_the_recall_line)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f58_subagent_start.py", line 242, in test_ac264_ledger_without_active_rule_only_the_recall_line
+    ctx = self.sub_ctx()
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f58_subagent_start.py", line 78, in sub_ctx
+    self.assertEqual(h["hookEventName"], "SubagentStart")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'SessionStart' != 'SubagentStart'
+- SessionStart
++ SubagentStart
+
+
+======================================================================
+FAIL: test_ac264_no_ledger_and_no_recall_script_prints_nothing (test_f58_subagent_start.Empty.test_ac264_no_ledger_and_no_recall_script_prints_nothing)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/helpers.py", line 138, in wrapper
+    return fn(*a, **kw)
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f58_subagent_start.py", line 251, in test_ac264_no_ledger_and_no_recall_script_prints_nothing
+    self.assert_silent(self.sub())
+    ~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f58_subagent_start.py", line 89, in assert_silent
+    self.assertEqual((r.returncode, r.stdout, r.stderr), (0, "", ""), (r.stdout, r.stderr))
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: Tuples differ: (0, '{"hookSpecificOutput": {"hookEventName": [153 chars], '') != (0, '', '')
+
+First differing element 1:
+'{"hookSpecificOutput": {"hookEventName": [148 chars]}}\n'
+''
+
++ (0, '', '')
+- (0,
+-  '{"hookSpecificOutput": {"hookEventName": "SessionStart", '
+-  '"additionalContext": "HANDOFF DEGRADED: no handoff file for this session. '
+-  'Read the transcript (see session metadata) before acting."}}\n',
+-  '') : ('{"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": "HANDOFF DEGRADED: no handoff file for this session. Read the transcript (see session metadata) before acting."}}\n', '')
+
+======================================================================
+FAIL: test_ac264_no_ledger_only_the_recall_line (test_f58_subagent_start.Empty.test_ac264_no_ledger_only_the_recall_line)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f58_subagent_start.py", line 236, in test_ac264_no_ledger_only_the_recall_line
+    ctx = self.sub_ctx()
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f58_subagent_start.py", line 78, in sub_ctx
+    self.assertEqual(h["hookEventName"], "SubagentStart")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'SessionStart' != 'SubagentStart'
+- SessionStart
++ SubagentStart
+
+
+======================================================================
+FAIL: test_f58b_rules_without_recall_script_have_no_recall_line (test_f58_subagent_start.Empty.test_f58b_rules_without_recall_script_have_no_recall_line)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/helpers.py", line 138, in wrapper
+    return fn(*a, **kw)
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f58_subagent_start.py", line 261, in test_f58b_rules_without_recall_script_have_no_recall_line
+    ctx = self.sub_ctx()
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f58_subagent_start.py", line 78, in sub_ctx
+    self.assertEqual(h["hookEventName"], "SubagentStart")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'SessionStart' != 'SubagentStart'
+- SessionStart
++ SubagentStart
+
+
+======================================================================
+FAIL: test_ac267_each_run_appends_one_row (test_f58_subagent_start.Health.test_ac267_each_run_appends_one_row)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f58_subagent_start.py", line 431, in test_ac267_each_run_appends_one_row
+    self.sub_ctx()
+    ~~~~~~~~~~~~^^
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f58_subagent_start.py", line 78, in sub_ctx
+    self.assertEqual(h["hookEventName"], "SubagentStart")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'SessionStart' != 'SubagentStart'
+- SessionStart
++ SubagentStart
+
+
+======================================================================
+FAIL: test_ac267_health_row_after_ac261_run (test_f58_subagent_start.Health.test_ac267_health_row_after_ac261_run)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f58_subagent_start.py", line 419, in test_ac267_health_row_after_ac261_run
+    ctx = self.sub_ctx()
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f58_subagent_start.py", line 78, in sub_ctx
+    self.assertEqual(h["hookEventName"], "SubagentStart")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'SessionStart' != 'SubagentStart'
+- SessionStart
++ SubagentStart
+
+
+======================================================================
+FAIL: test_ac267_row_without_rules_counts_zero (test_f58_subagent_start.Health.test_ac267_row_without_rules_counts_zero)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f58_subagent_start.py", line 439, in test_ac267_row_without_rules_counts_zero
+    self.sub_ctx()  # no ledger: only the recall line
+    ~~~~~~~~~~~~^^
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f58_subagent_start.py", line 78, in sub_ctx
+    self.assertEqual(h["hookEventName"], "SubagentStart")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'SessionStart' != 'SubagentStart'
+- SessionStart
++ SubagentStart
+
+
+======================================================================
+FAIL: test_ac266_one_subagent_start_entry_with_the_command (test_f58_subagent_start.Install.test_ac266_one_subagent_start_entry_with_the_command)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f58_subagent_start.py", line 348, in test_ac266_one_subagent_start_entry_with_the_command
+    self.assertEqual(len(ours), 1, self.sub_entries())
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 0 != 1 : []
+
+======================================================================
+FAIL: test_ac266_second_install_adds_none_and_no_restart_line (test_f58_subagent_start.Install.test_ac266_second_install_adds_none_and_no_restart_line)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f58_subagent_start.py", line 356, in test_ac266_second_install_adds_none_and_no_restart_line
+    self.assertEqual(self.lines(r1).count(RESTART_LINE), 1, r1.stdout)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 0 != 1 : warning: HANDOFF CHECK: Claude Code deletes chat transcripts after 30 days (cleanupPeriodDays), so recall loses older messages. Set "cleanupPeriodDays": 365 in ~/.claude/settings.json, or run ./install.sh --keep-transcripts.
+settings: add PreCompact hook (timeout 150)
+settings: add PostToolUse nudge hook (matcher *, timeout 5)
+settings: add SessionStart compact --part 1 (timeout 10)
+settings: add SessionStart compact --part 2 (timeout 10)
+settings: add SessionStart compact --part 3 (timeout 10)
+settings: add SessionStart compact --ledger --part 1 (timeout 10)
+settings: add SessionStart compact --ledger --part 2 (timeout 10)
+settings: add SessionStart compact --ledger --part 3 (timeout 10)
+settings: add SessionStart startup --ledger --part 1 (timeout 10)
+settings: add SessionStart startup --ledger --part 2 (timeout 10)
+settings: add SessionStart startup --ledger --part 3 (timeout 10)
+settings: add SessionStart startup --check (timeout 5)
+settings: add SessionStart resume --ledger --part 1 (timeout 10)
+settings: add SessionStart resume --ledger --part 2 (timeout 10)
+settings: add SessionStart resume --ledger --part 3 (timeout 10)
+settings: add SessionStart resume --check (timeout 5)
+settings: add SessionEnd recall hook (timeout 5)
+settings: add permissions.allow Edit(~/.local/state/claude-handoffs/**)
+settings: add permissions.allow Bash(python3 ~/.claude/hooks/recall.py:*)
+settings: set env.CLAUDE_CODE_AUTO_COMPACT_WINDOW = 400000
+settings: written /private/var/folders/_l/jd5t82r93gv28qgpkm5qv8_h0000gn/T/f58-d1ao4qhc/home/.claude/settings.json
+install hook: /private/var/folders/_l/jd5t82r93gv28qgpkm5qv8_h0000gn/T/f58-d1ao4qhc/home/.claude/hooks/precompact-handoff.py
+install hook: /private/var/folders/_l/jd5t82r93gv28qgpkm5qv8_h0000gn/T/f58-d1ao4qhc/home/.claude/hooks/postcompact-inject.py
+install hook: /private/var/folders/_l/jd5t82r93gv28qgpkm5qv8_h0000gn/T/f58-d1ao4qhc/home/.claude/hooks/handoff-nudge.py
+install hook: /private/var/folders/_l/jd5t82r93gv28qgpkm5qv8_h0000gn/T/f58-d1ao4qhc/home/.claude/hooks/recall.py
+install hook: /private/var/folders/_l/jd5t82r93gv28qgpkm5qv8_h0000gn/T/f58-d1ao4qhc/home/.claude/hooks/claims.json
+install recall subagent: /private/var/folders/_l/jd5t82r93gv28qgpkm5qv8_h0000gn/T/f58-d1ao4qhc/home/.claude/agents/recall.md
+manifest: /private/var/folders/_l/jd5t82r93gv28qgpkm5qv8_h0000gn/T/f58-d1ao4qhc/home/.claude/hooks/.handoff-manifest.json
+create state dir: /private/var/folders/_l/jd5t82r93gv28qgpkm5qv8_h0000gn/T/f58-d1ao4qhc/home/.local/state/claude-handoffs
+
+Meaning search: skipped the model pull (not interactive). Run: ollama pull bge-m3   (or rerun install with --yes)
+nightly index job: skipped (--no-nightly)
+nightly reconcile job: skipped (--no-nightly)
+
+Installed.
+Restart open Claude Code sessions: hooks load when a session starts.
+
+Recall: the first index of your earlier chats is building in the background (log: /private/var/folders/_l/jd5t82r93gv28qgpkm5qv8_h0000gn/T/f58-d1ao4qhc/home/.local/state/claude-handoffs/recall/index-all.log).
+Chats are indexed automatically when they end. Search from a project folder:  python3 ~/.claude/hooks/recall.py search "words"
+
+Verify after the first compaction: tail -n 3 /private/var/folders/_l/jd5t82r93gv28qgpkm5qv8_h0000gn/T/f58-d1ao4qhc/home/.local/state/claude-handoffs/health.jsonl
+Headless runs (claude -p, SDK) load these hooks too, except with --bare. To keep them under --setting-sources without user, run ./install.sh --managed-hooks.
+
+
+======================================================================
+FAIL: test_ac266_uninstall_removes_it_and_keeps_other_hooks (test_f58_subagent_start.Install.test_ac266_uninstall_removes_it_and_keeps_other_hooks)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f58_subagent_start.py", line 396, in test_ac266_uninstall_removes_it_and_keeps_other_hooks
+    self.assertEqual(len(self.ours()), 1)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 0 != 1
+
+======================================================================
+FAIL: test_ac262_main_handoff_and_agent_note_never_appear (test_f58_subagent_start.Isolation.test_ac262_main_handoff_and_agent_note_never_appear)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f58_subagent_start.py", line 187, in test_ac262_main_handoff_and_agent_note_never_appear
+    self.assertIn("RULEAAA", r.stdout)  # not empty: the rules are there
+    ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'RULEAAA' not found in '{"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": "HANDOFF DEGRADED: no health record for this compaction. Verify the handoff against the transcript before acting.\\nPre-compaction handoff (auto-saved):\\nTWINLATEST-93 handoff of this subagent"}}\n'
+
+======================================================================
+FAIL: test_ac265_missing_cwd_prints_nothing (test_f58_subagent_start.Off.test_ac265_missing_cwd_prints_nothing)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f58_subagent_start.py", line 292, in test_ac265_missing_cwd_prints_nothing
+    self.assert_silent(self.sub(payload=p))
+    ~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f58_subagent_start.py", line 89, in assert_silent
+    self.assertEqual((r.returncode, r.stdout, r.stderr), (0, "", ""), (r.stdout, r.stderr))
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: Tuples differ: (0, '{"hookSpecificOutput": {"hookEventName": [153 chars], '') != (0, '', '')
+
+First differing element 1:
+'{"hookSpecificOutput": {"hookEventName": [148 chars]}}\n'
+''
+
++ (0, '', '')
+- (0,
+-  '{"hookSpecificOutput": {"hookEventName": "SessionStart", '
+-  '"additionalContext": "HANDOFF DEGRADED: no handoff file for this session. '
+-  'Read the transcript (see session metadata) before acting."}}\n',
+-  '') : ('{"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": "HANDOFF DEGRADED: no handoff file for this session. Read the transcript (see session metadata) before acting."}}\n', '')
+
+======================================================================
+FAIL: test_ac265_rules_off_prints_nothing (test_f58_subagent_start.Off.test_ac265_rules_off_prints_nothing)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f58_subagent_start.py", line 271, in test_ac265_rules_off_prints_nothing
+    self.assert_silent(self.sub(extra={"HANDOFF_SUBAGENT_RULES": "0"}))
+    ~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f58_subagent_start.py", line 89, in assert_silent
+    self.assertEqual((r.returncode, r.stdout, r.stderr), (0, "", ""), (r.stdout, r.stderr))
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: Tuples differ: (0, '{"hookSpecificOutput": {"hookEventName": [153 chars], '') != (0, '', '')
+
+First differing element 1:
+'{"hookSpecificOutput": {"hookEventName": [148 chars]}}\n'
+''
+
++ (0, '', '')
+- (0,
+-  '{"hookSpecificOutput": {"hookEventName": "SessionStart", '
+-  '"additionalContext": "HANDOFF DEGRADED: no handoff file for this session. '
+-  'Read the transcript (see session metadata) before acting."}}\n',
+-  '') : ('{"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": "HANDOFF DEGRADED: no handoff file for this session. Read the transcript (see session metadata) before acting."}}\n', '')
+
+======================================================================
+FAIL: test_ac265_rules_on_value_still_works (test_f58_subagent_start.Off.test_ac265_rules_on_value_still_works)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f58_subagent_start.py", line 276, in test_ac265_rules_on_value_still_works
+    self.assertIn("RULEAAA", r.stdout)
+    ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'RULEAAA' not found in '{"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": "HANDOFF DEGRADED: no handoff file for this session. Read the transcript (see session metadata) before acting."}}\n'
+
+======================================================================
+FAIL: test_ac137_scope_three_sessions_not_private_default_has_subagent (test_f44_recall.Recall.test_ac137_scope_three_sessions_not_private_default_has_subagent)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f44_recall.py", line 247, in test_ac137_scope_three_sessions_not_private_default_has_subagent
+    self.assertIn("SUBAGENTONE", out)
+    ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'SUBAGENTONE' not found in 'mode: keyword only (meaning search off: no meaning index yet (run: recall.py index))\nc3c3c3c3:1 2026-03-03 12:01 user [word]: Pomodoro in sub dir session SUBONE\nb2b2b2b2:4 2026-03-02 12:04 user [word]: Pomodoro follow up FOLLOWUP\nb2b2b2b2:1 2026-03-02 12:01 user [word]: Pomodoro second chat typed SECOND1\na1a1a1a1:9 2026-03-01 12:09 user [word]: BLOCKTYPED9 Pomodoro via blocks typed\na1a1a1a1:4 2026-03-01 12:04 tool [word]: Bash {"command": "echo Pomodoro TOOLIN"}\na1a1a1a1:3 2026-03-01 12:03 tool [word]: TOOLRES Pomodoro output line\na1a1a1a1:2 2026-03-01 12:02 assistant [word]: Pomodoro it is, 25 minutes ASST2\na1a1a1a1:1 2026-03-01 12:01 user [word]: Let\'s use a Pomodoro timer for the planner TYPED1\n8 hits shown of 8 (3 sessions searched)\n'
+
+======================================================================
+FAIL: test_ac137_no_subagents_flag_removes_the_subagent_hit (test_f44_recall.Recall.test_ac137_no_subagents_flag_removes_the_subagent_hit)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f44_recall.py", line 253, in test_ac137_no_subagents_flag_removes_the_subagent_hit
+    out = self.ok("search", "Pomodoro", "--no-subagents")
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f44_recall.py", line 218, in ok
+    self.assertEqual((r.returncode, r.stderr), (0, ""), r.stdout)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: Tuples differ: (2, 'recall.py: unrecognized arguments: --no-subagents\n') != (0, '')
+
+First differing element 0:
+2
+0
+
+- (2, 'recall.py: unrecognized arguments: --no-subagents\n')
++ (0, '') : 
+
+======================================================================
+FAIL: test_ac137_subagents_flag_is_accepted_and_changes_nothing (test_f44_recall.Recall.test_ac137_subagents_flag_is_accepted_and_changes_nothing)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f44_recall.py", line 260, in test_ac137_subagents_flag_is_accepted_and_changes_nothing
+    self.assertEqual(out, self.ok("search", "Pomodoro"))
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'mode[77 chars]x))\nab:1 2026-03-05 12:01 assistant [word]: P[706 chars]d)\n' != 'mode[77 chars]x))\nc3c3c3c3:1 2026-03-03 12:01 user [word]: [627 chars]d)\n'
+Diff is 936 characters long. Set self.maxDiff to None to see it.
+
+----------------------------------------------------------------------
+Ran 60 tests in 17.406s
+
+FAILED (failures=49, errors=3)
+Managed (unittest.loader._FailedTest.Managed) ... ERROR
+
+======================================================================
+ERROR: Managed (unittest.loader._FailedTest.Managed)
+----------------------------------------------------------------------
+AttributeError: module 'test_f46_subagent_isolation' has no attribute 'Managed'
+
+----------------------------------------------------------------------
+Ran 1 test in 0.000s
+
+FAILED (errors=1)
+=== AC 187 amendment (F58.c): ManagedHooks on wt-p2 ===
+test_ac187_check_accepts_precompact_in_managed_file_only (test_f46_subagent_isolation.ManagedHooks.test_ac187_check_accepts_precompact_in_managed_file_only) ... /private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f46_subagent_isolation.py:300: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/_l/jd5t82r93gv28qgpkm5qv8_h0000gn/T/hh-s3vtgsg1/home/.claude/settings.json' mode='w' encoding='utf-8'>
+test_ac187_keeps_existing_system_keys (test_f46_subagent_isolation.ManagedHooks.test_ac187_keeps_existing_system_keys) ... /private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f46_subagent_isolation.py:282: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/_l/jd5t82r93gv28qgpkm5qv8_h0000gn/T/hh-p3ns2d5m/etc/managed-settings.json' mode='w' encoding='utf-8'>
+test_ac187_managed_file_has_the_subagent_start_entry (test_f46_subagent_isolation.ManagedHooks.test_ac187_managed_file_has_the_subagent_start_entry) ... /private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f46_subagent_isolation.py:262: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/_l/jd5t82r93gv28qgpkm5qv8_h0000gn/T/hh-dc_3bckz/home/.local/state/claude-handoffs/managed-settings.json' mode='r' encoding='utf-8'>
+test_ac187_writes_exactly_the_handoff_entries (test_f46_subagent_isolation.ManagedHooks.test_ac187_writes_exactly_the_handoff_entries) ... /private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f46_subagent_isolation.py:262: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/_l/jd5t82r93gv28qgpkm5qv8_h0000gn/T/hh-8upli2tk/home/.local/state/claude-handoffs/managed-settings.json' mode='r' encoding='utf-8'>
+FAIL: test_ac187_keeps_existing_system_keys (test_f46_subagent_isolation.ManagedHooks.test_ac187_keeps_existing_system_keys)
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f46_subagent_isolation.py", line 285, in test_ac187_keeps_existing_system_keys
+FAIL: test_ac187_managed_file_has_the_subagent_start_entry (test_f46_subagent_isolation.ManagedHooks.test_ac187_managed_file_has_the_subagent_start_entry)
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f46_subagent_isolation.py", line 277, in test_ac187_managed_file_has_the_subagent_start_entry
+FAIL: test_ac187_writes_exactly_the_handoff_entries (test_f46_subagent_isolation.ManagedHooks.test_ac187_writes_exactly_the_handoff_entries)
+  File "/private/tmp/claude-501/-Users-pratik-CodeBase-lossless-handoff/a7d00376-ffa6-4fe4-a513-dcbd31a17f2c/scratchpad/lht-move/lossless-handoff-tests/test_f46_subagent_isolation.py", line 268, in test_ac187_writes_exactly_the_handoff_entries
+Ran 4 tests in 0.905s
+FAILED (failures=3)
