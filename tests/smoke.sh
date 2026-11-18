@@ -794,6 +794,7 @@ ok "F54: leaves, ids, append only, SessionStart line, subagent, map, describe, s
   # not ours: left unchanged; uninstall keeps it
   printf 'mine\n' > "$AG"; cp "$AG" "$T/f55.mine"
   o="$("$ROOT/install.sh" --no-nightly)"
+  # shellcheck disable=SC2088  # the literal ~ is the expected output text
   cmp -s "$AG" "$T/f55.mine" && grep -qF "~/.claude/agents/recall.md exists and is not ours; left unchanged." <<<"$o" || fail "F55.a: foreign file touched"
   ! grep -q "ask the recall subagent" <<<"$(run55)" || fail "F55.c: sentence present without our agent file"
   "$ROOT/uninstall.sh" >/dev/null; [ -f "$AG" ] || fail "F55.b: uninstall removed a foreign file"
