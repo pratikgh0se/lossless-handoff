@@ -1,0 +1,13 @@
+{
+ "hf_dataset": "oolongbench/oolong-synth",
+ "hf_revision": "81d2f8d9349f6ff329d695f9be494051e9f05cb9",
+ "hf_revision_note": "Hugging Face commit, last modified 2026-10-19. Includes the 2026-06-20 correction of 14 instances.",
+ "oolong_repo": "https://github.com/abertsch72/oolong",
+ "oolong_commit": "0bb7eabe839218fee7fe8d007f41cfc2fd3ae24c",
+ "scorer_file": "src/eval/eval_helpers.py",
+ "scorer_function": "synth_process_response and synth_attempt_answer_parse",
+ "dataset": "trec_coarse",
+ "split": "validation",
+ "split_note": "trec_coarse is a validation task in this data set. It is not in the test split. Checked on 2026-11-18.",
+ "pinned_on": "2026-11-18"
+}

@@ -1,0 +1,40 @@
+{
+ "id": "P4-1",
+ "registered_on": "2026-11-18",
+ "status": "pre-registered. Commit this file before any scored run. The harness refuses to run if the file is not committed.",
+ "question": "Does plain Claude Code still lose on large aggregation tasks, so that an llm_map tool is worth building?",
+ "data": {
+  "dataset": "trec_coarse",
+  "lengths_planned": [
+   "32K",
+   "128K"
+  ],
+  "decision_length": "128K"
+ },
+ "plain_arms": [
+  "A",
+  "B"
+ ],
+ "score_metric": "mean OOLONG score (scorer.py), cleaned set, best plain arm = the higher mean of A and B at the decision length",
+ "map_plan_estimate_usd_per_task": {
+  "128K": 0.4,
+  "basis": "scratchpad lcm-gap-review.md section 5.4: all items go once through a small model, about 150 prompt tokens per item, plus about $0.30 of main-model control. The value is a proposal. The user confirms it before the first scored slice run.",
+  "registered_by": "pre-registered by the orchestrator 2026-11-18; may be changed by Pratik only before the full eval, never after seeing the full-eval data"
+ },
+ "rule": {
+  "build_llm_map_if": [
+   "best plain arm mean score at 128K is 0.70 or less",
+   "OR best plain arm cost per task at 128K is more than 2.0 times map_plan_estimate_usd_per_task"
+  ],
+  "do_not_build_if": "best plain arm mean score at 128K is 0.85 or more AND its cost per task is within 1.5 times map_plan_estimate_usd_per_task",
+  "otherwise": "the user decides, with the table"
+ },
+ "thresholds": {
+  "build_score_max": 0.7,
+  "build_cost_ratio_min": 2.0,
+  "no_build_score_min": 0.85,
+  "no_build_cost_ratio_max": 1.5
+ },
+ "sample_size_note": "30 paired tasks per arm see only a gap of 0.15 or more. With a paired SD of about 0.3 the 95 percent half-width is about 0.11. A smaller gap is not a result. The report prints this note.",
+ "not_a_decision": "A run with fewer than 10 paired tasks at the decision length (for example the 2-task pilot) never applies this rule. The report prints 'rule not applied'."
+}
