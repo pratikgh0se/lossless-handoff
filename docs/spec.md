@@ -825,3 +825,78 @@ ACs:
 - 235. After AC 229's run and after AC 230's run, the new health row has `"steer": "printed"`; after 232, `"off"`.
 
 Version: hooks 1.11.0; release 0.9.0. `HOOK_VERSION` in both hooks and the `hook_version` in health rows and sidecars is `1.11.0`. This amends the version value in ACs 136, 150, 172, 180, 188 again.
+
+## F54 Summary nodes (2026-11-18)
+Why: the LCM paper keeps a DAG of summary nodes, each with an id and a link to the messages it covers (`lcm_describe`, grep grouped by node). Here, after many compactions, the model sees only the newest handoff and a flat search: it has no map of the session and no way from a summary back to its messages. Claude Code's transcripts already hold every needed fact (`compact_boundary` records and the `isCompactSummary` record), so leaf nodes need no model call.
+
+**F54.a Store.** Each project ledger folder (the folder that holds `decisions.md`) gets `nodes.jsonl`, one JSON object per line, append only. A leaf node has:
+- `id`: `n` + the first 10 hex characters of sha1(`<session id>:<boundary uuid>`). Stable: the same boundary always gives the same id.
+- `kind`: `"leaf"`.
+- `session`: the session id. `agent`: the subagent id, or `null` for the main chat. `transcript`: the absolute transcript path.
+- `seq`: 1 for the first `compact_boundary` in that transcript, 2 for the second, and so on.
+- `boundary_uuid`, `time` (the boundary record's timestamp), `trigger`, `pre_tokens` (from `compactMetadata`, `null` if missing).
+- `first_line`, `last_line`: the 1-based transcript line range this node covers: from the line after the previous boundary (line 1 for `seq` 1) to the line before this boundary.
+- `prev`: the id of the leaf with `seq - 1` in the same transcript, or `null`.
+- `handoff`: the path of the handoff file written for this compaction if one exists, else `null`.
+Ids are unique in the file. A malformed line is skipped by readers and never crashes them.
+
+**F54.b Sync.** One function syncs a transcript: it reads the transcript from the byte offset it reached last time (kept in `nodes.state.json` next to `nodes.jsonl`), and appends a node for each new `compact_boundary`. It holds the same kind of lock as the ledger writes. If a transcript got shorter or was replaced, it rescans that transcript from the start and adds only missing ids. It runs:
+1. In the SessionStart `compact` hook, for the session's own transcript (the agent's own transcript for a subagent), before the output is built. A sync error never changes the rest of the hook's output and never gives a non-zero exit.
+2. In `recall.py map`, `describe`, `search --node`, for every transcript of the project (main chats and their `subagents/agent-*.jsonl`).
+3. In `recall.py nodes --backfill`, for every transcript of the project. It prints `nodes: <added> added, <total> total`.
+
+**F54.c Commands.**
+- `recall.py map [--session S|all] [--limit N]` (default all, 200): one line per leaf, grouped by session, oldest first:
+  `<id> <time YYYY-MM-DD HH:MM> <session8>[/<agent8>] #<seq> lines <first>-<last> <pre_tokens> tokens: <gist>`
+  The gist is the first 160 characters (whitespace collapsed) of the node's Claude Code summary section whose heading contains `Current Work`; if there is none, of the summary text after its first line. No summary found: gist `(no summary)`. The last line is `<n> nodes in <k> sessions`. No nodes: `no summary nodes yet`, exit 0.
+- `recall.py describe <id>`: the node's fields one per line (`id:`, `session:`, `agent:`, `seq:`, `time:`, `lines:`, `pre_tokens:`, `prev:`, `handoff:`), then `open: python3 ~/.claude/hooks/recall.py open <session8>:<first_line>`, then a blank line and the full Claude Code summary text for that boundary (the `isCompactSummary` record that follows it; cut by the normal output cap). Unknown id: `no node <id>`, exit 1.
+- `recall.py search ... --node <id>`: only hits whose transcript is the node's transcript and whose line is in `first_line`..`last_line`. Unknown id: `no node <id>`, exit 1.
+- Every `search` hit line (word, meaning or hybrid) ends with ` [node <id>]` when the hit's transcript line falls in a leaf's range, and ` [node live]` when it is after the transcript's last boundary.
+
+**F54.d Inject.** If the sync found a leaf for the boundary of this compaction, the SessionStart `compact` output gets one more line right after the recall line:
+`- summary node: this chat continues after node <id> (compaction #<seq>, lines <first>-<last>). See all nodes: python3 ~/.claude/hooks/recall.py map; one node: recall.py describe <id>.`
+No leaf found: no line. The `startup` and `resume` sources do not get it.
+
+**F54.e Proof.** `--prove --days N` gets a `nodes` check over the transcripts in the window, after a sync: every `compact_boundary` has exactly one leaf; in each transcript the leaf ranges do not overlap, start at line 1, and leave no gap up to the last boundary. It prints `nodes: <b> boundaries, <n> leaves, <bad> bad` and counts as failed when `bad` > 0.
+
+ACs:
+- 236. A fixture transcript with 3 `compact_boundary` records, then a SessionStart `compact` run: `nodes.jsonl` has 3 leaves with `seq` 1, 2, 3; each `first_line`/`last_line` matches the boundary lines; `prev` links 2 to 1 and 3 to 2; `id` equals `n` + sha1(`<session>:<uuid>`)[:10].
+- 237. The same run twice, and `recall.py nodes --backfill` after it: still 3 leaves (no duplicate ids); backfill prints `nodes: 0 added, 3 total`.
+- 238. Append a 4th boundary to the transcript and run SessionStart `compact` again: 4 leaves; the first 3 lines of `nodes.jsonl` are unchanged.
+- 239. A subagent transcript (`<session>/subagents/agent-<id>.jsonl`) with 1 boundary, SessionStart `compact` with that `agent_id` and `agent_transcript_path`: 1 leaf with `agent` = that id and `transcript` = the subagent path.
+- 240. `recall.py map` on AC 236's project: 3 node lines in the F54.c form, oldest first, then `3 nodes in 1 sessions`; each gist starts with the text of the matching summary's `Current Work` section.
+- 241. `recall.py map` in a project with no boundaries: `no summary nodes yet`, exit 0.
+- 242. `recall.py describe <id of seq 2>`: lines `seq: 2`, `lines: <first>-<last>`, the `open:` line with `<session8>:<first_line>`, and the full summary text of boundary 2 (a unique token placed in that summary appears; the token of summary 3 does not).
+- 243. `recall.py describe nzzzzzzzzzz`: `no node nzzzzzzzzzz`, exit 1.
+- 244. A token present at one line inside node 2's range and at one line inside node 3's range: `search <token> --node <id2>` shows only the node 2 hit; plain `search <token>` shows both hits, tagged `[node <id2>]` and `[node <id3>]`. A hit after the last boundary is tagged `[node live]`.
+- 245. The SessionStart `compact` output (AC 236 setup) contains the F54.d line with the id, `#3` and the line range of leaf 3. `startup` and `resume` outputs do not contain `summary node:`.
+- 246. A transcript with no boundary: SessionStart `compact` output has no `summary node:` line, exit 0. `nodes.jsonl` that holds a malformed line: `map` still lists the valid nodes, no traceback.
+- 247. `--prove --days 1` on AC 236's setup prints `nodes: 3 boundaries, 3 leaves, 0 bad`. After a node line is edited so two ranges overlap, it prints `bad` > 0 and the prove result counts it as failed.
+
+## F55 Recall subagent (2026-11-18)
+Why: in the paper, expansion is "restricted to sub-agents", so that recalled text does not fill the main context. Here the main agent runs `recall.py open`, up to 45,000 characters per call, and that text stays in context until the next compaction.
+
+**F55.a Agent file.** `install.sh` writes `~/.claude/agents/recall.md` when the file is missing, or when the file holds the marker line `<!-- lossless-handoff:recall-agent -->`. It never overwrites a file without the marker; in that case it prints `~/.claude/agents/recall.md exists and is not ours; left unchanged.` `--dry-run` writes nothing. The file:
+- frontmatter: `name: recall`; `description:` says it searches this project's earlier chats word for word with Lossless Handoff recall and returns short quoted findings with message ids, and that it is for wide lookups so the main context stays small; `tools: Bash, Read`; `model: haiku`.
+- body: the marker line; use `recall.py map`, `search`, `describe` and `open` (with the full `python3 ~/.claude/hooks/recall.py` path); return at most 15 findings, each a quote of at most 300 characters with its message id (`<session8>:<line>`) and node id; say `not found` when nothing matches; never guess or add facts that are not in a quote; the decisions list and the user's latest words win over old messages.
+**F55.b Uninstall.** `uninstall.sh` removes `~/.claude/agents/recall.md` only when it holds the marker.
+**F55.c Recall line.** When `~/.claude/agents/recall.md` exists and holds the marker, the injected recall line (every source that injects it) ends with one more sentence: `For wide lookups (many hits, long messages, or a whole node), ask the recall subagent (Agent tool, subagent_type "recall") so the main context stays small; for one exact fact, search directly.` Without the file, the line is unchanged.
+
+ACs:
+- 248. Fresh install into a temp HOME: `~/.claude/agents/recall.md` exists, holds the marker, `name: recall`, `model: haiku`, `tools: Bash, Read`, and the text `recall.py`.
+- 249. An existing `~/.claude/agents/recall.md` without the marker: install leaves its bytes unchanged and prints the F55.a "not ours" line. With the marker and old content: install replaces it.
+- 250. `uninstall.sh` after 248: the file is gone. After 249 (no marker): the file stays.
+- 251. SessionStart `compact` output after 248 contains the F55.c sentence; with no agent file it does not.
+
+## F56 Log the excerpt cut (2026-11-18)
+Why: the handoff model sees at most 120,000 characters of the transcript, tail first. With a 400k-token window that may be a small part of each segment, but how often the cut happens is not measured. Measure before building block summaries.
+
+**F56.a Fields.** Each PreCompact health row gets `excerpt_chars` (characters of transcript excerpt sent to the handoff model; 0 if no model call) and `excerpt_dropped` (characters of the current segment, meaning the transcript text after the previous boundary in the same form the excerpt uses, that were not sent because of the caps; 0 when nothing was cut). Rows written before 1.12.0 have no fields.
+**F56.b Report.** `--prove --days N` prints one line `excerpt cut: <c> of <n> compactions, median dropped <m> chars` from rows that have the fields; the median is over the rows with `excerpt_dropped` > 0 (0 if none). It is information only and never fails the prove run.
+
+ACs:
+- 252. A small transcript (well under the cap), one PreCompact run: the health row has `excerpt_chars` > 0 and `excerpt_dropped` = 0.
+- 253. A transcript whose current segment is larger than the cap: `excerpt_dropped` > 0 and `excerpt_chars` <= 120000.
+- 254. `--prove --days 1` after 252 and 253 prints `excerpt cut: 1 of 2 compactions, median dropped <m> chars` and its exit code does not change because of this line.
+
+Version: hooks 1.12.0; release 0.10.0. `HOOK_VERSION` in both hooks and `hook_version` in health rows and sidecars is `1.12.0`. This amends the version value in ACs 136, 150, 172, 180, 188 again.
