@@ -2,14 +2,15 @@
 # Lossless Handoff installer (formerly claude-handoff): copies the hooks and merges them into ~/.claude/settings.json.
 set -euo pipefail
 
-VERSION="0.9.0"
+VERSION="0.10.0"
 usage() {
   cat <<EOF
 Lossless Handoff $VERSION (formerly claude-handoff)
 Copies the hooks (three handoff hooks plus the recall command) into ~/.claude/hooks and merges them into ~/.claude/settings.json.
 Also sets up automatic recall indexing: an end-of-chat hook, an optional bge-m3 model pull, a nightly job (macOS) and a first index.
-Hooks 1.11.0 keep the chat store: handoff files live 365 days, and --keep-transcripts raises Claude Code's transcript retention.
+Hooks 1.12.0 keep the chat store: handoff files live 365 days, and --keep-transcripts raises Claude Code's transcript retention.
 The PreCompact hook also gives Claude Code guidance for its own summary.
+It also installs the recall subagent (~/.claude/agents/recall.md), unless a file of that name that is not ours is there.
 
 Usage: ./install.sh [--dry-run] [--force] [--window N] [--no-window] [--yes] [--no-nightly] [--no-nudge] [--canary] [--managed-hooks] [--keep-transcripts[=DAYS]] [--version] [-h|--help]
 
@@ -487,6 +488,22 @@ for f in $FILES; do
     case "$f" in *.json) chmod 644 "$target" ;; *) chmod 755 "$target" ;; esac
   fi
 done
+
+# F55.a: the recall subagent (user-level). It is ours only when the file holds the marker line.
+AGENT_SRC="$SRC/agents/recall.md"
+AGENT_DST="$HOME/.claude/agents/recall.md"
+AGENT_MARK="<!-- lossless-handoff:recall-agent -->"
+if [ ! -f "$AGENT_SRC" ]; then
+  say "recall subagent: skipped (agents/recall.md is missing from this copy)"
+elif [ -e "$AGENT_DST" ] && ! grep -qF "$AGENT_MARK" "$AGENT_DST" 2>/dev/null; then
+  # shellcheck disable=SC2088  # print the literal ~ path for the user
+  echo "~/.claude/agents/recall.md exists and is not ours; left unchanged."
+elif [ -f "$AGENT_DST" ] && cmp -s "$AGENT_SRC" "$AGENT_DST"; then
+  say "recall subagent unchanged: $AGENT_DST"
+else
+  say "install recall subagent: $AGENT_DST"
+  if [ "$DRY" = 0 ]; then mkdir -p "$HOME/.claude/agents"; cp "$AGENT_SRC" "$AGENT_DST"; chmod 644 "$AGENT_DST"; fi
+fi
 
 # --no-nudge: remove a nudge file left by an earlier install
 if [ "$NONUDGE" = 1 ]; then

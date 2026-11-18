@@ -77,7 +77,7 @@ HARD_MAX = 9900    # each part's total output (warning + header + content + cont
 INLINE_MAX = 9700  # content target per part
 NAMES_MAX = 150    # the section-name list in a continuation line is cut to this many chars
 MAX_PARTS = 3      # F37.6
-HOOK_VERSION = "1.11.0"
+HOOK_VERSION = "1.12.0"
 _SID = ["unknown"]
 
 
@@ -187,13 +187,101 @@ RECALL_LINE = ("- recall: earlier chats in this project are searchable word for 
                "recall shows history, not current rules.\n")
 
 
-def recall_line():
-    """F44.11(a): the F44.6 line, only when recall.py exists in ~/.claude/hooks (HOME from the environment) or next to this hook."""
+RECALL_AGENT_MARK = "<!-- lossless-handoff:recall-agent -->"
+RECALL_AGENT_SENTENCE = ("For wide lookups (many hits, long messages, or a whole node), ask the recall subagent "
+                         "(Agent tool, subagent_type \"recall\") so the main context stays small; "
+                         "for one exact fact, search directly.")
+
+
+def recall_agent_ours():
+    """F55.c: ~/.claude/agents/recall.md exists and holds our marker line."""
+    try:
+        with open(os.path.join(os.path.expanduser("~"), ".claude", "agents", "recall.md"), encoding="utf-8",
+                  errors="replace") as f:
+            return RECALL_AGENT_MARK in f.read()
+    except OSError:
+        return False
+
+
+def recall_path():
     for p in (os.path.join(os.path.expanduser("~"), ".claude", "hooks", "recall.py"),
               os.path.join(os.path.dirname(os.path.abspath(__file__)), "recall.py")):
         if os.path.isfile(p):
-            return RECALL_LINE
+            return p
+    return None
+
+
+def recall_line():
+    """F44.11(a): the F44.6 line, only when recall.py exists in ~/.claude/hooks (HOME from the environment) or next to this hook.
+    F55.c: ends with one more sentence when the recall subagent file is installed."""
+    if recall_path():
+        return RECALL_LINE[:-1] + (" " + RECALL_AGENT_SENTENCE if recall_agent_ours() else "") + "\n"
     return ""
+
+
+_NODE_LINE = [""]  # F54.d: the "summary node" line for this compaction; part 1 only
+
+
+def sync_nodes(d):
+    """F54.b/F54.d: sync this event's own transcript into nodes.jsonl; return the F54.d line for the newest leaf, or ''.
+    Any error is logged and gives ''. Only for source compact (or no source)."""
+    try:
+        src = d.get("source")
+        if isinstance(src, str) and src.strip() and src.strip() != "compact":
+            return ""
+        tp = own_transcript(d)
+        cwd = d.get("cwd")
+        rp = recall_path()
+        if not rp or not tp or not os.path.isfile(tp) or not isinstance(cwd, str) or not cwd.strip():
+            return ""
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("lh_recall", rp)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        ldir = mod.ledger_dir_for(mod.project_root(cwd))
+        mod.sync_transcript(ldir, tp, 3.0)
+        rtp = os.path.realpath(tp)
+        leaves = [n for n in mod.read_nodes(ldir) if os.path.realpath(n["transcript"]) == rtp]
+        if not leaves:
+            return ""
+        n = max(leaves, key=lambda x: x.get("seq") or 0)
+        return (f"- summary node: this chat continues after node {n['id']} (compaction #{n.get('seq')}, lines "
+                f"{n['first_line']}-{n['last_line']}). See all nodes: python3 ~/.claude/hooks/recall.py map; "
+                f"one node: recall.py describe {n['id']}.\n")
+    except BaseException as e:
+        if isinstance(e, KeyboardInterrupt):
+            raise
+        log_error(e)
+        return ""
+
+
+def decorate(txt):
+    """F54.d + F55.c on the handoff text: put the node line right after the recall line (adding the recall line after
+    `- authority:` when the text has none, but only when a node line or the recall subagent file asks for it), and add the
+    recall subagent sentence to an existing recall line."""
+    try:
+        node = _NODE_LINE[0]
+        agent = recall_agent_ours()
+        if not txt or not (node or agent):
+            return txt
+        lines = txt.split("\n")
+        ri = next((i for i, x in enumerate(lines) if x.startswith("- recall:")), None)
+        if ri is None:
+            if not recall_path():
+                ri = None
+            else:
+                ai = next((i for i, x in enumerate(lines) if x.startswith("- authority:")), None)
+                at = ai + 1 if ai is not None else min(1, len(lines))
+                lines.insert(at, recall_line().rstrip("\n"))
+                ri = at
+        elif agent and RECALL_AGENT_SENTENCE not in lines[ri]:
+            lines[ri] = lines[ri].rstrip() + " " + RECALL_AGENT_SENTENCE
+        if node:
+            lines.insert((ri + 1) if ri is not None else min(1, len(lines)), node.rstrip("\n"))
+        return "\n".join(lines)
+    except Exception as e:
+        log_error(e)
+        return txt
 
 
 def ledger_part_head(k, path):
@@ -529,7 +617,7 @@ def try_recover(d, sid):
             txt = f.read().strip()
         if not txt:
             raise RuntimeError("recovery wrote an empty handoff")
-        return RECOVERED_FIRST + PREFIX + fit_recovered(txt)
+        return RECOVERED_FIRST + PREFIX + fit_recovered(decorate(txt))
     except BaseException as e:
         if isinstance(e, KeyboardInterrupt):
             raise
@@ -716,6 +804,8 @@ try:
     if sid and isinstance(_aid, str) and _aid.strip():  # F46.c: a subagent reads and writes only its own <sid>-a-<id> files
         sid = f"{sid}-a-{_aid.strip().replace('/', '_')}"
     _SID[0] = sid or "unknown"
+    if sid:  # every part syncs (cheap, locked) so that all parts cut the same text
+        _NODE_LINE[0] = sync_nodes(d)
     if sid:
         p = os.path.join(HANDOFFS_DIR, f"{sid}-latest.md")
         root = os.path.realpath(HANDOFFS_DIR)
@@ -725,6 +815,7 @@ try:
                 txt = open(p, encoding="utf-8", errors="replace").read().strip()
             except Exception:
                 txt = ""
+        txt = decorate(txt)
         plain = PREFIX + txt
         try:
             S = read_json(os.path.join(HANDOFFS_DIR, f"{sid}-last-health.json"))
