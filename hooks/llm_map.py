@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""llm_map: label each item of a large list with a small model (F60).
+"""llm_map: label each item of a large list with a small model (F60, F61).
 
-Usage: llm_map.py --in FILE --prompt TEXT --out FILE [--model haiku] [--batch 40]
-                 [--jobs 4] [--max-usd 2.00] [--json-out]
+Usage: llm_map.py --in FILE --prompt TEXT --out FILE [--model haiku] [--batch 100]
+                 [--jobs 8] [--max-usd 2.00] [--json-out] [--labels "a|b|c"]
 
 Each batch runs one `claude -p` call. The call has no tools, no hooks, no MCP
 servers and no saved session. Set LLM_MAP_CLAUDE to replace the claude command.
@@ -57,8 +57,41 @@ def one_line(text):
     return " ".join(str(text).split())
 
 
-def build_prompt(task, batch, items, json_out):
+def norm(text):
+    return " ".join(str(text).split()).casefold()
+
+
+def word_prefix(short, long):
+    """True if short is a prefix of long and ends at a word end of long."""
+    if not short or not long.startswith(short):
+        return False
+    return len(long) == len(short) or not long[len(short)].isalnum()
+
+
+def map_label(value, labels):
+    """Map a reply value to a canonical label, or return None (F61.b).
+
+    Order: (1) equal to a label after trim and case fold; (2) the value is a
+    prefix of exactly one label, or exactly one label is a prefix of the value,
+    where the prefix ends at a word end of the longer text; else invalid.
+    """
+    if not isinstance(value, str):
+        return None
+    v = norm(value)
+    if not v:
+        return None
+    for lab in labels:
+        if norm(lab) == v:
+            return lab
+    hits = [lab for lab in labels
+            if word_prefix(v, norm(lab)) or word_prefix(norm(lab), v)]
+    return hits[0] if len(hits) == 1 else None
+
+
+def build_prompt(task, batch, items, json_out, labels=None):
     kind = "any JSON value" if json_out else "a string"
+    if labels:
+        kind = "exactly one of these labels, copied exactly: " + " | ".join(labels)
     lines = [task, "", "Items:"]
     lines += ["%d: %s" % (i, one_line(items[i - 1]["text"])) for i in batch]
     lines += ["",
@@ -147,6 +180,16 @@ class Runner:
         self.batches = 0
         self.results = {}   # i -> out
         self.errors = {}    # i -> reason
+        self.done = 0
+        self.total = len(items)
+        self.progress = True
+
+    def tick(self, n):
+        # Caller holds the lock.
+        if self.progress:
+            self.done += n
+            print("llm_map: %d of %d items done" % (self.done, self.total),
+                  file=sys.stderr, flush=True)
 
     def do_batch(self, batch):
         a = self.args
@@ -154,23 +197,34 @@ class Runner:
             if a.max_usd is not None and self.spent + self.max_cost > a.max_usd:
                 for i in batch:
                     self.errors[i] = "budget"
+                self.tick(len(batch))
                 return
             self.batches += 1
-        text, cost, err = run_call(a.model, build_prompt(a.prompt, batch, self.items, a.json_out))
+        text, cost, err = run_call(
+            a.model, build_prompt(a.prompt, batch, self.items, a.json_out, a.labels))
         with self.lock:
             self.spent += cost
             self.max_cost = max(self.max_cost, cost)
             if err:
                 for i in batch:
                     self.errors[i] = err
+                self.tick(len(batch))
                 return
             got = parse_reply(text, a.json_out)
             for i in batch:
-                if i in got:
+                if i not in got:
+                    self.errors[i] = "missing from reply"
+                elif a.labels:
+                    lab = map_label(got[i], a.labels)
+                    if lab is None:
+                        self.errors[i] = "label: " + one_line(got[i])[:40]
+                    else:
+                        self.results[i] = lab
+                        self.errors.pop(i, None)
+                else:
                     self.results[i] = got[i]
                     self.errors.pop(i, None)
-                else:
-                    self.errors[i] = "missing from reply"
+            self.tick(len(batch))
 
     def run_round(self, indexes):
         size = self.args.batch
@@ -200,13 +254,22 @@ def main():
     ap.add_argument("--prompt", required=True)
     ap.add_argument("--out", required=True)
     ap.add_argument("--model", default="haiku")
-    ap.add_argument("--batch", type=int, default=40)
-    ap.add_argument("--jobs", type=int, default=4)
+    ap.add_argument("--batch", type=int, default=100)
+    ap.add_argument("--jobs", type=int, default=8)
     ap.add_argument("--max-usd", type=float, default=2.00)
     ap.add_argument("--json-out", action="store_true")
+    ap.add_argument("--labels", default=None)
     args = ap.parse_args()  # argparse exits with code 2 on a usage error
     if args.batch < 1 or args.jobs < 1:
         die("--batch and --jobs must be 1 or more")
+    if args.labels is not None:
+        if args.json_out:
+            die("--labels cannot be used with --json-out")
+        labels = [x.strip() for x in args.labels.split("|")]
+        labels = [x for x in labels if x]
+        if len(set(norm(x) for x in labels)) < 2:
+            die("--labels needs at least 2 labels, split with |")
+        args.labels = labels
     if not os.path.isfile(args.inp):
         die("input file not found: %s" % args.inp)
     items = read_items(args.inp)
@@ -217,6 +280,7 @@ def main():
     r.run_round(list(range(1, len(items) + 1)))
     retry = [i for i in range(1, len(items) + 1) if i not in r.results and r.errors.get(i) != "budget"]
     if retry:
+        r.progress = False  # retry batches print no progress line
         r.run_round(retry)
 
     failed = 0

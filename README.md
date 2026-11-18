@@ -310,13 +310,15 @@ Turn it off with `HANDOFF_LEDGER=0`. Existing lists are never deleted by turning
 When to use it: a task needs a label, class, extracted value or check for each of hundreds of items or more. A pre-registered OOLONG test (`bench/oolong/`) showed that plain Claude Code filters with a regex, reads a sample and estimates the count.
 
 ```
-python3 ~/.claude/hooks/llm_map.py --in reviews.txt --prompt "Label each review as positive, negative or mixed." --out labels.jsonl [--model haiku] [--batch 40] [--jobs 4] [--max-usd 2.00] [--json-out]
+python3 ~/.claude/hooks/llm_map.py --in reviews.txt --prompt "Label each review as positive, negative or mixed." --out labels.jsonl [--labels "positive|negative|mixed"] [--model haiku] [--batch 100] [--jobs 8] [--max-usd 2.00] [--json-out]
 ```
 
 - `--in` is a text file with one item per line, or a `.jsonl` file with `text` and an optional `id`.
 - `--out` gets one JSON line per item, in input order, with `i`, `text`, `out` and (if it failed) `error`.
-- A missing or unparsable answer is retried once. The last stdout line is `llm_map: <n> items, <ok> ok, <failed> failed, <b> batches, cost $<x>`. Exit code 3 means some items failed.
-- Cost note: each batch is a real model call and costs money. Haiku batches of 40 items cost a fraction of a cent each. `--max-usd` (default 2.00) stops new batches when the cap would pass; the unsent items get `error: "budget"`.
+- `--labels "a|b|c"` sets the allowed answers (2 or more, split on `|`; not with `--json-out`). `out` is always a canonical label. A reply maps to a label if it equals one (trim, case fold), or if it is a prefix of exactly one label, or exactly one label is a prefix of it. The prefix must end at a word end of the longer text (`numeric` matches `numeric value`; `h` does not match `human being`). Other replies are invalid, are retried once, and then get `out` null and `error: "label: <reply>"`.
+- Defaults are 100 items per batch and 8 batches at the same time, so 3,000 items take about one minute. After each batch, stderr gets `llm_map: <done> of <n> items done`.
+- A missing, invalid or unparsable answer is retried once. The last stdout line is `llm_map: <n> items, <ok> ok, <failed> failed, <b> batches, cost $<x>`. Exit code 3 means some items failed.
+- Cost note: each batch is a real model call and costs money. Haiku batches of 100 items cost a fraction of a cent each. `--max-usd` (default 2.00) stops new batches when the cap would pass; the unsent items get `error: "budget"`.
 - Each call runs `claude -p` with no tools, no hooks, no MCP servers and no saved session, in a new temp folder. Lossless Handoff hooks never run for these calls, so they write no handoffs or health rows.
 - The installer also writes the skill `~/.claude/skills/llm-map/SKILL.md`. Its description tells Claude Code to use llm_map for each-item tasks on large lists, and its body gives the command and the rule to report exact counts and the number of failed items. Install leaves a skill file that is not ours (no marker line) unchanged; uninstall removes only the marked file.
 
