@@ -4,6 +4,7 @@
 #   run.sh full    [options]      full run: sonnet, window 400000, report seeds
 #   run.sh resume  <run-id> [--budget-usd X] [--jobs N]
 #   run.sh report  <run-id> [--publish] [--draws N]
+#   run.sh regrade <run-id|results-folder>   (grade the stored raw replies again, rebuild the report, no model call)
 #   run.sh aa      <run-id-1> <run-id-2> [--arm A|B] [--draws N]   (A/A noise floor)
 #   run.sh selfcheck [--model M] [--lh-path P]   (live check of the transcript deny rules)
 #   run.sh cleanup [--all] [--dry-run] [--work-base DIR]
@@ -33,9 +34,10 @@ case "$cmd" in
       echo "report: $D/results/$id/summary.md"
     fi
     exit "$rc" ;;
+  regrade) exec python3 "$D/regrade.py" "$@" ;;
   aa)      exec python3 "$D/report.py" aa "$@" ;;
   selfcheck) exec python3 "$D/runner.py" selfcheck "$@" ;;
   report)  exec python3 "$D/report.py" "$@" ;;
   cleanup) exec python3 "$D/runner.py" cleanup "$@" ;;
-  *) sed -n 2,11p "$0" >&2; exit 2 ;;
+  *) sed -n 2,12p "$0" >&2; exit 2 ;;
 esac

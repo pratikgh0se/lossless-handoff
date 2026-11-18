@@ -59,6 +59,7 @@ bench/continuity/run.sh cleanup
 - Long user text (600 to 1,200 characters) in plant and filler turns.
 - The report has a headroom table (oracle minus arm A at N, 15 points minimum, from `thresholds.json`), an accuracy-by-age table, and prints "BENCHMARK TOO EASY at this N: no claim either way" when the headroom is too small.
 - Arm Z parse rate is info only. `SPEC.md` section 14 has the reasons.
+- A reply with an explicit `null` in the main field is an abstention. It counts as parsed and wrong. The report shows the abstain rate (INFO). `run.sh regrade <run-id>` grades stored replies again with no model call.
 
 ## Seeds and thresholds
 

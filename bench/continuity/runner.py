@@ -364,6 +364,7 @@ class Session:
                 "n_target": ckpt, "n_actual": n_actual, "precomputed_boundaries": pre, "type": ptype, "item": g["id"],
                 "epoch": epochs.get(g["id"]), "age": (ckpt - epochs[g["id"]] if self.arm in ("A", "B") and epochs.get(g["id"]) is not None else None),
                 "fork_sid": fsid, "raw": raw, "parsed": g["parsed"], "parse_ok": g["parse_ok"], "correct": g["correct"],
+                "abstained": g["abstained"],
                 "used_lookup": used, "tokens": {"in": u.get("input_tokens"), "out": u.get("output_tokens")},
                 "fork_cost_usd": round(o["_delta"], 6), "claude_version": cfg["claude_version"], "model": cfg["model"],
                 "window": self.window, "commit": cfg["lh_commit"], "turn_index": st["turns"]})
