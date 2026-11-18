@@ -221,7 +221,10 @@ def build(run_id, draws=None):
     for a in ("A", "B", "O", "Z"):
         if a in ag.parse:
             ok, t = ag.parse[a]
-            gate("Parse rate, arm %s" % a, ">= %s" % pct(th["parse_rate_min"]), "%s (%d/%d)" % (pct(ok / t), ok, t), "PASS" if ok / t >= th["parse_rate_min"] else "FAIL")
+            if a == "Z":     # arm Z may answer in prose. A parse failure counts as wrong. Info only.
+                gate("Parse rate, arm Z (info)", "none", "%s (%d/%d)" % (pct(ok / t), ok, t), "INFO")
+            else:
+                gate("Parse rate, arm %s" % a, ">= %s" % pct(th["parse_rate_min"]), "%s (%d/%d)" % (pct(ok / t), ok, t), "PASS" if ok / t >= th["parse_rate_min"] else "FAIL")
     scored = [s for s in sess if s["arm"] in ("A", "B")]
     planned = sum(len([n for n in cfg["n"]]) for _ in scored)
     missed = sum(len(s["missed"]) for s in scored)
@@ -262,6 +265,42 @@ def build(run_id, draws=None):
             gate("Lookup rate, arm %s (info)" % a, "none", "%s (%d/%d)" % (pct(ag.look[a][0] / ag.look[a][1]), ag.look[a][0], ag.look[a][1]), "INFO")
     md.append("")
 
+    # ---- headroom: oracle minus arm A at N
+    md.append("### Headroom (is the benchmark discriminative at this N?)\n")
+    md.append("Rule (thresholds.json): oracle minus arm A at N must be at least %d points, else no claim either way.\n" % th["headroom_min_points"])
+    md.append("| N | Oracle O | Arm A | O minus A | Result |")
+    md.append("|---|---|---|---|---|")
+    ocs, ots = ag.vec("O", TYPES, None)
+    too_easy = {}
+    for n in ns:
+        acs, ats = ag.vec("A", TYPES, n)
+        if not sum(ots) or not sum(ats):
+            md.append("| %d | no data | no data | n/a | NO DATA |" % n)
+            too_easy[n] = None
+            continue
+        o_acc, a_acc = sum(ocs) / sum(ots), sum(acs) / sum(ats)
+        ok = 100 * (o_acc - a_acc) >= th["headroom_min_points"]
+        too_easy[n] = not ok
+        md.append("| %d | %s | %s | %+.0f pts | %s |" % (n, pct(o_acc), pct(a_acc), 100 * (o_acc - a_acc), "DISCRIMINATIVE" if ok else "BENCHMARK TOO EASY"))
+    out["headroom"] = {str(k): v for k, v in too_easy.items()}
+    md.append("")
+
+    # ---- accuracy by item age
+    md.append("### Accuracy by item age (compactions since the item was planted; types R D X S E C M)\n")
+    ages = sorted({r["age"] for r in rows if r.get("age") is not None and r["type"] in TYPES})
+    if ages:
+        md.append("| Arm | " + " | ".join("age %d" % x for x in ages) + " |")
+        md.append("|---|" + "---|" * len(ages))
+        for a in arms:
+            cells = []
+            for x in ages:
+                rr = [r for r in rows if r["arm"] == a and r.get("age") == x and r["type"] in TYPES and r["n_actual"] == r["n_target"]]
+                cells.append("%s (%d/%d)" % (pct(sum(1 for r in rr if r["correct"]) / len(rr)), sum(1 for r in rr if r["correct"]), len(rr)) if rr else "no data")
+            md.append("| %s | %s |" % (names[a], " | ".join(cells)))
+    else:
+        md.append("no data")
+    md.append("")
+
     # ---- gain verdicts
     md.append("### Gain verdict (pre-registered in thresholds.json)\n")
     md.append("| Comparison | B minus A | Pairs | Verdict |")
@@ -277,7 +316,9 @@ def build(run_id, draws=None):
             continue
         (bc, bt), (ac, at) = ag.vec("B", types, pc["n"]), ag.vec("A", types, pc["n"])
         point, lo, hi, pairs = boot.diff(bc, bt, ac, at)
-        if point is None:
+        if too_easy.get(pc["n"]):
+            verdict = "BENCHMARK TOO EASY at this N: no claim either way"
+        elif point is None:
             verdict = "NO DATA"
         elif pairs < th["min_pairs"]:
             verdict = "SMALL SAMPLE (%d pairs, minimum %d): no claim" % (pairs, th["min_pairs"])

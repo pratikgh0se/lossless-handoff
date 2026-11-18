@@ -208,3 +208,18 @@ Three primary comparisons: B minus A at N=10, at N=30, and type X at N=10. The f
 ## 13. Recall agent in arm B
 
 If `<lh-path>/agents/recall.md` exists, the runner copies it into the project folder of arm B as `.claude/agents/recall.md`. Arm A never gets it. Test result (Claude Code 2.1.326): a user-level agent in `~/.claude/agents` is NOT visible to `claude -p --setting-sources project`. The session listed only claude, Explore, general-purpose, Plan, statusline-setup and web-fetch. So a project copy is the only way to give arm B this agent.
+
+## 14. v4 changes and why (GEN_VERSION "4")
+
+**Why.** Slice 2 (run 20261118T101712-slice, generator v3, $1.36): all gates passed, but arm A (plain Claude Code) scored 100% at N=1, N=3 and N=10. With no headroom, the benchmark cannot show a gain or a loss. Cause: the Claude Code summary keeps a list of all user messages. Every planted fact was in a short user message, and there were few items. Real long sessions lose facts that sit in tool output, among many look-alike details, over many segments.
+
+**Changes.**
+
+1. **Source realism.** Types S (exact string) and E (dead-end error code) now live in tool output only. The agent must read a file (`cfg/<topic>.txt` or `logs/try-<name>.txt`, 40 lines of normal text with the fact hidden). The user message asks for an action ("tell me if it passed") and never states the value. The runner deletes the file after the turn, so the value is in the transcript only. Types R, D, X and C stay user-stated. U is unchanged (subagent only, reported apart). M is unchanged in meaning (epochs 0, 1, 2).
+2. **Load and decoys.** 4 items for each scored type (R, D, X, S, E, C) for each seed. Each item has 2 decoys: look-alike facts for sibling components in the same epoch (same noun, other number, same format, other value). A vague summary gives the wrong one. Probes ask for one component. Decoy values are in `secrets`, so filler never holds them.
+3. **Spread and age.** Items are planted in epochs 0, 1, 2 and 4 (`ITEM_EPOCHS`). The runner plants an epoch-e event after compaction e. At checkpoint N the probe asks about the items of epochs up to N-1, oldest first. Each JSONL line has `epoch` and `age` (compactions since planting). User filler turns and plant turns are long (600 to 1,200 characters of realistic task text with no digits), so the user-message list of a summary is long too. Arm O plants all events at once and has no compaction.
+4. **Headroom gate (pre-registered in `thresholds.json` before any v4 run, commit 5bd4cc5).** Discriminative at N means oracle accuracy minus arm A accuracy at N is 15 points or more (scored types). If not, the gain verdict at that N prints "BENCHMARK TOO EASY at this N: no claim either way". The report also shows accuracy by item age.
+5. **Parse gate.** Arm Z (no history) may answer in prose. A Z parse failure counts as wrong. The Z parse rate is INFO, not a gate.
+6. Plan: `events` (sorted by epoch) replace `plant_turns` in the script.
+
+Slice 2 numbers for v3 must not be mixed with v4 numbers in one table.

@@ -32,8 +32,8 @@ class SimpleTypes(Base):
             wrong = grade.grade(t, items, js([{"id": x["id"], "answer": x["answer"] + "x"} for x in items]))
             self.assertTrue(all(r["parse_ok"] and not r["correct"] for r in wrong), t)
             one = grade.grade(t, items, js([{"id": 1, "answer": items[0]["answer"]}]))
-            self.assertEqual([r["correct"] for r in one], [True, False, False])
-            self.assertEqual([r["parse_ok"] for r in one], [True, False, False])
+            self.assertEqual([r["correct"] for r in one], [True] + [False] * (len(items) - 1))
+            self.assertEqual([r["parse_ok"] for r in one], [True] + [False] * (len(items) - 1))
 
     def test_F(self):
         items = self.s["fresh"]["3"]
@@ -63,7 +63,7 @@ class SimpleTypes(Base):
         # a lazy answer that picks a token of the right form from another item must fail
         items = self.I["D"]
         r = grade.grade("D", items, js([{"id": x["id"], "answer": items[0]["answer"]} for x in items]))
-        self.assertEqual([x["correct"] for x in r], [True, False, False])
+        self.assertEqual([x["correct"] for x in r], [True] + [False] * (len(items) - 1))
 
 
 class ReplacedType(Base):
@@ -136,11 +136,53 @@ class OrderType(Base):
         it = s["items"]["M"][0]
         self.assertEqual(len(set(it["order"])), 3)
         self.assertEqual(len(it["plants"]), 3)
-        self.assertIn(it["plants"][0], s["plant_turns"][-1]["prompt"])       # first in epoch 0
-        text = " ".join(t["prompt"] for t in s["plant_turns"])
+        ev = s["events"]
+        self.assertTrue(any(it["plants"][0] in e["prompt"] and e["epoch"] == 0 for e in ev))      # first in epoch 0
+        self.assertTrue(any(it["plants"][2] in e["prompt"] and e["epoch"] == 2 for e in ev))     # last in epoch 2
+        text = " ".join(e["prompt"] for e in ev if e["epoch"] == 0)
         self.assertNotIn(it["plants"][1], text)                               # others come in later epochs
         self.assertNotIn(it["order"][2], text)
-        self.assertEqual(gen.GEN_VERSION, "3")
+        self.assertEqual(gen.GEN_VERSION, "4")
+
+
+class V4Design(Base):
+    def test_load_decoys_and_epochs(self):
+        s = self.s
+        for ty in ("R", "D", "X", "S", "E", "C"):
+            its = s["items"][ty]
+            self.assertEqual(len(its), 4, ty)
+            self.assertEqual([x["epoch"] for x in its], gen.ITEM_EPOCHS)
+            self.assertTrue(all(len(x["decoys"]) == 2 for x in its), ty)
+        # decoys look alike: user-stated decoys share the noun of the target topic
+        for x in s["items"]["D"]:
+            noun = x["topic"].split("-")[0]
+            self.assertTrue(all("`%s-" % noun in d for d in x["decoys"]))
+
+    def test_select_oldest_first_and_age(self):
+        s = self.s
+        a = gen.select(s, "D", 2)
+        self.assertEqual([x["epoch"] for x in a], [0, 1, 2])
+        self.assertEqual([x["epoch"] for x in gen.select(s, "D", 0)], [0])
+        self.assertEqual(len(gen.select(s, "D", 9)), 4)
+        self.assertEqual(gen.select(s, "M", 1), [])          # M needs epoch 2
+        self.assertEqual(len(gen.select(s, "M", 2)), 1)
+        # probe text lists only the chosen items, oldest first, and holds no answer
+        p = gen.probe_prompt("D", s, "PROBE-x", 3, items=a)
+        self.assertEqual(p.count("\n1. ") + p.count("\n2. ") + p.count("\n3. "), 3)
+        self.assertNotIn(s["items"]["D"][3]["topic"], p)
+
+    def test_user_text_is_long(self):
+        s = self.s
+        for e in s["events"]:
+            if e["kind"] in ("stmt",):
+                self.assertGreaterEqual(len(e["prompt"]), 600)
+        for t in range(12):
+            self.assertTrue(600 <= len(gen.filler_prompt(s, t, ["x"])) <= 1500)
+
+    def test_events_sorted_and_epochs(self):
+        ev = self.s["events"]
+        self.assertEqual([e["epoch"] for e in ev], sorted(e["epoch"] for e in ev))
+        self.assertEqual({e["epoch"] for e in ev}, {0, 1, 2, 4})
 
 
 class ParseHandling(Base):
@@ -157,7 +199,7 @@ class ParseHandling(Base):
 
     def test_fallback_regex(self):
         items = self.I["D"]
-        raw = "1) %s 2) %s 3) %s" % tuple(x["answer"] for x in items)
+        raw = " ".join("%d) %s" % (i + 1, x["answer"]) for i, x in enumerate(items))
         r = grade.grade("D", items, raw)
         self.assertTrue(all(a["correct"] and not a["parse_ok"] for a in r))      # right, but parse_ok is false
         r = grade.grade("D", items, "only one: " + items[0]["answer"])
@@ -198,6 +240,8 @@ class GeneratorChecks(unittest.TestCase):
             for it in lst:
                 vals += [it[k] for k in ("answer", "old", "new", "ecode", "tok1", "tok2") if k in it]
                 vals += it.get("order") or []
+                for d in it.get("decoys") or []:
+                    vals += gen.TOKEN_ANY.findall(d) or [d]
         for lst in s["fresh"].values():
             vals += [it["answer"] for it in lst]
         self.assertEqual(len(vals), len(set(vals)))
@@ -234,12 +278,22 @@ class GeneratorChecks(unittest.TestCase):
 
     def test_plant_turns_hold_answers_in_user_text_only(self):
         s = gen.build(23)
-        text = " ".join(t["prompt"] for t in s["plant_turns"])
-        for t in ("R", "D", "S", "C"):
+        text = " ".join(e["prompt"] for e in s["events"])
+        for t in ("R", "D", "C"):                          # user-stated types: the value is in the user text
             for it in s["items"][t]:
                 self.assertIn(it["answer"] if "answer" in it else it["tok1"], text)
-        for it in s["items"]["U"]:
-            self.assertNotIn(it["answer"], text)          # the key is in a file only
+        for t in ("S", "E", "U"):                          # tool-output types: the value is never in the user text
+            for it in s["items"][t]:
+                self.assertNotIn(it["answer"] if "answer" in it else it["ecode"], text)
+                for dcy in it.get("decoys") or []:
+                    self.assertNotIn(dcy, text)
+        files = {}
+        for e in s["events"]:
+            files.update(e["files"])
+        for it in s["items"]["S"]:
+            self.assertTrue(any(it["answer"] in c for c in files.values()))
+        for it in s["items"]["E"]:
+            self.assertTrue(any(it["ecode"] in c for c in files.values()))
 
 
 if __name__ == "__main__":
