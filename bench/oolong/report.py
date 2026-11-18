@@ -51,11 +51,36 @@ def load(run):
 
 
 def rescan(d, rows):
-    """Search the stored transcript copy again, so the hit rules can change without a new run."""
+    """Derive again from the stored transcript copy, so the rules can change without a new run: final text (last assistant text),
+    score, turns (assistant messages), timeout salvage, and the hit rules (new, old, recognition). Cost stays as stored."""
+    tp = os.path.join(d, "tasks.json")
+    gold = {t["task_id"]: t for t in json.load(open(tp, encoding="utf-8"))} if os.path.isfile(tp) else {}
     for r in rows:
         p = os.path.join(d, "transcripts", r["unit"] + ".jsonl")
-        if os.path.isfile(p):
-            r["hits"] = harness.scan_records(cont.read_jsonl(p), r.get("full_answer") or "")
+        if not os.path.isfile(p):
+            r.setdefault("hits_old_rule", r.get("hits", []))
+            r.setdefault("recognition", [])
+            r.setdefault("timed_out", r.get("stderr") == "timeout")
+            continue
+        recs = cont.read_jsonl(p)
+        texts = harness.assistant_texts(recs)
+        was_timeout = r.get("stderr") == "timeout" or r.get("timed_out")
+        r["timed_out"] = bool(was_timeout)
+        final = texts[-1] if texts else (r.get("full_answer") or "")
+        if was_timeout and not harness.has_final_answer(final):
+            final = ""
+        t = gold.get(r["task_id"])
+        if t and (final or not r["is_error"]):
+            sc = scorer.score(t["answer"], t["answer_type"], final)
+            r.update(score=sc["score"], parsed=sc["parsed"], parse_confidence=sc["parse_confidence"], full_answer=final)
+            if was_timeout and final:
+                r["is_error"], r["subtype"], r["stderr"] = False, "timeout_answered", ""
+        n = harness.count_turns(recs)
+        if n:
+            r["num_turns"] = n
+        r["hits"] = harness.scan_records(recs, final)
+        r["hits_old_rule"] = harness.scan_records(recs, final, "old")
+        r["recognition"] = harness.scan_records(recs, final, "recognition")
     return rows
 
 
@@ -89,7 +114,7 @@ def main():
     for r in rows:
         tasks.setdefault(r["task_id"], r["length"])
     # contamination flags per task
-    ctrl_right, trace_hit, hit_list = set(), set(), []
+    ctrl_right, trace_hit, trace_hit_old, hit_list, recog_list = set(), set(), set(), [], []
     for tid in tasks:
         n = by.get((tid, "N"))
         if n is not None and n["score"] >= 1.0:
@@ -99,11 +124,19 @@ def main():
             if r and r["hits"]:
                 trace_hit.add(tid)
                 hit_list.append((tid, arm, r["hits"]))
-    removed = ctrl_right | trace_hit
+            if r and r.get("hits_old_rule"):
+                trace_hit_old.add(tid)
+            if r and r.get("recognition"):
+                recog_list.append((tid, arm, r["recognition"]))
+    removed = ctrl_right | trace_hit            # new rule (2026-11-18): the plain word TREC is not a hit
+    removed_old = ctrl_right | trace_hit_old    # old rule: the word TREC was a hit
+    recog_tasks = {t for t, _, _ in recog_list}
     P("## Contamination guards")
     P("")
-    P("- Tasks: %d. Removed from the cleaned score: %d (control right without context: %d; transcript hit: %d; both: %d)." % (
-        len(tasks), len(removed), len(ctrl_right), len(trace_hit), len(ctrl_right & trace_hit)))
+    P("- Hit rule of 2026-11-18 (new): `trec_coarse`, oolong, ground truth, Hugging Face, download commands and urls in commands are hits. The plain word TREC is a recognition note only (below). The score table shows both the new-rule and the old-rule clean score.")
+    P("- Tasks: %d. Removed from the cleaned score, new rule: %d (control right without context: %d; transcript hit: %d; both: %d). Old rule: %d (transcript hit: %d)." % (
+        len(tasks), len(removed), len(ctrl_right), len(trace_hit), len(ctrl_right & trace_hit), len(removed_old), len(trace_hit_old)))
+    P("- Recognition notes (plain word TREC, no removal): %d task(s), %d unit(s)." % (len(recog_tasks), len(recog_list)))
     P("- A control hit by chance also removes the task (a label question has about 1 in 6 chance). The rule is the same for all arms.")
     P("")
     P("| Task | Length | Control (no context) score | Control parsed | Gold |")
@@ -120,10 +153,18 @@ def main():
         for h in hs[:6]:
             P("- task %s arm %s: %s in %s: `...%s...`" % (tid, arm, h["pattern"], h["where"], h["excerpt"][:140].replace("`", "'")))
     P("")
+    P("Recognition notes (the plain word TREC in text the model wrote or in its tool inputs; counted and listed, not removed):")
+    P("")
+    if not recog_list:
+        P("- none")
+    for tid, arm, hs in recog_list:
+        for h in hs[:3]:
+            P("- task %s arm %s: %s in %s: `...%s...`" % (tid, arm, h["pattern"], h["where"], h["excerpt"][:140].replace("`", "'")))
+    P("")
     P("## Scores")
     P("")
-    P("| Length | Arm | n raw | Raw mean [95% CI] | n clean | Clean mean [95% CI] | Cost/task | Wall s/task | Turns/task | Workflow calls | Agent calls (tasks with 1+) | llm_map calls (tasks with 1+) | Compactions | Errors |")
-    P("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|")
+    P("| Length | Arm | n raw | Raw mean [95% CI] | n clean (new rule) | Clean mean, new rule [95% CI] | n clean (old rule) | Clean mean, old rule [95% CI] | Cost/task | Wall s/task | Turns/task | Workflow calls | Agent calls (tasks with 1+) | llm_map calls (tasks with 1+) | Compactions | Timed out (scored) | Errors |")
+    P("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|")
     flags = []
     for ln in lengths:
         tids = [t for t, l in tasks.items() if l == ln]
@@ -132,28 +173,34 @@ def main():
             cl = [by[(t, arm)] for t in tids if (t, arm) in by and t not in removed]
             raw = [r["score"] for r in rs]
             cln = [r["score"] for r in cl]
+            clo = [by[(t, arm)]["score"] for t in tids if (t, arm) in by and t not in removed_old]
+            nto = sum(1 for r in rs if r.get("timed_out"))
+            ntos = sum(1 for r in rs if r.get("timed_out") and not r["is_error"])
             wf = sum(r["workflow_calls"] for r in rs)
             wft = sum(1 for r in rs if r["subagent_calls"] > 0)
             if wf:
                 flags.append("arm %s shows %d workflow calls at %s: the Workflow tool must be disallowed" % (arm, wf, LEN_LABEL.get(ln, ln)))
             lmc = sum(r.get("llm_map_calls", 0) for r in rs)
             lmt = sum(1 for r in rs if r.get("llm_map_calls", 0) > 0)
-            P("| %s | %s | %d | %s | %d | %s | $%.3f | %.0f | %.1f | %d | %d (%d) | %d (%d) | %d | %d |" % (
+            P("| %s | %s | %d | %s | %d | %s | %d | %s | $%.3f | %.0f | %.1f | %d | %d (%d) | %d (%d) | %d | %d (%d) | %d |" % (
                 LEN_LABEL.get(ln, ln), arm, len(raw), fmt(mean(raw), boot_ci(raw, draws, rng)), len(cln), fmt(mean(cln), boot_ci(cln, draws, rng)),
+                len(clo), fmt(mean(clo), boot_ci(clo, draws, rng)),
                 mean([task_cost(r) for r in rs]), mean([r["wall_s"] for r in rs]), mean([r["num_turns"] or 0 for r in rs]),
-                wf, sum(r["subagent_calls"] for r in rs), wft, lmc, lmt, sum(r["compactions"] for r in rs), sum(1 for r in rs if r["is_error"])))
+                wf, sum(r["subagent_calls"] for r in rs), wft, lmc, lmt, sum(r["compactions"] for r in rs), nto, ntos, sum(1 for r in rs if r["is_error"])))
     P("")
     P("## Paired difference (same tasks, score of the arm minus score of A)")
     P("")
-    P("| Length | Pair | n raw | Raw diff [95% CI] | n clean | Clean diff [95% CI] |")
-    P("|---|---|---|---|---|---|")
+    P("| Length | Pair | n raw | Raw diff [95% CI] | n clean (new rule) | Clean diff, new rule [95% CI] | n clean (old rule) | Clean diff, old rule [95% CI] |")
+    P("|---|---|---|---|---|---|---|---|")
     for ln in lengths:
         tids = [t for t, l in tasks.items() if l == ln]
         for arm in [a for a in arms if a != "A"]:
             pr = [t for t in tids if (t, arm) in by and (t, "A") in by]
             dr = [by[(t, arm)]["score"] - by[(t, "A")]["score"] for t in pr]
             dc = [by[(t, arm)]["score"] - by[(t, "A")]["score"] for t in pr if t not in removed]
-            P("| %s | %s-A | %d | %s | %d | %s |" % (LEN_LABEL.get(ln, ln), arm, len(dr), fmt(mean(dr), boot_ci(dr, draws, rng)), len(dc), fmt(mean(dc), boot_ci(dc, draws, rng))))
+            do = [by[(t, arm)]["score"] - by[(t, "A")]["score"] for t in pr if t not in removed_old]
+            P("| %s | %s-A | %d | %s | %d | %s | %d | %s |" % (LEN_LABEL.get(ln, ln), arm, len(dr), fmt(mean(dr), boot_ci(dr, draws, rng)), len(dc), fmt(mean(dc), boot_ci(dc, draws, rng)),
+                                                          len(do), fmt(mean(do), boot_ci(do, draws, rng))))
     P("")
     P("## Notes")
     P("")
@@ -168,6 +215,8 @@ def main():
             lmn = sum(1 for r in rows if r["arm"] == "C")
             P("- Arm C llm_map use rate: %d of %d tasks. At 0 the llm_map tool changed nothing in practice." % (lmu, lmn))
             P("- Arm C compactions: %d. At lengths under the compaction window, arm C equals arm A apart from the session-start text; with 0 compactions it tests only that text." % comp)
+    P("- Timed out (scored): rows that hit the unit time limit; the number in brackets is how many of them held a labelled final answer in the last assistant text and were scored (marked `timed_out`). A killed session has no result, so its cost is the last cost-state record or 0 (a lower bound).")
+    P("- Turns are assistant messages over the whole session (a background wake-up adds turns). The final answer is the last assistant text of the session.")
     P("- Wall time and cost are per task, one `claude -p` call. Cost is `total_cost_usd` (API-equivalent) of the main session plus the llm_map child calls.")
     lm_rows = [r for r in rows if r.get("llm_map_calls", 0) > 0]
     if lm_rows:
@@ -186,11 +235,12 @@ def main():
     dec = json.load(open(os.path.join(HERE, "decision.json"), encoding="utf-8"))
     th = dec["thresholds"]
     dl = 131072
-    tids = [t for t, l in tasks.items() if l == dl and t not in removed]
-    npair = len([t for t in tids if (t, "A") in by and (t, "B") in by])
-    if npair < 10:
-        P("- Rule not applied: %d paired clean tasks at 128K (10 or more needed). This run does not decide P4-1." % npair)
-    else:
+    for label, rem in (("new hit rule (2026-11-18)", removed), ("old hit rule", removed_old)):
+        tids = [t for t, l in tasks.items() if l == dl and t not in rem]
+        npair = len([t for t in tids if (t, "A") in by and (t, "B") in by])
+        if npair < 10:
+            P("- %s: rule not applied: %d paired clean tasks at 128K (10 or more needed). This run does not decide P4-1." % (label, npair))
+            continue
         best, bm, bc = None, -1, 0
         for arm in ("A", "B"):
             rs = [by[(t, arm)] for t in tids if (t, arm) in by]
@@ -204,7 +254,7 @@ def main():
             verdict = "DO NOT build llm_map"
         else:
             verdict = "the user decides (between the thresholds)"
-        P("- Best plain arm at 128K: %s, clean mean %.2f, cost per task $%.3f = %.2f x the map-plan estimate ($%.2f). Verdict by the rule: **%s**." % (best, bm, bc, ratio, est, verdict))
+        P("- %s: best plain arm at 128K: %s, clean mean %.2f (n %d), cost per task $%.3f = %.2f x the map-plan estimate ($%.2f). Verdict by the rule: **%s**." % (label, best, bm, len(tids), bc, ratio, est, verdict))
     txt = "\n".join(out) + "\n"
     open(os.path.join(d, "summary.md"), "w", encoding="utf-8").write(txt)
     print(txt)
