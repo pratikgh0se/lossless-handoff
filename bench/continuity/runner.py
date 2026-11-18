@@ -223,6 +223,11 @@ class Session:
             write_json(os.path.join(self.proj, ".claude", "settings.json"), settings)
             # make the folder its own git root, so that recall.py cannot search outside it
             subprocess.run(["git", "init", "-q", self.proj], capture_output=True, timeout=30)
+            if self.arm == "B":
+                src = os.path.join(self.ctx.cfg["lh_path"], "agents", "recall.md")
+                if os.path.isfile(src):     # arm B only: the recall agent of the pinned checkout
+                    os.makedirs(os.path.join(self.proj, ".claude", "agents"), exist_ok=True)
+                    shutil.copyfile(src, os.path.join(self.proj, ".claude", "agents", "recall.md"))
             if self.st["next_turn"] > 0 or not self.st["first"]:
                 # the folder is gone: the old session cannot continue. Start again from turn 0.
                 self.st.update({"next_turn": 0, "ckpt_i": 0, "boundaries": 0, "last_cost": 0.0, "done_forks": [],
@@ -365,6 +370,20 @@ def checkpoints(cfg, arm):
     return [(n, 0) for n in cfg["n"]]
 
 
+def next_m_plant(cfg, ss, b, fill_done):
+    """Which M decision (2 or 3) to plant now, else 0. Decision k goes in after compaction k-1.
+    Arm O never compacts, so it gets them on consecutive filler turns."""
+    st = ss.st
+    if "M" not in cfg["types"] or st["next_turn"] < len(ss.script["plant_turns"]):
+        return 0
+    for k in (2, 3):
+        if k in st.get("m_planted", []):
+            continue
+        ready = (fill_done >= k - 1) if ss.arm == "O" else (b >= k - 1)
+        return k if ready else 0
+    return 0
+
+
 def run_main_session(ctx, ss):
     cfg, st, script = ctx.cfg, ss.st, ss.script
     P = len(script["plant_turns"])
@@ -386,6 +405,12 @@ def run_main_session(ctx, ss):
             ctx.save()
             continue
         ctx.check_budget()
+        mk = next_m_plant(cfg, ss, b, fill_done)
+        if mk:      # type M: plant decision k in its own epoch (does not use a plan turn)
+            ss.turn("Remember this for later work in this project. %s Reply only `ok`." % script["items"]["M"][0]["plants"][mk - 1])
+            st.setdefault("m_planted", []).append(mk)
+            ctx.save()
+            continue
         t = st["next_turn"]
         before = b
         if t < P:
@@ -435,6 +460,8 @@ def checkpoint(ctx, ss, target):
     for t in types:
         if "%d:%s" % (target, t) in st["done_forks"]:
             continue
+        if t == "M" and ss.arm != "O" and target < 3:
+            continue        # three epochs need at least 3 compactions
         ss.probe(t, target, fork_of=st["sid"])
     # leak check: no probe marker may appear in the main timeline
     prefix = "PROBE-%d-%s-" % (ss.seed, ss.arm)

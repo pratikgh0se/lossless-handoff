@@ -76,6 +76,11 @@ def check(ptype, item, e):
         if pr is None or rc is None:
             return False, False
         return True, pr is False and rc == item["ecode"]
+    if ptype == "M":
+        order = e.get("order")
+        if not isinstance(order, list) or not all(isinstance(x, str) for x in order):
+            return False, False
+        return True, [norm(x) for x in order] == item["order"]     # exact order, all ids
     if ptype == "C":
         cf, ea = as_bool(e.get("conflict")), norm(e.get("earlier"))
         if cf is None or ea is None:

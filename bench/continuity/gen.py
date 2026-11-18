@@ -8,9 +8,9 @@ Usage: gen.py --seed S [--out FILE]
 """
 import argparse, json, random, re, sys
 
-GEN_VERSION = "2"
+GEN_VERSION = "3"
 K = 3                                   # instances of each probe type for each seed
-TYPES = ["R", "D", "X", "S", "E", "U", "C"]
+TYPES = ["R", "D", "X", "S", "E", "U", "C", "M"]
 CHECKPOINTS = [1, 3, 10, 30]
 B32 = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"  # base32 without 0, O, 1, I
 TOKEN_RE = re.compile(r"\b[A-HJ-NP-Z2-9]{4}-\d{4}-[A-HJ-NP-Z2-9]{4}\b")
@@ -122,6 +122,14 @@ def build(seed, version=GEN_VERSION):
         items["C"].append({"id": i + 1, "topic": tp, "tok1": tok1, "tok2": tok2,
                            "plant": "Decision: the `%s` queue is `%s`." % (tp, tok1),
                            "statement": "Let's use `%s` for the `%s` queue." % (tok2, tp)})
+    # M: order of three decisions made in three different epochs (compaction segments).
+    # The first is planted in epoch 0. The runner plants the second after compaction 1 and the third after compaction 2.
+    # Ids are random tokens, so an arm with no history cannot guess them. K = 1 item (a permutation of 3).
+    mids = [g.tok() for _ in range(3)]
+    mt = g.topics(3, taken)
+    items["M"] = [{"id": 1, "order": mids, "topics": mt,
+                   "plants": ["Ordered decision %s: the `%s` queue is `%s`." % (mids[i], mt[i], g.tok()) for i in range(3)],
+                   "question": "Earlier in this session I gave three decisions that I labelled `Ordered decision <id>`. List their three ids, earliest first."}]
     # F: fresh control, one set for each checkpoint (planted right before the probe)
     fresh = {}
     for n in CHECKPOINTS + [0]:
@@ -158,6 +166,7 @@ def build(seed, version=GEN_VERSION):
                     (K, ", ".join("`%s`" % x["file"] for x in items["U"])))},
         {"kind": "X2", "prompt": remember([x["replace"] for x in items["X"]])},
         {"kind": "C", "prompt": remember([x["plant"] for x in items["C"]])},
+        {"kind": "M1", "prompt": remember([items["M"][0]["plants"][0]])},
     ]
     script = {"gen_version": version, "seed": seed, "k": K, "items": items, "fresh": fresh,
               "plant_turns": plant_turns, "filler_noise": filler_noise, "noise_every": 6}
@@ -173,6 +182,7 @@ def secrets(script):
             for k in ("answer", "old", "new", "ecode", "tok1", "tok2"):
                 if k in it:
                     s.add(it[k])
+            s.update(it.get("order") or [])
     for lst in script["fresh"].values():
         for it in lst:
             s.add(it["answer"])
@@ -211,6 +221,9 @@ def probe_prompt(ptype, script, marker, ckpt=None):
         head += ("For each statement below, say if it conflicts with an earlier decision in this session. "
                  "If it conflicts, give the earlier value.\n")
         form = '{"answers":[{"id":1,"conflict":true,"earlier":"..."},{"id":2,"conflict":false,"earlier":""}]}'
+    elif ptype == "M":
+        body = "\n".join("%d. %s" % (x["id"], x["question"]) for x in items)
+        form = '{"answers":[{"id":1,"order":["...","...","..."]}]}'
     else:
         body = "\n".join("%d. %s" % (x["id"], x["question"]) for x in items)
         form = {"X": '{"answers":[{"id":1,"current":"...","replaced":["..."]}]}',

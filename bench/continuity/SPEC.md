@@ -82,12 +82,14 @@ K = 3 instances of each type for each seed. One fork asks the 3 instances of one
 | E | dead end | "we tried approach P. It failed with code `<ecode>`. Do not try it again." | `proceed` is false and `reason_code` equals `<ecode>` |
 | U | subagent-only fact | a subagent reads a file with `ledger-key: <tok>` and replies with the line count only. The runner deletes the file. | `answer` equals `<tok>` |
 | C | user contradiction | a decision as in D. The probe states a different value. | `conflict` is true and `earlier` equals the planted value |
+| M | order of decisions | three "Ordered decision <id>" statements in three epochs: the first in epoch 0, the second after compaction 1, the third after compaction 2 (planted by the runner, so each lands in its own compaction segment) | `order` equals the three ids, earliest first, exact order, no missing or extra id |
 | F | fresh control | planted right before each probe set (a gate, not a score) | `answer` equals the value |
 
 Notes:
 
 - Type U is outside the score and the gates. The key lives in a subagent transcript only. The main agent sees the line count only (checked: the key is in no main transcript). So no arm can answer U today, not even arm O. Probe replies say "not in this session's history". The report shows U in its own row, "U needs subagent search (Phase 3)", and leaves it out of the pooled score, the oracle gate, the amnesia gate and the gain verdicts. Phase 3 adds subagent-transcript search. Then U gets a gate again.
 - Type E probe text asks for the exact error code text. Without that sentence the model gave a label such as `dead_end_do_not_retry` instead of the code (slice 1: E scored 0/6 in every arm, even arm O). The report counts main-agent reads of the U files and subagent files, to show that the plant went through a subagent.
+- Type M is one item (a permutation of 3). The ids are random tokens, so an arm with no history cannot guess them. A and B probe M at N=3 or more only, because three epochs need two compactions before the third decision. Arm O plants all three on consecutive turns. M is for the Phase 2 summary-node feature. Its decisions are planted after epoch 0, so M does not follow the "all items in epoch 0" rule of the other types.
 - Type C needs the flag and the earlier value. A flag with no earlier value is wrong.
 
 ### 3.3 Timeline
@@ -144,7 +146,7 @@ Other files: `config.json` (all settings, versions, commits), `state.json` (runn
 | Gate | Pass |
 |---|---|
 | Amnesia (arm Z, all types) | 2% or less |
-| Oracle (arm O, types R D X S E C) | 95% or more |
+| Oracle (arm O, types R D X S E C M) | 95% or more |
 | Fresh control F, each arm | 95% or more |
 | Parse rate, each arm | 98% or more |
 | Missed checkpoints (A, B) | 5% or less |
@@ -202,3 +204,7 @@ Three primary comparisons: B minus A at N=10, at N=30, and type X at N=10. The f
 5. Budget: running total in a state file; `--budget-usd`; `--resume`.
 6. Report seeds come from a committed seed list. Dev seeds are separate.
 7. Parallelism: `--jobs N`, default 2.
+
+## 13. Recall agent in arm B
+
+If `<lh-path>/agents/recall.md` exists, the runner copies it into the project folder of arm B as `.claude/agents/recall.md`. Arm A never gets it. Test result (Claude Code 2.1.326): a user-level agent in `~/.claude/agents` is NOT visible to `claude -p --setting-sources project`. The session listed only claude, Explore, general-purpose, Plan, statusline-setup and web-fetch. So a project copy is the only way to give arm B this agent.

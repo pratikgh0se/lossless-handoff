@@ -14,8 +14,8 @@ import argparse, datetime, json, os, random, shutil, sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.realpath(os.path.join(HERE, "..", ".."))
 RESULTS = os.path.join(HERE, "results")
-ALL_TYPES = ["R", "D", "X", "S", "E", "U", "C"]
-TYPES = ["R", "D", "X", "S", "E", "C"]            # scored and gated types. F is a gate. U is reported apart:
+ALL_TYPES = ["R", "D", "X", "S", "E", "U", "C", "M"]
+TYPES = ["R", "D", "X", "S", "E", "C", "M"]            # scored and gated types. F is a gate. U is reported apart:
 U_LABEL = "U needs subagent search (Phase 3)"      # its key lives in a subagent transcript only, so no arm can answer it today
 
 
@@ -155,7 +155,7 @@ def build(run_id, draws=None):
         return ag.vec(arm, TYPES, n)
 
     # ---- table 1
-    md.append("### Table 1: accuracy by arm and compaction count (types R D X S E C pooled; U is in its own row in Table 2)\n")
+    md.append("### Table 1: accuracy by arm and compaction count (types R D X S E C M pooled; U is in its own row in Table 2)\n")
     md.append("Label: %s. Exploratory unless the pair count passes the threshold. Interval: 95%% bootstrap over seeds.\n" % label)
     md.append("| Arm | " + " | ".join("N=%d" % n for n in ns) + " |")
     md.append("|---|" + "---|" * len(ns))

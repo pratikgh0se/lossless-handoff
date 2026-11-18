@@ -115,6 +115,34 @@ class ConflictFlag(Base):
         self.assertFalse(g(conflict=None)["parse_ok"])
 
 
+class OrderType(Base):
+    def test_M(self):
+        it = self.I["M"][0]
+        o = it["order"]
+        g = lambda v: grade.grade("M", [it], js([{"id": 1, "order": v}]))[0]
+        self.assertTrue(g(o)["correct"])
+        self.assertTrue(g(["`%s`" % x for x in o])["correct"])        # one set of backticks
+        self.assertFalse(g([o[1], o[0], o[2]])["correct"])              # wrong order
+        self.assertFalse(g(list(reversed(o)))["correct"])
+        self.assertFalse(g(o[:2])["correct"])                           # missing id
+        self.assertFalse(g(o + ["extra"])["correct"])                   # extra id
+        self.assertFalse(g([o[0], o[1], "nope"])["correct"])
+        self.assertTrue(g(o[:2])["parse_ok"])                           # parsed, but wrong
+        self.assertFalse(g("not a list")["parse_ok"])
+        self.assertFalse(g([1, 2, 3])["parse_ok"])
+
+    def test_M_plants(self):
+        s = self.s
+        it = s["items"]["M"][0]
+        self.assertEqual(len(set(it["order"])), 3)
+        self.assertEqual(len(it["plants"]), 3)
+        self.assertIn(it["plants"][0], s["plant_turns"][-1]["prompt"])       # first in epoch 0
+        text = " ".join(t["prompt"] for t in s["plant_turns"])
+        self.assertNotIn(it["plants"][1], text)                               # others come in later epochs
+        self.assertNotIn(it["order"][2], text)
+        self.assertEqual(gen.GEN_VERSION, "3")
+
+
 class ParseHandling(Base):
     def test_prose_around_json_and_first_object(self):
         x = self.I["D"][0]
@@ -169,6 +197,7 @@ class GeneratorChecks(unittest.TestCase):
         for t, lst in s["items"].items():
             for it in lst:
                 vals += [it[k] for k in ("answer", "old", "new", "ecode", "tok1", "tok2") if k in it]
+                vals += it.get("order") or []
         for lst in s["fresh"].values():
             vals += [it["answer"] for it in lst]
         self.assertEqual(len(vals), len(set(vals)))
