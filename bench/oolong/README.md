@@ -21,12 +21,17 @@ The harness does not test the handoff hooks in a useful way below the compaction
 |---|---|
 | A | Plain Claude Code. The Workflow tool is disallowed. The subagent tool (named Task in this version) stays allowed. |
 | B | Plain Claude Code. The task prompt adds one line: "You may split the work across parallel subagents (Agent tool) if it helps; wait for all their results before your final answer." |
-| C | Lossless Handoff hooks from `--lh-path`. Same task prompt as A. |
+| C | Lossless Handoff from `--lh-path` (alias `--lh`): the hooks, the recall agent and the `llm_map` tool with its skill. Same task prompt as A. |
 | N | No-context control. Same as A, but `context.txt` is not in the folder. |
 
 Same in all arms: model, Claude Code version, allowed tools, permission mode, cost cap per call, time limit, window setting.
 The harness writes a config record per task and arm (`config_records.json`).
 `check_fairness` compares the records. If any setting other than the intended one differs, the run stops before the first call.
+
+Arm C and llm_map: the harness copies `skills/llm-map/SKILL.md` of the checkout into the task project (`.claude/skills/llm-map/SKILL.md`).
+It replaces each `~/.claude/hooks/llm_map.py` in the file with the absolute path `<lh>/hooks/llm_map.py`. The session loads user skills never (`--setting-sources project`).
+`--disable-slash-commands` also turns off skills. So arm C runs without that flag. A and B keep it. The config record names this difference in `llm_map_skill`.
+If the checkout has no `skills/llm-map/SKILL.md` or no `hooks/llm_map.py`, arm C stops before the first call with a clear message.
 
 Arm C: at lengths under the compaction window, no compaction occurs. Then C equals A apart from the session-start text.
 The report prints the compaction count of arm C. With a count of 0, C tests only that text.
@@ -42,10 +47,17 @@ Arm B tests parallel subagents instead.
 ## Sandbox and contamination guards
 
 - WebSearch and WebFetch are disallowed. Bash commands with curl, wget, pip, huggingface, git clone, urllib, requests are denied by permission rules.
+- Arm C only: `llm_map` must reach the Anthropic API from Bash, and its child `claude -p` needs the real login. So arm C has one sandbox exception:
+  `sandbox.excludedCommands = ["python3 <lh>/hooks/llm_map.py *"]`. Claude Code reads this list only from a trusted settings tier, not from the project file.
+  So the harness sets it in the `--settings` JSON of the arm C call. `allowUnsandboxedCommands` stays false. Other commands, also in the same command line, stay in the sandbox.
+  WebFetch and WebSearch stay off, and the curl and wget deny rules stay. No general network is open. The config record holds the list in `llm_map_sandbox_exception`.
+  Claude Code exempts a call only when every command in it matches. So `llm_map` must be a Bash call of its own: a chain (`&&`, `;`, a pipe), a `cd`, a redirect or a command substitution keeps the call in the sandbox, and then it fails on the network.
+  Known limit: the excluded command runs outside the sandbox, so its `--in` file is not limited by the sandbox read rules. The Bash deny rules for the gold and bench paths still apply to the command text.
 - Claude Code sandbox is on for Bash: no network, `allowUnsandboxedCommands` false. Bash can read only its own folder (no sibling folders, no gold, no results, no transcripts).
 - The Read tool is not covered by the sandbox. So each unit has deny rules for the other task folders of the run, the bench folder and the cache folder.
 - The gold answers stay in the cache and in `results/`. They never enter a task folder. The harness deletes each task folder when the unit ends.
 - Proof: `run.sh selfcheck` runs one real `curl` from inside a task session with no curl deny rule. The sandbox must stop it. It stores `evidence/sandbox-<time>.json` with the tool list of each arm.
+  With arm C it also checks that the session lists the `llm-map` skill, that one `llm_map` run of 3 items succeeds from inside the sandbox, and that a curl to example.com in the same session still fails.
 - Control N: each question runs once with no context file. A task that is right without context leaves the cleaned score (also by chance: a label question has a 1 in 6 chance).
 - Transcript search: the text the model wrote and its tool inputs (not tool results, which print context lines) are searched for the data set name, "oolong", "ground truth", Hugging Face, download commands and URLs in commands. The report lists the hits per task.
 - A task with a control hit or any transcript hit leaves the cleaned score in all arms (so the pairs stay). The report prints raw and cleaned scores and the counts removed.
@@ -71,7 +83,7 @@ Self-test: `run.sh selftest` (24 fixed cases for all answer types). With `--data
 ./run.sh cleanup [--all] [--dry-run]                    # only folders with the exact prefix lhoo-
 ```
 
-Flags of `run`: `--model` (pilot haiku, slice sonnet, full opus), `--lengths`, `--tasks`, `--arms`, `--window`, `--lh-path`, `--cache`, `--work-base`,
+Flags of `run`: `--model` (pilot haiku, slice sonnet, full opus), `--lengths`, `--tasks`, `--arms`, `--window`, `--lh-path` (or `--lh`), `--cache`, `--work-base`,
 `--call-cap-usd`, `--timeout-s`, `--jobs` (default 2), `--budget-usd` (pause with exit 3; resume later), `--answer-types`, `--seed`.
 The run refuses to start if `decision.json` is not committed.
 Set `OOLONG_CACHE` and `LHOO_WORK` to keep the gold and the task folders outside the repo.
@@ -81,11 +93,18 @@ Exit codes: 0 finished, 1 a unit failed or the fairness check failed, 2 usage er
 ## Report
 
 `results/<run-id>/summary.md`. Per length and arm: mean score (raw and cleaned) with a 95 percent bootstrap CI, paired difference B-A and C-A,
-cost per task, wall time, turns, workflow calls, compactions. It applies the decision rule only with 10 or more paired clean tasks at 128K.
+cost per task, wall time, turns, workflow calls, llm_map calls, compactions.
+
+How cost is counted: the main session's `total_cost_usd` does not include the child `claude -p` calls of `llm_map`.
+The harness counts `llm_map_calls` (Bash tool calls whose command holds `llm_map.py`) and reads `llm_map_cost_usd` from the summary line `llm_map: ... cost $x` in the tool results.
+Cost per task in the report is the main cost plus `llm_map_cost_usd`. The column "llm_map calls (tasks with 1+)" gives the call count and the number of tasks that used it.
+If a call has no readable summary line (for example a crash), the report says that the cost is a lower bound.
+The budget guard (`--budget-usd`) still counts only the main session cost. Leave margin for arm C. It applies the decision rule only with 10 or more paired clean tasks at 128K.
 
 ## Known limits
 
 - 30 paired tasks see only a gap of 0.15 or more. The pilot (2 tasks) proves the pipeline. It measures no gap.
+- Arm C runs without `--disable-slash-commands`, so it also lists the 19 built-in skills of Claude Code 2.1.326 (see `skills` in the evidence file). A and B list none. This is a small confound that cannot be removed without dropping the llm_map skill.
 - `--max-budget-usd` is checked between turns. One call can pass its cap (a $0.40 cap once spent $0.49).
 - Budget guard: with `--budget-usd X`, no new unit starts when the total reaches X minus the largest unit cost seen so far. Calls that already run can still overshoot, so keep a margin when you set X.
 - The Claude Code version (2.1.326) differs from the LCM paper (v2.1.4).
