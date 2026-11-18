@@ -1,13 +1,13 @@
 {
-  "version": 1,
+  "version": 2,
   "registered": "2026-11-18",
-  "note": "Pass thresholds. They come from the verification plan. Commit this file before any scored run. Do not change it after a run to make a result pass.",
+  "note": "Pass thresholds. They come from the verification plan. v2 adds the headroom gate for generator v4. Committed before any v4 run. Do not change after a run to make a result pass.",
   "amnesia_max_accuracy": 0.02,
   "oracle_min_accuracy": 0.95,
   "fresh_min_accuracy": 0.95,
   "parse_rate_min": 0.98,
   "missed_checkpoint_rate_max": 0.05,
-  "invalid_pair_rate_max": 0.20,
+  "invalid_pair_rate_max": 0.2,
   "gain_min_points": 5,
   "gain_ci_lower_bound_above": 0,
   "min_pairs": 20,
@@ -15,8 +15,23 @@
   "bootstrap_rng_seed": 20261118,
   "ci_level": 0.95,
   "primary_comparisons": [
-    {"name": "B minus A at N=10, all types", "n": 10, "type": null},
-    {"name": "B minus A at N=30, all types", "n": 30, "type": null},
-    {"name": "B minus A at N=10, type X", "n": 10, "type": "X"}
-  ]
+    {
+      "name": "B minus A at N=10, all types",
+      "n": 10,
+      "type": null
+    },
+    {
+      "name": "B minus A at N=30, all types",
+      "n": 30,
+      "type": null
+    },
+    {
+      "name": "B minus A at N=10, type X",
+      "n": 10,
+      "type": "X"
+    }
+  ],
+  "headroom_min_points": 15,
+  "headroom_rule": "discriminative at N = (oracle accuracy minus arm A accuracy at N, scored types) >= headroom_min_points. If not, the gain verdict at that N is 'BENCHMARK TOO EASY at this N: no claim either way'.",
+  "zero_parse_gate": "arm Z parse rate is INFO only; a Z parse failure counts as wrong"
 }
