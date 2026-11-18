@@ -38,6 +38,11 @@ def mean(v):
     return sum(v) / len(v) if v else float("nan")
 
 
+def task_cost(r):
+    """Main session total_cost_usd plus the child llm_map calls (the main figure does not include them)."""
+    return r["cost_usd"] + r.get("llm_map_cost_usd", 0.0)
+
+
 def load(run):
     d = os.path.join(HERE, "results", run)
     rows = [json.loads(x) for x in open(os.path.join(d, "results.jsonl"), encoding="utf-8")]
@@ -117,8 +122,8 @@ def main():
     P("")
     P("## Scores")
     P("")
-    P("| Length | Arm | n raw | Raw mean [95% CI] | n clean | Clean mean [95% CI] | Cost/task | Wall s/task | Turns/task | Workflow calls | Agent calls (tasks with 1+) | Compactions | Errors |")
-    P("|---|---|---|---|---|---|---|---|---|---|---|---|---|")
+    P("| Length | Arm | n raw | Raw mean [95% CI] | n clean | Clean mean [95% CI] | Cost/task | Wall s/task | Turns/task | Workflow calls | Agent calls (tasks with 1+) | llm_map calls (tasks with 1+) | Compactions | Errors |")
+    P("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|")
     flags = []
     for ln in lengths:
         tids = [t for t, l in tasks.items() if l == ln]
@@ -131,10 +136,12 @@ def main():
             wft = sum(1 for r in rs if r["subagent_calls"] > 0)
             if wf:
                 flags.append("arm %s shows %d workflow calls at %s: the Workflow tool must be disallowed" % (arm, wf, LEN_LABEL.get(ln, ln)))
-            P("| %s | %s | %d | %s | %d | %s | $%.3f | %.0f | %.1f | %d | %d (%d) | %d | %d |" % (
+            lmc = sum(r.get("llm_map_calls", 0) for r in rs)
+            lmt = sum(1 for r in rs if r.get("llm_map_calls", 0) > 0)
+            P("| %s | %s | %d | %s | %d | %s | $%.3f | %.0f | %.1f | %d | %d (%d) | %d (%d) | %d | %d |" % (
                 LEN_LABEL.get(ln, ln), arm, len(raw), fmt(mean(raw), boot_ci(raw, draws, rng)), len(cln), fmt(mean(cln), boot_ci(cln, draws, rng)),
-                mean([r["cost_usd"] for r in rs]), mean([r["wall_s"] for r in rs]), mean([r["num_turns"] or 0 for r in rs]),
-                wf, sum(r["subagent_calls"] for r in rs), wft, sum(r["compactions"] for r in rs), sum(1 for r in rs if r["is_error"])))
+                mean([task_cost(r) for r in rs]), mean([r["wall_s"] for r in rs]), mean([r["num_turns"] or 0 for r in rs]),
+                wf, sum(r["subagent_calls"] for r in rs), wft, lmc, lmt, sum(r["compactions"] for r in rs), sum(1 for r in rs if r["is_error"])))
     P("")
     P("## Paired difference (same tasks, score of the arm minus score of A)")
     P("")
@@ -157,8 +164,16 @@ def main():
             P("- Arm B subagent use rate: %d of %d tasks (%.0f%%). At 0%% arm B equals arm A in practice. Arm A also may use subagents; see its Agent calls." % (used, total, 100.0 * used / max(total, 1)))
         if a_ == "C":
             comp = sum(r["compactions"] for r in rows if r["arm"] == "C")
+            lmu = sum(1 for r in rows if r["arm"] == "C" and r.get("llm_map_calls", 0) > 0)
+            lmn = sum(1 for r in rows if r["arm"] == "C")
+            P("- Arm C llm_map use rate: %d of %d tasks. At 0 the llm_map tool changed nothing in practice." % (lmu, lmn))
             P("- Arm C compactions: %d. At lengths under the compaction window, arm C equals arm A apart from the session-start text; with 0 compactions it tests only that text." % comp)
-    P("- Wall time and cost are per task, one `claude -p` call. Cost is `total_cost_usd` (API-equivalent).")
+    P("- Wall time and cost are per task, one `claude -p` call. Cost is `total_cost_usd` (API-equivalent) of the main session plus the llm_map child calls.")
+    lm_rows = [r for r in rows if r.get("llm_map_calls", 0) > 0]
+    if lm_rows:
+        unparsed = sum(1 for r in lm_rows if r.get("llm_map_summaries", 0) < r["llm_map_calls"])
+        P("- llm_map cost is read from the `llm_map: ... cost $x` line in the tool results: $%.3f in total over %d unit(s). In %d unit(s) fewer summary lines than calls were found, so the cost is a lower bound there." % (
+            sum(r.get("llm_map_cost_usd", 0.0) for r in lm_rows), len(lm_rows), unparsed))
     P("- Sample size: 30 paired tasks see only a gap of 0.15 or more (paired SD about 0.3, 95%% half-width about 0.11). A smaller gap is not a result.")
     for f in flags:
         P("- FLAG: " + f)
@@ -180,7 +195,7 @@ def main():
         for arm in ("A", "B"):
             rs = [by[(t, arm)] for t in tids if (t, arm) in by]
             if rs and mean([r["score"] for r in rs]) > bm:
-                best, bm, bc = arm, mean([r["score"] for r in rs]), mean([r["cost_usd"] for r in rs])
+                best, bm, bc = arm, mean([r["score"] for r in rs]), mean([task_cost(r) for r in rs])
         est = dec["map_plan_estimate_usd_per_task"]["128K"]
         ratio = bc / est
         if bm <= th["build_score_max"] or ratio > th["build_cost_ratio_min"]:
