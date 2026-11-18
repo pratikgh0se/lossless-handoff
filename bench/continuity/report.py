@@ -393,7 +393,8 @@ def build(run_id, draws=None):
         for x in sorted(ret, key=lambda y: (y["arm"], y["seed"])):
             md.append("- arm %s seed %d: %s of %d" % (x["arm"], x["seed"], ", ".join(map(str, x["found"])) or "no summary", x["total"]))
         md.append("")
-        flags = [x for x in ret if x.get("collapse")]
+        flags = [x for x in ret if len(x.get("found") or []) >= 2 and max(x["found"][:-1]) > 0
+                 and x["found"][-1] < max(x["found"][:-1]) / 2]     # recomputed, so old retention.jsonl files use the current rule
         for x in sorted(flags, key=lambda y: (y["arm"], y["seed"])):
             md.append("SUMMARY COLLAPSE: arm %s seed %d: the last summary keeps %d of %d answers, the best earlier one kept %d." % (
                 x["arm"], x["seed"], x["last"], x["total"], max(x["found"][:-1])))
