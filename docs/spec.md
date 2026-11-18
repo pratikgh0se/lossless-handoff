@@ -857,7 +857,7 @@ Ids are unique in the file. A malformed line is skipped by readers and never cra
 `- summary node: this chat continues after node <id> (compaction #<seq>, lines <first>-<last>). See all nodes: python3 ~/.claude/hooks/recall.py map; one node: recall.py describe <id>.`
 No leaf found: no line. The `startup` and `resume` sources do not get it.
 
-**F54.e Proof.** `--prove --days N` gets a `nodes` check over the transcripts in the window, after a sync: every `compact_boundary` has exactly one leaf; in each transcript the leaf ranges do not overlap, start at line 1, and leave no gap up to the last boundary. It prints `nodes: <b> boundaries, <n> leaves, <bad> bad` and counts as failed when `bad` > 0.
+**F54.e Proof.** `--prove --days N` gets a `nodes` check over the transcripts in the window, after a sync: every `compact_boundary` has exactly one leaf; in each transcript the leaf ranges do not overlap, start at line 1, and leave no gap up to the last boundary. The check covers every transcript (main and subagent) under `~/.claude/projects` that has at least one `compact_boundary` with a timestamp in the last N days. It does not depend on receipts or on an earlier SessionStart sync, because `--prove` runs the sync itself first. It prints `nodes: <b> boundaries, <n> leaves, <bad> bad` and counts as failed when `bad` > 0.
 
 ACs:
 - 236. A fixture transcript with 3 `compact_boundary` records, then a SessionStart `compact` run: `nodes.jsonl` has 3 leaves with `seq` 1, 2, 3; each `first_line`/`last_line` matches the boundary lines; `prev` links 2 to 1 and 3 to 2; `id` equals `n` + sha1(`<session>:<uuid>`)[:10].

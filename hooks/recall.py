@@ -2,7 +2,7 @@
 """recall.py (F44): search this project's earlier Claude Code chats word for word.
 
 Read-only over ~/.claude/projects/*/<sid>.jsonl, except its own cache <state>/recall-index.json.
-Subcommands: search, open, user, handoffs. Python 3 stdlib only; uses `rg` as a prefilter when on
+Subcommands: search, open, user, handoffs, index, map, describe, nodes. Python 3 stdlib only; uses `rg` as a prefilter when on
 PATH (same output as the pure-Python scan).
 """
 import argparse
@@ -401,7 +401,24 @@ def keyword_hits(a, ts, rx, pattern, fixed):
 
 
 def fmt_hit(h):
-    return "%s:%d %s %s [%s]: %s" % (h["sid8"], h["line"], fmt_ts(h["ts"]), h["role"], h["tag"], h["snippet"])
+    s = "%s:%d %s %s [%s]: %s" % (h["sid8"], h["line"], fmt_ts(h["ts"]), h["role"], h["tag"], h["snippet"])
+    return s + (" [node %s]" % h["node"] if h.get("node") else "")
+
+
+def tag_nodes(shown, root):
+    """F54.c: ` [node <id>]` / ` [node live]` on each hit. Syncs only the transcripts that have hits. Never raises."""
+    try:
+        ldir = ledger_dir_for(root)
+        for p in {h["path"] for h in shown}:
+            try:
+                sync_transcript(ldir, p, 3.0)
+            except Exception:
+                pass
+        idx = leaf_index(read_nodes(ldir))
+        for h in shown:
+            h["node"] = node_tag(idx, h["path"], h["line"])
+    except Exception:
+        pass
 
 
 def cmd_search(a, root):
@@ -417,7 +434,14 @@ def cmd_search(a, root):
             raise UsageError("bad pattern: %s" % e)
         fixed = True  # F44.9: not a valid regex -> fixed string for the keyword part
         rx = re.compile(re.escape(pattern), re.I)
+    node = None
+    if a.node:  # F54.c: only hits inside one leaf's line range
+        node = find_node(root, a.node)
+        if node.get("agent"):
+            a.subagents = True
     ts = select_session(in_scope_transcripts(root, a.subagents), a.session)
+    if node:
+        ts = [t for t in ts if os.path.realpath(t.path) == os.path.realpath(node["transcript"])]
 
     mode_line, mhits, off_reason = None, [], None
     if a.keyword:
@@ -440,8 +464,12 @@ def cmd_search(a, root):
         merged = kw
     else:
         merged = rrf_merge(kw, mhits)
+    if node:
+        merged = [h for h in merged if os.path.realpath(h["path"]) == os.path.realpath(node["transcript"])
+                  and node["first_line"] <= h["line"] <= node["last_line"]]
     shown = merged[:limit]
     fill_meaning_snippets(shown, ts)
+    tag_nodes(shown, root)
     lines = [mode_line]
     lines += [fmt_hit(h) for h in shown]
     lines.append("%d hits shown of %d (%d sessions searched)" % (len(shown), len(merged), len(ts)))
@@ -940,6 +968,390 @@ def cmd_session_end():
     return 0
 
 
+# ---------------------------------------------------------------- summary nodes (F54)
+
+NODES_FILE, NODES_STATE, NODES_LOCK = "nodes.jsonl", "nodes.state.json", "nodes.lock"
+BOUNDARY_MARK = b"compact_boundary"
+SCAN_STEP = 8 << 20
+
+
+class NotFound(Exception):
+    pass
+
+
+def ledger_dir_for(root):
+    """The project ledger folder (the folder that holds decisions.md), same key as F39.1."""
+    return os.path.join(STATE_DIR, "projects", project_key(root))
+
+
+def transcript_names(path):
+    """-> (session id, agent id or None) from a transcript path."""
+    stem = os.path.basename(path)
+    stem = stem[:-len(".jsonl")] if stem.endswith(".jsonl") else stem
+    parent = os.path.dirname(path)
+    if os.path.basename(parent) == "subagents":
+        sid = os.path.basename(os.path.dirname(parent))
+        return sid, (stem[len("agent-"):] if stem.startswith("agent-") else stem)
+    return stem, None
+
+
+def node_id(session, uuid):
+    return "n" + hashlib.sha1(("%s:%s" % (session, uuid)).encode("utf-8")).hexdigest()[:10]
+
+
+def is_boundary_rec(o):
+    return isinstance(o, dict) and (o.get("subtype") == "compact_boundary" or o.get("type") == "compact_boundary")
+
+
+def read_nodes(ldir):
+    """All valid leaf nodes in nodes.jsonl (a malformed line is skipped)."""
+    out, seen = [], set()
+    try:
+        with open(os.path.join(ldir, NODES_FILE), encoding="utf-8", errors="replace") as f:
+            for ln in f:
+                try:
+                    o = json.loads(ln)
+                except Exception:
+                    continue
+                if (isinstance(o, dict) and isinstance(o.get("id"), str) and isinstance(o.get("first_line"), int)
+                        and isinstance(o.get("last_line"), int) and isinstance(o.get("transcript"), str)
+                        and o["id"] not in seen):
+                    seen.add(o["id"])
+                    out.append(o)
+    except OSError:
+        pass
+    return out
+
+
+def scan_boundaries(path, start_off=0, start_line=1, upto=None):
+    """Boundary records at or after byte start_off (a line start whose number is start_line).
+    -> (list of (lineno, record, line_start_offset), end_off, end_line, tail) where end_off is the offset after the last
+    complete line, end_line the number of the next line, and tail = (lineno, record) for an unterminated final line
+    that parses as a boundary (else None). Counts newlines at C speed; parses only lines holding the marker."""
+    found, carry_off, line_no, tail = [], start_off, start_line, None
+    with open(path, "rb") as f:
+        f.seek(start_off)
+        buf, buf_off = b"", start_off
+        while True:
+            chunk = f.read(SCAN_STEP)
+            if not chunk and not buf:
+                break
+            data = buf + chunk
+            last_nl = data.rfind(b"\n")
+            if not chunk:  # end of file: whatever is left has no trailing newline
+                if data.strip():
+                    if BOUNDARY_MARK in data:
+                        try:
+                            o = json.loads(data)
+                        except Exception:
+                            o = None
+                        if is_boundary_rec(o):
+                            tail = (line_no, o)
+                break
+            if last_nl < 0:
+                buf = data
+                continue
+            body = data[:last_nl + 1]
+            pos = 0
+            while True:
+                i = body.find(BOUNDARY_MARK, pos)
+                if i < 0:
+                    break
+                ls = body.rfind(b"\n", 0, i) + 1
+                le = body.find(b"\n", i)
+                ln = line_no + body.count(b"\n", 0, ls)
+                try:
+                    o = json.loads(body[ls:le])
+                except Exception:
+                    o = None
+                if is_boundary_rec(o):
+                    found.append((ln, o, buf_off + ls))
+                pos = le + 1
+            line_no += body.count(b"\n")
+            buf_off += len(body)
+            buf = data[last_nl + 1:]
+    return found, buf_off, line_no, tail
+
+
+def head_sig(path):
+    try:
+        with open(path, "rb") as f:
+            return hashlib.sha1(f.read(4096)).hexdigest()
+    except OSError:
+        return ""
+
+
+def handoff_for(session, agent, btime):
+    """Path of the timestamped handoff dump written for this compaction (newest at or before the boundary), else None."""
+    key = session if not agent else "%s-a-%s" % (session, agent)
+    best = None
+    try:
+        for p in glob.glob(os.path.join(STATE_DIR, glob.escape(key) + "-????????T??????Z.md")):
+            m = re.search(r"-(\d{8}T\d{6}Z)\.md$", p)
+            if not m:
+                continue
+            try:
+                t = datetime.datetime.strptime(m.group(1), "%Y%m%dT%H%M%SZ").replace(tzinfo=datetime.timezone.utc)
+                b = datetime.datetime.fromisoformat(str(btime).replace("Z", "+00:00"))
+                if b.tzinfo is None:
+                    b = b.replace(tzinfo=datetime.timezone.utc)
+            except Exception:
+                continue
+            if t <= b + datetime.timedelta(seconds=5) and (best is None or t > best[0]):
+                best = (t, p)
+    except Exception:
+        pass
+    return best[1] if best else None
+
+
+def open_nodes_lock(ldir, wait):
+    os.makedirs(ldir, exist_ok=True)
+    lf = open(os.path.join(ldir, NODES_LOCK), "a+")
+    end = time.time() + wait
+    while True:
+        try:
+            fcntl.flock(lf, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return lf
+        except OSError:
+            if time.time() >= end:
+                lf.close()
+                return None
+            time.sleep(0.05)
+
+
+def sync_transcript(ldir, tpath, wait=10.0):
+    """F54.b: append a leaf node for each new compact_boundary of one transcript, reading from the saved byte offset.
+    Returns the number of nodes added (0 when nothing is new or the lock is busy). Raises only on a real error."""
+    rpath = os.path.realpath(tpath)
+    if not os.path.isfile(rpath):
+        return 0
+    lf = open_nodes_lock(ldir, wait)
+    if lf is None:
+        return 0
+    try:
+        sp = os.path.join(ldir, NODES_STATE)
+        try:
+            with open(sp, encoding="utf-8") as f:
+                state = json.load(f)
+            if not isinstance(state, dict):
+                state = {}
+        except Exception:
+            state = {}
+        size = os.path.getsize(rpath)
+        sig = head_sig(rpath)
+        ent = state.get(rpath)
+        fresh = {"offset": 0, "line": 1, "seq": 0, "prev_line": 0, "prev_id": None, "sig": sig}
+        if not isinstance(ent, dict) or ent.get("offset", 0) > size or ent.get("sig") != sig:
+            ent = dict(fresh)  # new, shorter or replaced transcript: scan from the start; add only missing ids
+        if ent["offset"] == size:
+            if state.get(rpath) != ent:
+                state[rpath] = ent
+                write_state(sp, state)
+            return 0
+        known = {n["id"] for n in read_nodes(ldir)}
+        found, end_off, end_line, tail = scan_boundaries(rpath, ent["offset"], ent["line"])
+        session, agent = transcript_names(rpath)
+        seq, prev_line, prev_id = ent["seq"], ent["prev_line"], ent["prev_id"]
+        new_lines, commit = [], dict(ent)
+        items = [(ln, o) for ln, o, _ in found]
+        committed_n = len(items)
+        if tail:
+            items.append(tail)
+        for k, (ln, o) in enumerate(items):
+            seq += 1
+            uuid = o.get("uuid") if isinstance(o.get("uuid"), str) and o.get("uuid") else "line-%d" % ln
+            nid = node_id(session, uuid)
+            cm = o.get("compactMetadata") if isinstance(o.get("compactMetadata"), dict) else {}
+            if nid not in known:
+                known.add(nid)
+                pt = cm.get("preTokens")
+                new_lines.append(json.dumps({
+                    "id": nid, "kind": "leaf", "session": session, "agent": agent, "transcript": os.path.abspath(tpath),
+                    "seq": seq, "boundary_uuid": uuid, "time": o.get("timestamp") if isinstance(o.get("timestamp"), str) else None,
+                    "trigger": cm.get("trigger") if isinstance(cm.get("trigger"), str) else None,
+                    "pre_tokens": pt if isinstance(pt, int) and not isinstance(pt, bool) else None,
+                    "first_line": prev_line + 1, "last_line": ln - 1, "prev": prev_id,
+                    "handoff": handoff_for(session, agent, o.get("timestamp")),
+                }, ensure_ascii=False))
+            prev_line, prev_id = ln, nid
+            if k == committed_n - 1:
+                commit.update(seq=seq, prev_line=prev_line, prev_id=prev_id)
+        if new_lines:
+            with open(os.path.join(ldir, NODES_FILE), "a", encoding="utf-8") as f:
+                f.write("\n".join(new_lines) + "\n")
+        commit.update(offset=end_off, line=end_line, sig=sig)
+        state[rpath] = commit
+        write_state(sp, state)
+        return len(new_lines)
+    finally:
+        lf.close()
+
+
+def write_state(sp, state):
+    tmp = "%s.%d.tmp" % (sp, os.getpid())
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(state, f)
+    os.replace(tmp, sp)
+
+
+def project_transcripts(root):
+    return in_scope_transcripts(root, True)
+
+
+def sync_project(root):
+    """Sync every transcript of the project (main chats and subagents). -> nodes added."""
+    ldir = ledger_dir_for(root)
+    added = 0
+    for t in project_transcripts(root):
+        try:
+            added += sync_transcript(ldir, t.path)
+        except Exception:
+            continue
+    return added
+
+
+def leaf_index(nodes):
+    """realpath(transcript) -> leaves sorted by first_line."""
+    idx = {}
+    for n in nodes:
+        idx.setdefault(os.path.realpath(n["transcript"]), []).append(n)
+    for v in idx.values():
+        v.sort(key=lambda n: n["first_line"])
+    return idx
+
+
+def node_tag(idx, path, line):
+    leaves = idx.get(os.path.realpath(path))
+    if not leaves:
+        return None
+    for n in leaves:
+        if n["first_line"] <= line <= n["last_line"]:
+            return n["id"]
+    if line > leaves[-1]["last_line"]:
+        return "live"
+    return None
+
+
+def summary_of(node):
+    """Full Claude Code summary text (the isCompactSummary record after the boundary), or ''."""
+    path = node.get("transcript")
+    b = node["last_line"] + 1
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            for n, line in enumerate(f, 1):
+                if n <= b:
+                    continue
+                if n > b + 60:
+                    break
+                if '"isCompactSummary"' not in line:
+                    if "compact_boundary" in line:
+                        rec = parse_line(line)
+                        if is_boundary_rec(rec):
+                            break
+                    continue
+                rec = parse_line(line)
+                if not rec or not rec.get("isCompactSummary"):
+                    continue
+                msg = rec.get("message")
+                c = msg.get("content") if isinstance(msg, dict) else None
+                if isinstance(c, str):
+                    return c
+                if isinstance(c, list):
+                    return "\n".join(x.get("text", "") for x in c if isinstance(x, dict) and isinstance(x.get("text"), str))
+    except OSError:
+        pass
+    return ""
+
+
+HEAD_RE = re.compile(r"^\s*(?:#{1,6}\s+|\*\*)?(?:\d+\.\s+)?(.*?)\**:?\**\s*$")
+NEXT_HEAD_RE = re.compile(r"^\s*(?:#{1,6}\s+\S.*|\**\d+\.\s+[A-Z][A-Za-z /&'()-]{2,50}:\**\s*)$")
+
+
+def gist_of(summary):
+    if not summary.strip():
+        return "(no summary)"
+    lines = summary.splitlines()
+    for i, ln in enumerate(lines):
+        if "current work" in ln.lower() and len(ln) < 120 and (NEXT_HEAD_RE.match(ln) or ln.strip().startswith(("#", "*"))):
+            body = []
+            for x in lines[i + 1:]:
+                if NEXT_HEAD_RE.match(x) and body:
+                    break
+                if NEXT_HEAD_RE.match(x):
+                    break
+                body.append(x)
+            text = " ".join(" ".join(body).split())
+            if not text:
+                text = " ".join(ln.split(":", 1)[1].split()) if ":" in ln else ""
+            if text:
+                return redact(text)[:160]
+    rest = " ".join(" ".join(lines[1:]).split()) or " ".join(lines[0].split())
+    return redact(rest)[:160] or "(no summary)"
+
+
+def cmd_nodes(a, root):
+    if not a.backfill:
+        raise UsageError("nodes needs --backfill")
+    added = sync_project(root)
+    return ["nodes: %d added, %d total" % (added, len(read_nodes(ledger_dir_for(root))))]
+
+
+def cmd_map(a, root):
+    sync_project(root)
+    nodes = read_nodes(ledger_dir_for(root))
+    if a.session and a.session != "all":
+        nodes = [n for n in nodes if str(n.get("session", "")).startswith(a.session) or str(n.get("session", ""))[:8].startswith(a.session[:8])]
+    if a.limit < 1:
+        raise UsageError("--limit must be >= 1")
+    nodes.sort(key=lambda n: (str(n.get("time") or ""), n["id"]))
+    nodes = nodes[-a.limit:]
+    if not nodes:
+        return ["no summary nodes yet"]
+    first_time = {}
+    for n in nodes:
+        first_time.setdefault(n["session"], str(n.get("time") or ""))
+    nodes.sort(key=lambda n: (first_time[n["session"]], n["session"], str(n.get("time") or ""), n.get("seq", 0)))
+    # one pass per transcript: read the lines after each boundary for the gist
+    by_path = {}
+    for n in nodes:
+        by_path.setdefault(n["transcript"], []).append(n)
+    gists = {}
+    for p, ns in by_path.items():
+        for n in ns:
+            gists[n["id"]] = gist_of(summary_of(n))
+    out = []
+    for n in nodes:
+        who = n["session"][:8] + ("/" + n["agent"][:8] if n.get("agent") else "")
+        pt = n.get("pre_tokens")
+        out.append("%s %s %s #%s lines %d-%d %s tokens: %s" % (
+            n["id"], fmt_ts(n.get("time")), who, n.get("seq"), n["first_line"], n["last_line"],
+            pt if pt is not None else "?", gists[n["id"]]))
+    out.append("%d nodes in %d sessions" % (len(nodes), len({n["session"] for n in nodes})))
+    return out
+
+
+def find_node(root, nid):
+    sync_project(root)
+    for n in read_nodes(ledger_dir_for(root)):
+        if n["id"] == nid:
+            return n
+    raise NotFound("no node %s" % nid)
+
+
+def cmd_describe(a, root):
+    n = find_node(root, a.id)
+    pt = n.get("pre_tokens")
+    out = ["id: %s" % n["id"], "session: %s" % n["session"], "agent: %s" % (n.get("agent") or "none"),
+           "seq: %s" % n.get("seq"), "time: %s" % (n.get("time") or "unknown"),
+           "trigger: %s" % (n.get("trigger") or "unknown"),
+           "lines: %d-%d" % (n["first_line"], n["last_line"]),
+           "pre_tokens: %s" % (pt if pt is not None else "unknown"),
+           "prev: %s" % (n.get("prev") or "none"), "handoff: %s" % (n.get("handoff") or "none"),
+           "open: python3 ~/.claude/hooks/recall.py open %s:%d" % (n["session"][:8], n["first_line"]), ""]
+    out.append(redact(summary_of(n)) or "(no summary found in the transcript)")
+    return out
+
+
 # ---------------------------------------------------------------- open / user
 
 def cap_body(text, full, mid=None, start=0):
@@ -1098,6 +1510,7 @@ def build_parser():
     p.add_argument("--subagents", action="store_true")
     p.add_argument("--keyword", action="store_true")
     p.add_argument("--meaning", action="store_true")
+    p.add_argument("--node", default=None)
     common(p)
     p = sub.add_parser("open")
     p.add_argument("id")
@@ -1112,6 +1525,16 @@ def build_parser():
     p = sub.add_parser("index")
     p.add_argument("--max-seconds", type=float, default=0)
     p.add_argument("--all", action="store_true")
+    common(p)
+    p = sub.add_parser("map")
+    p.add_argument("--session", default="all")
+    p.add_argument("--limit", type=int, default=200)
+    common(p)
+    p = sub.add_parser("describe")
+    p.add_argument("id")
+    common(p)
+    p = sub.add_parser("nodes")
+    p.add_argument("--backfill", action="store_true")
     common(p)
     p = sub.add_parser("session-end")
     p = sub.add_parser("handoffs")
@@ -1136,13 +1559,18 @@ def main(argv):
             return 0
         cwd = os.path.expanduser(a.cwd) if a.cwd else os.getcwd()
         root = project_root(cwd)
-        fn = {"search": cmd_search, "open": cmd_open, "user": cmd_user, "index": cmd_index, "handoffs": cmd_handoffs}[a.cmd]
+        fn = {"search": cmd_search, "open": cmd_open, "user": cmd_user, "index": cmd_index, "handoffs": cmd_handoffs,
+              "map": cmd_map, "describe": cmd_describe, "nodes": cmd_nodes}[a.cmd]
         big = a.cmd == "open" and (a.full or a.from_ is not None)
         emit(fn(a, root), OPEN_FULL_CAP if big else OUT_CAP)
         return 0
     except UsageError as e:
         sys.stderr.write("recall.py: %s\n" % e)
         return 2
+    except NotFound as e:  # F54.c: `no node <id>`, exit 1
+        sys.stdout.write("%s\n" % e)
+        sys.stderr.write("%s\n" % e)
+        return 1
     except BrokenPipeError:
         return 0
 

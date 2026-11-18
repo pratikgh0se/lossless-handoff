@@ -10,7 +10,7 @@ if os.environ.get("HANDOFF_HOOK_CHILD"):  # spawned by our own summary call: nev
     sys.exit(0)
 
 _T0 = time.monotonic()
-HOOK_VERSION = "1.11.0"
+HOOK_VERSION = "1.12.0"
 HOME = os.path.expanduser("~")
 HANDOFFS_DIR = (os.environ.get("HANDOFF_STATE_DIR") or "").strip() or os.path.join(HOME, ".local", "state", "claude-handoffs")
 HEALTH_FILE = os.path.join(HANDOFFS_DIR, "health.jsonl")
@@ -305,8 +305,26 @@ def recall_path():
     return None
 
 
+RECALL_AGENT_MARK = "<!-- lossless-handoff:recall-agent -->"
+RECALL_AGENT_SENTENCE = ("For wide lookups (many hits, long messages, or a whole node), ask the recall subagent "
+                         "(Agent tool, subagent_type \"recall\") so the main context stays small; "
+                         "for one exact fact, search directly.")
+
+
+def recall_agent_ours():
+    """F55.c: ~/.claude/agents/recall.md exists and holds our marker line."""
+    try:
+        with open(os.path.join(os.path.expanduser("~"), ".claude", "agents", "recall.md"), encoding="utf-8",
+                  errors="replace") as f:
+            return RECALL_AGENT_MARK in f.read()
+    except OSError:
+        return False
+
+
 def recall_line():
-    return RECALL_LINE if recall_path() else ""
+    if not recall_path():
+        return ""
+    return RECALL_LINE[:-1] + (" " + RECALL_AGENT_SENTENCE if recall_agent_ours() else "") + "\n"
 
 
 def summary_enabled():
@@ -416,6 +434,9 @@ def read_agent(sid, P):
         return None, None, []
 
 
+_EXCERPT = {"chars": 0, "dropped": 0}  # F56.a: filled by excerpt(); written to the health row
+
+
 def excerpt(path, limit=SUMMARY_EXCERPT_CAP):
     """F38.2 + F39.7: genuine user/assistant messages after the last compact_boundary; tool uses as
     one-liners ending `-> ok`, `-> error: <first line>` or `-> no result`."""
@@ -480,12 +501,15 @@ def excerpt(path, limit=SUMMARY_EXCERPT_CAP):
         msgs.append(it[0] + "\n".join(lines))
     sizes = [len(x) for x in msgs]
     total = sum(sizes) + 2 * max(len(msgs) - 1, 0)
+    all_chars = total
     i = 0
     while total > limit and len(msgs) - i > 1:
         total -= sizes[i] + 2
         i += 1
     out = "\n\n".join(msgs[i:])
-    return out[-limit:] if limit > 0 else ""
+    sent = out[-limit:] if limit > 0 else ""
+    _EXCERPT["chars"], _EXCERPT["dropped"] = len(sent), max(0, all_chars - len(sent))  # F56.a
+    return sent
 
 
 def run_claude(stdin_text, system, prompt, model, timeout):
@@ -535,6 +559,8 @@ def summary_handoff(tp, model, timeout, standing="(none)"):
         if not ex:
             return None, "no transcript excerpt"
         out, err = run_claude(pre + ex, SUMMARY_SYSTEM, SUMMARY_PROMPT, model, timeout)
+        if err == "claude binary not found":  # F56.a: nothing was sent
+            _EXCERPT["chars"] = _EXCERPT["dropped"] = 0
         if err:
             return None, err
         out = out.strip()
@@ -1641,6 +1667,8 @@ def write_health(d, sid, info, body, status_override=None, sidecar=True, reasons
         "errors": info["errors"],
         "status": status,
         "hook_version": HOOK_VERSION,
+        "excerpt_chars": _EXCERPT["chars"],
+        "excerpt_dropped": _EXCERPT["dropped"],
         "canary_child": bool(os.environ.get("HANDOFF_CANARY")),
     }
     if _STEER[0]:
@@ -2224,6 +2252,96 @@ def resolve_boundary(rc):
     return best
 
 
+def _load_recall():
+    """Import recall.py (next to this hook, else ~/.claude/hooks); None if it is not there."""
+    for q in (os.path.join(os.path.dirname(os.path.abspath(__file__)), "recall.py"),
+              os.path.join(os.path.expanduser("~"), ".claude", "hooks", "recall.py")):
+        if os.path.isfile(q):
+            import importlib.util
+            spec = importlib.util.spec_from_file_location("lh_recall", q)
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+            return mod
+    return None
+
+
+def nodes_check(receipts, start):  # receipts are not used: the scope is every transcript with a boundary in the window
+    """F54.e: after a sync, every compact_boundary has exactly one leaf; per transcript the leaf ranges start at line 1,
+    do not overlap and leave no gap. -> (the printed line, number of bad)."""
+    b = n = bad = 0
+    try:
+        rm = _load_recall()
+        if rm is None:
+            return "nodes: 0 boundaries, 0 leaves, 0 bad", 0
+        targets = {}  # realpath(transcript) -> ledger dir
+        pd = os.path.join(os.path.expanduser("~"), ".claude", "projects")
+        cands = glob.glob(os.path.join(pd, "*", "*.jsonl")) + glob.glob(os.path.join(pd, "*", "*", "subagents", "*.jsonl"))
+        for tp in cands:
+            try:
+                if os.path.getmtime(tp) < start:
+                    continue  # no record in the window can be in a file older than the window
+                found, _eo, _el, tail = rm.scan_boundaries(tp)
+                recent = False
+                for _ln, o in [(x[0], x[1]) for x in found] + ([tail] if tail else []):
+                    try:
+                        te = datetime.datetime.fromisoformat(str(o.get("timestamp")).replace("Z", "+00:00")).timestamp()
+                    except Exception:
+                        te = 0
+                    if te >= start:
+                        recent = True
+                        break
+                if not recent:
+                    continue
+                cwd = rm.first_cwd(tp)
+                if cwd:
+                    targets[os.path.realpath(tp)] = rm.ledger_dir_for(rm.project_root(cwd))
+            except Exception as e:
+                log_error("unknown", e)
+        for tp, ldir in sorted(targets.items()):
+            try:
+                rm.sync_transcript(ldir, tp, 5.0)
+            except Exception as e:
+                log_error("unknown", e)
+            found, _eo, _el, tail = rm.scan_boundaries(tp)
+            bl = [(ln, o) for ln, o, _ in found] + ([tail] if tail else [])
+            session, agent = rm.transcript_names(tp)
+            ids = [rm.node_id(session, o.get("uuid") if isinstance(o.get("uuid"), str) and o.get("uuid") else f"line-{ln}")
+                   for ln, o in bl]
+            leaves = [x for x in rm.read_nodes(ldir) if os.path.realpath(x["transcript"]) == tp]
+            b += len(bl)
+            n += len(leaves)
+            byid = {}
+            for x in leaves:
+                byid.setdefault(x["id"], []).append(x)
+            for i, (ln, _o) in enumerate(bl):
+                if len(byid.get(ids[i], [])) != 1:
+                    bad += 1
+            ordered = sorted(leaves, key=lambda x: x["first_line"])
+            expect = 1
+            for x in ordered:
+                if x["first_line"] != expect or x["last_line"] < x["first_line"] - 1:
+                    bad += 1
+                expect = x["last_line"] + 2
+            if bl and ordered and ordered[-1]["last_line"] + 1 != bl[-1][0]:
+                bad += 1
+    except Exception as e:
+        log_error("unknown", e)
+    return f"nodes: {b} boundaries, {n} leaves, {bad} bad", bad
+
+
+def excerpt_cut_line(health, start):
+    """F56.b: information only, from health rows that have the excerpt fields."""
+    rows = [r for r in health if isinstance(r, dict) and "excerpt_dropped" in r and (_iso_epoch(r.get("ts")) or 0) >= start
+            and isinstance(r.get("excerpt_dropped"), int)]
+    cut = sorted(r["excerpt_dropped"] for r in rows if r["excerpt_dropped"] > 0)
+    if cut:
+        m = len(cut) // 2
+        med = cut[m] if len(cut) % 2 else (cut[m - 1] + cut[m]) // 2
+    else:
+        med = 0
+    return f"excerpt cut: {len(cut)} of {len(rows)} compactions, median dropped {med} chars"
+
+
 def prove(days=7):
     """F47.b: verdicts for receipts in the window, appended to proofs.jsonl; prints the summary line; writes
     proof-report.md and (F48) claims-status.json / claims-report.md. Never raises."""
@@ -2283,8 +2401,17 @@ def prove(days=7):
         return f"{tally[c][0]}/{tally[c][0] + tally[c][1]}"
     line = (f"proof {days}d: receipts {len(receipts)} · lossless {pq('lossless')} · right-agent {pq('right_agent')} "
             f"· delivered {pq('delivered')} · decisions-safe {pq('decisions_safe')} · failed {len(fails)}")
+    nodes_line, nbad = nodes_check(receipts, start)
+    if nbad > 0:
+        fails.append(f"failed nodes: {nbad} bad (see {nodes_line})")
+        line = re.sub(r"failed \d+$", f"failed {len(fails)}", line)
     _before = list(_OUTLOG)  # reconcile's lines when run together
     _out(line)
+    _out(nodes_line)
+    try:
+        _out(excerpt_cut_line(health, start))
+    except Exception as e:
+        log_error("unknown", e)
     try:
         rep_lines = [line, ""] + _before + ([""] if _before else [])
         rep_lines += fails + ([""] if fails else [])
