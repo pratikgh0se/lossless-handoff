@@ -68,7 +68,9 @@ DRY=0; FORCE=0; WINDOW=400000; SETWINDOW=0; YES=0; NIGHTLY=0; SEMANTIC=0; LLMMAP
 while [ $# -gt 0 ]; do
   case "$1" in
     --dry-run) DRY=1 ;;
-    --window) shift; WINDOW="${1:-}"; case "$WINDOW" in ''|*[!0-9]*) echo "--window needs a number" >&2; exit 2 ;; esac; SETWINDOW=1; C_WIN="$WINDOW" ;;
+    --window) shift; WINDOW="${1:-}"; case "$WINDOW" in ''|*[!0-9]*) echo "--window needs a number" >&2; exit 2 ;; esac
+      if [ "${#WINDOW}" -gt 12 ] || [ "$((10#$WINDOW))" -le 0 ]; then echo "--window needs a number above 0" >&2; exit 2; fi
+      SETWINDOW=1; C_WIN="$WINDOW" ;;
     --no-window) SETWINDOW=0; C_WIN=off; OLDFLAG=1 ;;
     --force) FORCE=1 ;;
     --yes|-y) YES=1 ;;
@@ -104,7 +106,7 @@ if [ -f "$DEFAULTS_FILE" ]; then
       semantic=1) D_SEM=1 ;;
       nightly=1) D_NIGHT=1 ;;
       llm_map=1) D_LM=1 ;;
-      window=*) v="${line#window=}"; case "$v" in ''|*[!0-9]*) ;; *) D_WIN="$v" ;; esac ;;
+      window=*) v="${line#window=}"; case "$v" in ''|*[!0-9]*) ;; *) if [ "${#v}" -le 12 ] && [ "$((10#$v))" -gt 0 ]; then D_WIN="$v"; fi ;; esac ;;
     esac
   done < "$DEFAULTS_FILE"
 fi
@@ -514,7 +516,10 @@ if os.environ["HC_SETWINDOW"] == "1":
         window_set = os.environ["HC_WINDOW"]
         changes.append("set env.%s = %s" % (key, window_set))
 else:
-    changes.append("window not set (opt-in: --window N)")
+    if "CLAUDE_CODE_AUTO_COMPACT_WINDOW" in (data.get("env") or {}):
+        changes.append("window already set, kept (CLAUDE_CODE_AUTO_COMPACT_WINDOW)")
+    else:
+        changes.append("window not set (opt-in: --window N)")
 
 for c in changes:
     print("%ssettings: %s" % (tag, c))
@@ -601,6 +606,7 @@ else
   if [ "$DRY" = 0 ]; then mkdir -p "$HOME/.claude/agents"; cp "$AGENT_SRC" "$AGENT_DST"; chmod 644 "$AGENT_DST"; fi
 fi
 
+LM_DST="$HOOKS_DIR/llm_map.py"; SK_DST="$HOME/.claude/skills/llm-map/SKILL.md"
 if [ "$LLMMAP" = 1 ]; then
 # F60.d: llm_map.py (a standalone command; not in the manifest, no settings entry)
 LM_SRC="$SRC/hooks/llm_map.py"
@@ -630,7 +636,11 @@ else
   if [ "$DRY" = 0 ]; then mkdir -p "$HOME/.claude/skills/llm-map"; cp "$SK_SRC" "$SK_DST"; chmod 644 "$SK_DST"; fi
 fi
 else
-  say "llm-map: not selected (opt-in: --llm-map)"
+  if [ -e "$LM_DST" ] || [ -e "$SK_DST" ]; then
+    say "llm-map: already installed, kept (an old copy is not updated without --llm-map)"
+  else
+    say "llm-map: not selected (opt-in: --llm-map)"
+  fi
 fi
 
 # --no-nudge: remove a nudge file left by an earlier install
@@ -706,7 +716,11 @@ fi
 # 4. nightly index job
 INDEX_CMD="python3 $HOOKS_DIR/recall.py index --all --max-seconds 3000"
 if [ "$NIGHTLY" != 1 ]; then
-  say "nightly jobs: not selected (opt-in: --nightly)"
+  if [ -e "$PLIST" ] || [ -e "$RPLIST" ]; then
+    say "nightly jobs: already installed, kept (--nightly would rewrite them)"
+  else
+    say "nightly jobs: not selected (opt-in: --nightly)"
+  fi
 elif [ "$(uname)" = "Darwin" ]; then
   say "install LaunchAgent $LABEL (daily 03:30): $PLIST"
   if [ "$DRY" = 0 ]; then

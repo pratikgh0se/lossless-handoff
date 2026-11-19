@@ -24,7 +24,7 @@ This page shows every part of Lossless Handoff, the Claude Code event that calls
 | Subagent rules | `hooks/postcompact-inject.py --subagent-start` | `SubagentStart` (timeout 10) | `decisions.md` | One `subagent_start` row in `health.jsonl`. It prints the active rules and the recall line to the new subagent. |
 | End-of-chat index | `hooks/recall.py session-end` | `SessionEnd` (timeout 5) | The transcript of the chat | The index in `recall/` |
 | Nightly index | `hooks/recall.py index --all --max-seconds 3000` | launchd, 03:30 (macOS) | All transcripts of all projects | The index in `recall/` |
-| Nightly reconcile and proof | `hooks/precompact-handoff.py --reconcile --prove --days 30` | launchd, 04:15 (macOS) | The transcripts, `health.jsonl`, `receipts.jsonl`, `hooks/claims.json` | `reconcile.json`, `proofs.jsonl`, `proof-report.md`, `claims-status.json`, `claims-report.md` |
+| Nightly reconcile and proof | `hooks/precompact-handoff.py --reconcile --prove --days 30` | launchd, 04:15 (macOS), only with `--nightly` | The transcripts, `health.jsonl`, `receipts.jsonl`, `hooks/claims.json` | `reconcile.json`, `proofs.jsonl`, `proof-report.md`, `claims-status.json`, `claims-report.md` |
 | Recall | `hooks/recall.py search`, `open`, `map`, `describe`, `user`, `handoffs` | None. The model runs it through Bash. | The index, the transcripts, `nodes.jsonl`, the handoff files | Nothing. Search is read-only. |
 | Summary nodes | `hooks/recall.py nodes`, and the `compact` inject hook | `SessionStart`, matcher `compact` | `compact_boundary` records in the transcript | `projects/<project>-<hash>/nodes.jsonl` |
 | Decisions list | `projects/<project>-<hash>/decisions.md` | Updated by `PreCompact`. Injected by `SessionStart` and `SubagentStart`. | n/a | n/a |
@@ -37,7 +37,7 @@ Notes:
 
 - The decisions update in `PreCompact` runs for a main session only. A subagent never merges the decisions list and never starts the indexer.
 - `llm_map.py` is not a hook. No Claude Code event calls it. It runs `claude -p` with no tools, no hooks and no saved session, so the handoff hooks never run for it.
-- The nightly jobs (opt-in with `--nightly`) are macOS LaunchAgents. On Linux, `install.sh` prints the crontab lines.
+- The nightly jobs (opt-in with `--nightly`) are macOS LaunchAgents. On Linux, `install.sh` prints the crontab lines. A default install has no nightly reconcile, proof or format-drift alarm. Install with `--nightly`, or run `precompact-handoff.py --reconcile --prove` yourself.
 
 ## Data flow around a compaction
 
@@ -62,7 +62,7 @@ Notes:
 3. If the handoff is missing, the hook rebuilds it from the transcript with no model call. The text starts with `HANDOFF RECOVERED`.
 4. The hook adds the new summary nodes to `nodes.jsonl` and writes one line to `receipts.jsonl`. Part 1 names the newest node.
 5. In a new or resumed chat (`startup` and `resume`), the hooks inject the decisions list and run the install check.
-6. At 04:15, the reconcile job counts every `compact_boundary` against `health.jsonl` and proves each receipt. It also compares the recorded injects (main-session rows of `receipts.jsonl`) with the `compact_boundary` records of each session. If a session has injects and no boundary, it writes `format_drift: true`, `format_drift_sessions` and `format_drift_reason` to `reconcile.json`. `--prove` and the claims then show `fail` (reason `format_drift`) for the affected checks.
+6. With `--nightly` (opt-in), at 04:15, the reconcile job counts every `compact_boundary` against `health.jsonl` and proves each receipt. It also compares the recorded injects (main-session rows of `receipts.jsonl`) with the `compact_boundary` records of each session. If a session has injects and no boundary, it writes `format_drift: true`, `format_drift_sessions` and `format_drift_reason` to `reconcile.json`. `--prove` and the claims then show `fail` (reason `format_drift`) for the affected checks.
 7. At the next `startup` or `resume`, `--check` prints one separate `format drift` line while the newest `reconcile.json` has `format_drift: true`.
 
 ## Redaction

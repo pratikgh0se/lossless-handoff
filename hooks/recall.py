@@ -44,24 +44,39 @@ WRAPPER_PREFIXES = ("<task-notification", "[SYSTEM NOTIFICATION", "<command-name
 # F65: one shared redaction function. Each pattern is (kind, regex, group); the matched group is
 # replaced by [REDACTED:<kind>]. Order matters for ties: the first kind at one start position wins.
 SECRET_RES = [
-    ("aws", re.compile(r"(?:AKIA|ASIA)[0-9A-Z]{16}"), 0),
-    ("github", re.compile(r"gh[pousr]_[A-Za-z0-9]{20,}"), 0),
-    ("github", re.compile(r"github_pat_[A-Za-z0-9_]{20,}"), 0),
-    ("slack", re.compile(r"xox[abprs]-[A-Za-z0-9-]{10,}"), 0),
-    ("anthropic", re.compile(r"sk-ant-[A-Za-z0-9_-]{16,}"), 0),
-    ("openai", re.compile(r"sk-[A-Za-z0-9_-]{16,}"), 0),
-    ("google", re.compile(r"AIza[0-9A-Za-z_-]{35}"), 0),
-    ("jwt", re.compile(r"eyJ[A-Za-z0-9_-]*\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+"), 0),
+    ("aws", re.compile(r"(?<![A-Za-z0-9_-])(?:AKIA|ASIA)[0-9A-Z]{16}"), 0),
+    ("github", re.compile(r"(?<![A-Za-z0-9_-])gh[pousr]_[A-Za-z0-9]{20,}"), 0),
+    ("github", re.compile(r"(?<![A-Za-z0-9_-])github_pat_[A-Za-z0-9_]{20,}"), 0),
+    ("slack", re.compile(r"(?<![A-Za-z0-9_-])xox[abprs]-[A-Za-z0-9-]{10,}"), 0),
+    ("anthropic", re.compile(r"(?<![A-Za-z0-9_-])sk-ant-[A-Za-z0-9_-]{16,}"), 0),
+    ("openai", re.compile(r"(?<![A-Za-z0-9_-])sk-[A-Za-z0-9_-]{16,}"), 0),
+    ("google", re.compile(r"(?<![A-Za-z0-9_-])AIza[0-9A-Za-z_-]{35}"), 0),
+    ("jwt", re.compile(r"(?<![A-Za-z0-9_-])eyJ[A-Za-z0-9_-]*\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+"), 0),
     ("pem", re.compile(r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----.*?-----END [A-Z0-9 ]*PRIVATE KEY-----", re.S), 0),
-    # key=value or key: value; the key name ends with a secret word; the key stays, the value goes
-    ("secret", re.compile(r"(?i)\b[\w.-]*(?:password|passwd|secret|token|api[_-]?key|apikey|access[_-]?key)"
-                          r"[\"']?\s*[:=]\s*[\"']?([^\s\"'`,;]+)"), 1),
+    # URL credentials: scheme://user:PASSWORD@host (the password goes)
+    ("url", re.compile(r"(?i)\b[a-z][a-z0-9+.-]{1,20}://[^\s/:@]{1,100}:([^\s/@]{3,200})@"), 1),
+    # Authorization: Bearer VALUE
+    ("secret", re.compile(r"(?i)\bauthorization[\"']?\s*[:=]\s*[\"']?(?:bearer|basic)\s+([A-Za-z0-9._~+/=-]{8,})"), 1),
+    # key=value or key: value; the key name ends with a secret word; the key stays, the value goes.
+    # No prefix scan before the key word, so the match time is linear. _value_ok() filters the value.
+    ("secret", re.compile(r"(?i)(?:password|passwd|passphrase|secret(?:[_-]?key)?|token|api[_-]?key|apikey|access[_-]?key|private[_-]?key)"
+                          r"[\"']?\s*[:=]\s*(?:bearer\s+)?(\"[^\"\n]{1,200}\"|'[^'\n]{1,200}'|[^\s\"'`,;]+)"), 1),
 ]
 MARK = "[redacted]"  # legacy mark of earlier versions; readers still treat it as redacted
 
 
 def mark_for(kind):
     return "[REDACTED:%s]" % kind
+
+
+def _value_ok(v):
+    """True when a key=value value looks like a secret: 8 or more characters, not only letters, not only
+    digits, not a call or an index (get_secret(name), os.environ[...]) and not a variable reference."""
+    if len(v) < 8 or v.isdigit() or re.fullmatch(r"[A-Za-z_.]+", v):
+        return False
+    if re.match(r"[A-Za-z_][\w.]*[(\[]", v) or v[0] in "$<{":
+        return False
+    return True
 
 
 class UsageError(Exception):
@@ -100,9 +115,18 @@ def secret_spans(text):
     spans = []
     for kind, rx, grp in SECRET_RES:
         for m in rx.finditer(text):
-            if grp and text.startswith(("[REDACTED", MARK), m.start(grp)):
+            if not grp:
+                spans.append((m.start(), m.end(), kind))
+                continue
+            s, e = m.start(grp), m.end(grp)
+            if text.startswith(("[REDACTED", MARK), s):
                 continue  # already masked: keep the function idempotent
-            spans.append((m.start(grp), m.end(grp), kind))
+            if kind == "secret":
+                if text[s] in "\"'" and e - s >= 2 and text[e - 1] == text[s]:
+                    s, e = s + 1, e - 1  # a quoted value: mask what is inside the quotes
+                if not _value_ok(text[s:e]):
+                    continue
+            spans.append((s, e, kind))
     spans.sort(key=lambda x: (x[0], -x[1]))
     merged = []
     for s, e, k in spans:

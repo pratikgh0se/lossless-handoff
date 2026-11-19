@@ -26,11 +26,13 @@ One function, `redact()` in `hooks/recall.py`, masks secrets. Each secret become
 - the project decisions list (`decisions.md`) and its timestamped backups;
 - recall output, and the text that recall puts in its index.
 
-The kinds are: `aws` (AKIA or ASIA and 16 characters), `github` (`ghp_`, `gho_`, `ghu_`, `ghs_`, `ghr_`, `github_pat_`), `slack` (`xox[abprs]-`), `anthropic` (`sk-ant-`), `openai` (`sk-`), `google` (`AIza` and 35 characters), `jwt` (three base64url parts that start with `eyJ`), `pem` (a private key block from BEGIN to END) and `secret` (the value of `key=value` or `key: value`, when the key name ends with `password`, `passwd`, `secret`, `token`, `api_key`, `apikey` or `access_key`; the key stays).
+The kinds are: `aws` (AKIA or ASIA and 16 characters), `github` (`ghp_`, `gho_`, `ghu_`, `ghs_`, `ghr_`, `github_pat_`), `slack` (`xox[abprs]-`), `anthropic` (`sk-ant-`), `openai` (`sk-`), `google` (`AIza` and 35 characters), `jwt` (three base64url parts that start with `eyJ`), `pem` (a private key block from BEGIN to END), `url` (the password in `scheme://user:password@host`) and `secret`. The `secret` kind has two forms. One is the value after `Authorization: Bearer`. The other is the value of `key=value` or `key: value` when the key name ends with `password`, `passwd`, `passphrase`, `secret`, `secret_key`, `token`, `api_key`, `apikey`, `access_key` or `private_key`; a value after `Bearer` is masked, the key stays, and a quoted value is masked inside its quotes.
+
+A prefix such as `sk-` or `ghp_` counts only at the start of a word. A letter, digit, `_` or `-` before it stops the match, so a path such as `tests/task-runner-suite.py` stays as it is. A `key=value` value is masked only when it has 8 or more characters, is not only letters, is not only digits, and is not a call, an index or a variable reference (`get_secret(name)`, `os.environ[...]`, `$VAR`). So `token: 160000 of 400000` and `if not token: return None` stay as they are. The match time is linear in the size of the text.
 
 Limits:
 
-- The function knows these shapes only. A secret in any other shape, or a secret in prose without a key name, is not masked. A PEM block with no END line is not masked.
+- The function knows these shapes only. A secret in any other shape (for example `sk_live_` keys, npm tokens and Slack webhook URLs), or a secret in prose without a key name, is not masked. A PEM block with no END line is not masked. A short password (under 8 characters) or a password of only letters is not masked.
 - The model writes its own agent handoff file (`<sid>-agent.md`) with the Write tool. A hook cannot mask that write. The hooks mask every copy that they make of it, so the original file is the only place that can hold the secret.
 - Claude Code keeps its own transcripts. This project does not change them. Recall masks what it shows from them.
 - Files that earlier versions wrote are not rewritten. The next write of a decisions list masks it.

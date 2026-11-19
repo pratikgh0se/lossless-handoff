@@ -1080,7 +1080,11 @@ Why: an independent review found that the default install changed too much (a gl
 - `google`: `AIza` and 35 characters.
 - `jwt`: three base64url parts, the first starts with `eyJ`.
 - `pem`: `-----BEGIN ... PRIVATE KEY-----` to `-----END ... PRIVATE KEY-----`.
-- `secret`: `key=value` or `key: value` where the key name ends with `password`, `passwd`, `secret`, `token`, `api_key`, `apikey` or `access_key`. The value is masked and the key stays.
+- `url`: the password in `scheme://user:password@host`.
+- `secret`: the value after `Authorization: Bearer`, and `key=value` or `key: value` where the key name ends with `password`, `passwd`, `passphrase`, `secret`, `secret_key`, `token`, `api_key`, `apikey`, `access_key` or `private_key`. A value after `Bearer` is masked. A quoted value is masked inside its quotes. The key stays.
+- F65.a A prefix (`sk-`, `sk-ant-`, `gh?_`, `github_pat_`, `xox?-`, `AKIA`, `ASIA`, `AIza`, `eyJ`) matches only when no letter, digit, `_` or `-` comes before it. `tests/task-runner-suite.py` stays unchanged; `key=sk-...` and `"sk-proj-..."` are masked.
+- F65.b A `secret` value is masked only when it has 8 or more characters, is not only letters, is not only digits, and is not a call, an index or a variable reference. `token: 160000 of 400000`, `if not token: return None`, `api_key: str = Field(...)`, `Set HANDOFF_SECRET=0` and `secret = get_secret(name)` stay unchanged.
+- F65.c The time to redact a text is linear: `"a." * 20000` and 200,000 base64url characters take under 1 second.
 
 Text without secrets stays byte-identical. The function is idempotent. The hooks never write the unmasked value to a state file. The model writes its own agent handoff file with the Write tool and a hook cannot mask that write; this limit is documented, and every copy that a hook makes of it is masked. This amends F44.4 and ACs 143 and 152: the mark is now `[REDACTED:<kind>]` instead of `[redacted]`, and the patterns are the ones above. The nightly proof treats both marks as redacted.
 

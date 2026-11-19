@@ -1419,6 +1419,11 @@ PY
   python3 -c "import json,sys; assert json.load(open(sys.argv[1]))['env']['CLAUDE_CODE_AUTO_COMPACT_WINDOW']=='250000'" "$FS" || fail "F64: re-install changed the window"
   [ -f "$F/llm_map.py" ] && [ -f "$HOME/.claude/skills/llm-map/SKILL.md" ] || fail "F64: re-install removed llm-map"
   [ "$(uname)" != Darwin ] || [ -f "$HOME/Library/LaunchAgents/com.lossless-handoff.recall-index.plist" ] || fail "F64: re-install removed nightly jobs"
+  # --window 0 is rejected; an upgrade run says "already installed, kept"
+  r=0; "$ROOT/install.sh" --window 0 --dry-run >/dev/null 2>&1 || r=$?; [ "$r" = 2 ] || fail "F64: --window 0 was not rejected"
+  o="$("$ROOT/install.sh" --dry-run)"
+  grep -q "window already set, kept" <<<"$o" && grep -q "llm-map: already installed, kept" <<<"$o" || fail "F64: upgrade run does not say already installed, kept"
+  [ "$(uname)" != Darwin ] || grep -q "nightly jobs: already installed, kept" <<<"$o" || fail "F64: upgrade run: nightly message"
   # old flags: accepted, one note
   o="$("$ROOT/install.sh" --no-window --no-nightly --dry-run)"
   [ "$(grep -c "no longer needed" <<<"$o")" = 1 ] || fail "F64: old flags note"
@@ -1476,10 +1481,29 @@ for kind, v in samples:
     out = rc.redact("before %s after" % v)
     assert v not in out and "[REDACTED:%s]" % kind in out and out.startswith("before ") and out.endswith(" after"), (kind, out)
 for line, secret in [("password=hunter2xx", "hunter2xx"), ("API_KEY: abcd1234", "abcd1234"), ('{"client_secret": "s3cr3tvalue"}', "s3cr3tvalue"),
-                     ("access_key = zzzz9999", "zzzz9999"), ("my_token=tok123456", "tok123456"), ("passwd: pw99887", "pw99887"), ("apikey=k1k2k3k4", "k1k2k3k4")]:
+                     ("access_key = zzzz9999", "zzzz9999"), ("my_token=tok123456", "tok123456"), ("passwd: pw998877x", "pw998877x"), ("apikey=k1k2k3k4", "k1k2k3k4")]:
     out = rc.redact(line)
     assert secret not in out and "[REDACTED:" in out, (line, out)
 assert rc.redact("password=hunter2xx").startswith("password=")
+# review fixes: no damage to ordinary text, and the misses are masked
+keep = ["tests/task-runner-integration-suite.py", "disk-usage-report-2026-11-19.txt", "risk-assessment-for-the-installer",
+        "pytest tests/test_flask-application-factory.py", "skill mask-secrets-in-every-file-they-write",
+        "token: 160000 of 400000", "if not token: return None", "api_key: str = Field(...)", "Set `HANDOFF_SECRET=0` to stop",
+        "secret = get_secret(name)", "token = os.environ['GITHUB_TOKEN']", "password=args.password, user=args.user",
+        "max_token = 4096", "Tokens: 12 in, 40 out", "commit 5b5c7de4a1f0c3e2b9d8a7f6e5d4c3b2a1f0e9d8", "token="]
+for k in keep:
+    assert rc.redact(k) == k, (k, rc.redact(k))
+miss = [("token: Bearer " + "aB3dE5gH7jK9mN1p", "aB3dE5gH7jK9mN1p"), ("Authorization: Bearer " + "aB3dE5gH7jK9mN1p", "aB3dE5gH7jK9mN1p"),
+        ('password: "correct horse battery"', "horse"), ("SECRET_KEY=" + "aB3dE5gH7jK9mN1p", "aB3dE5gH7jK9mN1p"),
+        ("private_key=" + "aB3dE5gH7jK9mN1p", "aB3dE5gH7jK9mN1p"), ("postgres://admin:" + "s3cr3tPass99" + "@db.example.com/x", "s3cr3tPass99"),
+        ("key=sk-" + "abcdefghijklmnop1234", "abcdefghijklmnop"), ('"sk-proj-' + 'abcdefghijklmnop1234"', "abcdefghijklmnop")]
+for t_, sec in miss:
+    o = rc.redact(t_)
+    assert sec not in o and "[REDACTED:" in o, (t_, o)
+assert rc.redact("postgres://admin:s3cr3tPass99@db/x").startswith("postgres://admin:") and rc.redact("postgres://admin:s3cr3tPass99@db/x").endswith("@db/x")
+import time
+for big in ("a." * 20000, ("Qm9vdHN0cmFw-" * 16000)[:200000], "The hook writes the token file. " * 3000):
+    t0 = time.time(); rc.redact(big); assert time.time() - t0 < 1.0, ("redact is too slow", len(big), time.time() - t0)
 plain = "Plain text: we chose sqlite. tokens: 5000 and a path /tmp/x.py, the AKIA prefix idea.\nline two é"
 assert rc.redact(plain) == plain
 once = rc.redact("token=abc12345 ghp_" + "a" * 30)
@@ -1501,6 +1525,10 @@ assert "ghp_" + "a" * 36 not in snip and "[REDACTED:github]" in snip, snip
 fbtext = "\n".join("x %s y" % v for _, v in samples) + "\npassword=hunter2xx\n" + plain
 assert pc._fb_redact(fbtext) == rc.redact(fbtext) != fbtext
 assert pc._fb_redact(plain) == plain
+for k in keep:
+    assert pc._fb_redact(k) == k, k
+for t_, sec in miss:
+    assert pc._fb_redact(t_) == rc.redact(t_), t_
 print("F65 ok")
 PY
 )
