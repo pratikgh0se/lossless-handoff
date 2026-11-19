@@ -1573,6 +1573,17 @@ PY
     ls "$D"/state/stubsid-2*.md >/dev/null 2>&1 || fail "F65: no dated handoff with recall.py case $case"
     ! grep -q "ghp_aaaa\|hunter2xx" "$D"/state/stubsid-*.md || fail "F65: secret in a handoff with recall.py case $case"
     grep -q "REDACTED" "$D/state/stubsid-latest.md" || fail "F65: nothing masked with recall.py case $case"
+    # a key word, a newline and a path: the handoff keeps the path (the text is masked before the lines are joined)
+    D2="$D/p"; mkdir -p "$D2/state"
+    python3 - "$D2/tr.jsonl" <<'PY'
+import json, sys
+rows = [{"type": "user", "timestamp": "2026-11-19T10:00:00Z", "message": {"role": "user", "content": "Secret:\n/etc/ssl/private/server-key.pem is the file"}},
+        {"type": "assistant", "timestamp": "2026-11-19T10:00:05Z", "message": {"role": "assistant", "content": [{"type": "text", "text": "ok"}]}}]
+open(sys.argv[1], "w").write("".join(json.dumps(r) + "\n" for r in rows))
+PY
+    printf '{"session_id":"pathsid","transcript_path":"%s","trigger":"auto","cwd":"%s"}' "$D2/tr.jsonl" "$D" \
+      | HOME="$D/home" HANDOFF_STATE_DIR="$D2/state" HANDOFF_SUMMARY=0 HANDOFF_HAIKU_FALLBACK=0 HANDOFF_LEDGER=0 python3 "$D/hooks/precompact-handoff.py" >/dev/null 2>&1 || true
+    grep -qF -- "- Secret: /etc/ssl/private/server-key.pem is the file" "$D2/state/pathsid-latest.md" || fail "F65: path after a key word was masked in the handoff (case $case): $(grep -F 'Secret' "$D2/state/pathsid-latest.md" || echo none)"
   done
 )
 ok "F65: no recall.py, a stub that exits at import, and a stub without redact(): the handoff is still written and masked"

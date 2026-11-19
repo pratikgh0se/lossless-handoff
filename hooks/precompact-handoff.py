@@ -70,7 +70,7 @@ def result_text(c):
 
 
 def one_line(v, n):
-    return trunc(str(v if v is not None else "").replace("\r", " ").replace("\n", " "), n)
+    return trunc(redact(str(v if v is not None else "")).replace("\r", " ").replace("\n", " "), n)  # F65: mask before the lines are joined
 
 
 QA_RE = re.compile(r'"([^"]*)"="([^"]*)"')
@@ -396,7 +396,7 @@ def read_agent(sid, P):
             return None, None, []
         with open(ap, encoding="utf-8", errors="replace") as f:
             raw = f.read()
-        body = raw.strip()
+        body = redact(raw).strip()
         meta = None
         try:
             with open(os.path.join(HANDOFFS_DIR, f"{sid}-agent.meta.json"), encoding="utf-8") as f:
@@ -569,7 +569,7 @@ def summary_handoff(tp, model, timeout, standing="(none)"):
         out = out.strip()
         if len(out) < 50:
             return None, "empty or too-short output"
-        return trunc(out, SUMMARY_TEXT_CAP), None
+        return trunc(redact(out), SUMMARY_TEXT_CAP), None
     except Exception as e:
         return None, type(e).__name__
 
@@ -1155,7 +1155,7 @@ def guard(name, info, fn, default=""):
 
 def _f_users(P, cwd):
     return ("## Last user messages (oldest first)\n" +
-            "\n".join("- " + trunc(u, 600).replace("\n", " ") for u in P["users"][-8:]) + "\n") if P["users"] else ""
+            "\n".join("- " + trunc(redact(u), 600).replace("\n", " ") for u in P["users"][-8:]) + "\n") if P["users"] else ""
 
 
 def _f_files(P, cwd):
@@ -1193,7 +1193,7 @@ def _f_git(P, cwd):
 
 def _f_cmds(P, cwd):
     return "## Last Bash commands\n" + "\n".join(
-        "- `" + trunc(c, 200).replace("\n", " ") + "`" for c in P["cmds"][-5:]) + "\n" if P["cmds"] else ""
+        "- `" + trunc(redact(c), 200).replace("\n", " ") + "`" for c in P["cmds"][-5:]) + "\n" if P["cmds"] else ""
 
 
 def _f_asst(P, cwd):
@@ -1550,10 +1550,12 @@ def _fb_value_ok(v):
     return True
 
 
-def _fb_secret_spans(text):
+def _fb_secret_spans(text, kv=True):
     """-> merged [[start, end, kind], ...] of the secrets in text (end-exclusive)."""
     spans = []
     for kind, rx, grp in _FB_SECRET_RES:
+        if not kv and rx is _FB_SECRET_RES[-1][1]:
+            continue  # kv=False: leave out the key=value form (used on text whose lines were already joined)
         for m in rx.finditer(text):
             if not grp:
                 spans.append((m.start(), m.end(), kind))
@@ -1577,11 +1579,11 @@ def _fb_secret_spans(text):
     return merged
 
 
-def _fb_redact(text):
+def _fb_redact(text, kv=True):
     """F65: mask secrets as [REDACTED:<kind>]. Text without secrets is returned unchanged."""
     if not text:
         return text
-    spans = _fb_secret_spans(text)
+    spans = _fb_secret_spans(text, kv)
     if not spans:
         return text
     out, pos = [], 0
@@ -1596,7 +1598,7 @@ def _fb_redact(text):
 _RECALL_MOD = []
 
 
-def redact(text):
+def redact(text, kv=True):
     """F65: mask secrets with the shared function in recall.py. A missing or stub recall.py (no redact(), an
     error, or an exit at import) never costs a handoff: the copy above is used instead."""
     if not _RECALL_MOD:
@@ -1608,17 +1610,19 @@ def redact(text):
             _RECALL_MOD.append(None)
     fn = getattr(_RECALL_MOD[0], "redact", None)
     if not callable(fn):
-        return _fb_redact(text)
+        return _fb_redact(text, kv)
     try:
-        out = fn(text)
+        out = fn(text, kv)
     except Exception:
-        return _fb_redact(text)
-    return out if isinstance(out, str) else _fb_redact(text)
+        return _fb_redact(text, kv)
+    return out if isinstance(out, str) else _fb_redact(text, kv)
 
 
 def write_handoff_files(sid, p, body):
     """Write the dated handoff file and copy it to <sid>-latest.md, each atomically. F65: secrets are masked first."""
-    body = redact(body)
+    # the key=value form is masked per field before lines are joined (see one_line, _f_users); a pass over the
+    # finished body would mask a path that follows a key word once its line break is gone
+    body = redact(body, kv=False)
     write_atomic(p, body)
     write_atomic(os.path.join(HANDOFFS_DIR, f"{sid}-latest.md"), body)
 

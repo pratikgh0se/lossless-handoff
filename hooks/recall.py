@@ -110,10 +110,12 @@ def inside(path, root_real):
     return p == root_real or p.startswith(root_real.rstrip(os.sep) + os.sep)
 
 
-def secret_spans(text):
+def secret_spans(text, kv=True):
     """-> merged [[start, end, kind], ...] of the secrets in text (end-exclusive)."""
     spans = []
     for kind, rx, grp in SECRET_RES:
+        if not kv and rx is SECRET_RES[-1][1]:
+            continue  # kv=False: leave out the key=value form (used on text whose lines were already joined)
         for m in rx.finditer(text):
             if not grp:
                 spans.append((m.start(), m.end(), kind))
@@ -137,11 +139,11 @@ def secret_spans(text):
     return merged
 
 
-def redact(text):
+def redact(text, kv=True):
     """F65: mask secrets as [REDACTED:<kind>]. Text without secrets is returned unchanged."""
     if not text:
         return text
-    spans = secret_spans(text)
+    spans = secret_spans(text, kv)
     if not spans:
         return text
     out, pos = [], 0
