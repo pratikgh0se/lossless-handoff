@@ -94,7 +94,7 @@ The model writes `<sid>-agent.md` itself with the Write tool. No hook sees that 
 | `prove.py` | The receipt checks and `--prove` |
 | `claims.py` | The claims register: `--claims`, `--claims-lint` |
 
-`lossless_handoff/__init__.py` runs each file in the namespace of the entry file. So every function is still a name of `precompact-handoff.py`, and a caller that loads the entry file with `importlib` can still call it or set a global such as `HANDOFFS_DIR`. If the folder is missing or broken, the entry file prints one line on stderr and exits 0. The hook never breaks a session. `install.sh` installs the folder and lists its files in `.handoff-manifest.json`. `uninstall.sh` removes it.
+`lossless_handoff/__init__.py` runs each file in the namespace of the entry file, by path and in a fixed order (the order of the old single file). The parts share one namespace. They are not importable alone and they are not separate modules. So every function is still a name of `precompact-handoff.py`, and a caller that loads the entry file with `importlib` can still call it or set a global such as `HANDOFFS_DIR`. If the folder is missing or broken, the entry file prints one line on stderr and exits 0. The hook never breaks a session. `install.sh` installs the folder and lists its files in `.handoff-manifest.json`. `uninstall.sh` removes it.
 
 ## How Claude decides to use recall
 

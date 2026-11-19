@@ -4,9 +4,9 @@ Lossless Handoff, formerly claude-handoff.
 
 ## [Unreleased]
 
-The PreCompact hook is split into modules. No behaviour change: same flags, same output, same files, same exit codes. `HOOK_VERSION` stays 1.15.0.
+The PreCompact hook is split into files. No behaviour change: same flags, same output, same files, same exit codes. `HOOK_VERSION` stays 1.15.0.
 
-- `hooks/precompact-handoff.py` is now a thin entry file (version, command line switch). Its code moved to ten files in `hooks/lossless_handoff/`: transcript, summary, ledger, handoff, runtime, redaction, pipeline, reconcile, prove, claims. No file has more than 561 lines.
+- `hooks/precompact-handoff.py` is now a thin entry file (version, command line switch). Its code moved to ten part files in `hooks/lossless_handoff/`: transcript, summary, ledger, handoff, runtime, redaction, pipeline, reconcile, prove, claims. No file has more than 561 lines.
 - The files run in the namespace of the entry file, so every old top-level name (`redact`, `parse`, `build`, `redact_tree`, `eval_claims`, `format_drift_scan` and the rest) is still importable from `precompact-handoff.py`.
 - If the folder `lossless_handoff/` is missing or broken, the hook prints one line on stderr and exits 0.
 - `install.sh` installs the folder and lists its files in the manifest. `uninstall.sh` removes it. `--dry-run` lists the files.

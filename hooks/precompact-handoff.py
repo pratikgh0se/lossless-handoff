@@ -26,16 +26,15 @@ STEER_TEXT = """Lossless Handoff guidance for this summary:
 _STEER = [None]  # F53.e: "printed" or "off"; None when this run is not a PreCompact event
 
 try:  # the parts live in hooks/lossless_handoff/. A missing or broken folder must never break a session.
-    _HERE = os.path.dirname(os.path.abspath(__file__))
-    if _HERE not in sys.path:
-        sys.path.insert(0, _HERE)
-    _DWB = sys.dont_write_bytecode
-    sys.dont_write_bytecode = True  # write no __pycache__ folder into the hooks folder (the old single file wrote none)
-    try:
-        import lossless_handoff as _lh
-    finally:
-        sys.dont_write_bytecode = _DWB
-    _lh.load_into(globals())
+    # Load by path, with no import: an import goes through sys.modules, so a second copy of this file would get the parts of the first.
+    _PKG = os.path.join(os.path.dirname(os.path.abspath(__file__)), "lossless_handoff")
+    if not os.path.isdir(_PKG):  # this file may be a symlink to the real hooks folder
+        _PKG = os.path.join(os.path.dirname(os.path.realpath(__file__)), "lossless_handoff")
+    _INIT = os.path.join(_PKG, "__init__.py")
+    _LH = {"__file__": _INIT, "__name__": "lossless_handoff"}
+    with open(_INIT, encoding="utf-8") as _f:
+        exec(compile(_f.read(), _INIT, "exec"), _LH)
+    _LH["load_into"](globals())
 except BaseException as _e:
     if isinstance(_e, KeyboardInterrupt):
         raise

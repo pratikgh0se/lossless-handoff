@@ -1572,6 +1572,96 @@ ok "F65: every secret kind masked in handoff files, decisions list and recall ou
 )
 ok "package folder missing, empty or broken: the hook exits 0 with one stderr line for every mode"
 
+# Two copies of the entry file loaded in one process each run their own parts; sys.path stays as it was
+(
+  set -e
+  TC="$T/twocopies"; mkdir -p "$TC/home"
+  for c in h1 h2; do mkdir -p "$TC/$c"; cp -R "$ROOT/hooks/precompact-handoff.py" "$ROOT/hooks/lossless_handoff" "$ROOT/hooks/claims.json" "$TC/$c/"; printf "\nCOPY_MARK = '%s'\n" "$c" >> "$TC/$c/lossless_handoff/transcript.py"; done
+  HOME="$TC/home" HANDOFF_STATE_DIR="$TC/state" python3 - "$TC" <<'PY'
+import importlib.util, io, contextlib, os, sys
+tc = sys.argv[1]
+sys.argv = ["x", "--claims"]
+p0 = list(sys.path)
+def load(name, path):
+    spec = importlib.util.spec_from_file_location(name, path); m = importlib.util.module_from_spec(spec)
+    with contextlib.redirect_stdout(io.StringIO()):
+        try: spec.loader.exec_module(m)
+        except SystemExit: pass
+    return m
+a = load("pc1", tc + "/h1/precompact-handoff.py"); b = load("pc2", tc + "/h2/precompact-handoff.py")
+assert (a.COPY_MARK, b.COPY_MARK) == ("h1", "h2"), (a.COPY_MARK, b.COPY_MARK)
+assert a.trunc.__code__.co_filename == tc + "/h1/lossless_handoff/transcript.py", a.trunc.__code__.co_filename
+assert b.trunc.__code__.co_filename == tc + "/h2/lossless_handoff/transcript.py", b.trunc.__code__.co_filename
+assert sys.path == p0 and "lossless_handoff" not in sys.modules, "the loader changed sys.path or sys.modules"
+print("two copies ok")
+PY
+)
+ok "two copies of the entry file in one process use their own parts; sys.path and sys.modules are unchanged"
+
+# The parts share one namespace: every name is defined, none is defined twice, no top-level code uses a later name
+(
+  set -e
+  python3 - "$ROOT" <<'PY'
+import ast, builtins, sys
+root = sys.argv[1] + "/hooks/"
+ns = {}; exec(open(root + "lossless_handoff/__init__.py").read(), ns)
+files = [("entry-head", root + "precompact-handoff.py")] + [(p, root + "lossless_handoff/%s.py" % p) for p in ns["PARTS"]]
+trees = [(n, ast.parse(open(f, encoding="utf-8").read())) for n, f in files]
+# the entry file has its head, the loader try, and the tail (dispatch). The loader sits between head and the parts.
+head, tail = [], []
+entry = trees[0][1]
+li = next(i for i, n in enumerate(entry.body) if isinstance(n, ast.Try) and "load_into" in ast.dump(n))
+order = [("entry-head", entry.body[:li])] + [(n, t.body) for n, t in trees[1:]] + [("entry-tail", entry.body[li + 1:])]
+def target_names(t):
+    return [x.id for x in ast.walk(t) if isinstance(x, ast.Name) and isinstance(x.ctx, ast.Store)]
+defined, where = {}, {}
+for idx, (pn, body) in enumerate(order):
+    for n in body:
+        names = [n.name] if isinstance(n, (ast.FunctionDef, ast.ClassDef)) else []
+        if isinstance(n, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
+            names = [x for t in (n.targets if isinstance(n, ast.Assign) else [n.target]) for x in target_names(t)]
+        if isinstance(n, (ast.Import, ast.ImportFrom)):
+            names = [(a.asname or a.name).split(".")[0] for a in n.names]
+        for nm in names:
+            if isinstance(n, (ast.Assign, ast.FunctionDef, ast.ClassDef)):
+                assert nm not in where, "top-level name defined twice: %s (%s and %s)" % (nm, where[nm][1], pn)
+            where.setdefault(nm, (idx, pn))
+# every name loaded anywhere must be bound somewhere (top level, local, argument, import, loop, except ...) or a builtin
+bound = set(where) | set(dir(builtins)) | {"__file__", "__name__", "_LH", "_f", "_INIT", "_PKG", "_e"}
+for _, t in trees:
+    for x in ast.walk(t):
+        if isinstance(x, ast.Name) and isinstance(x.ctx, (ast.Store, ast.Del)): bound.add(x.id)
+        elif isinstance(x, ast.arg): bound.add(x.arg)
+        elif isinstance(x, ast.ExceptHandler) and x.name: bound.add(x.name)
+        elif isinstance(x, (ast.FunctionDef, ast.ClassDef)): bound.add(x.name)
+        elif isinstance(x, (ast.Import, ast.ImportFrom)):
+            for a in x.names: bound.add((a.asname or a.name).split(".")[0])
+        elif isinstance(x, (ast.Global, ast.Nonlocal)): bound.update(x.names)
+for pn, t in trees:
+    for x in ast.walk(t):
+        if isinstance(x, ast.Name) and isinstance(x.ctx, ast.Load):
+            assert x.id in bound, "name not defined in any part, the entry or builtins: %s (%s line %d)" % (x.id, pn, x.lineno)
+# top-level code (not function bodies) must not use a name that a later part defines
+def top_loads(n):
+    stack = [n]
+    while stack:
+        x = stack.pop()
+        if isinstance(x, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+            stack.extend(x.decorator_list if hasattr(x, "decorator_list") else [])
+            stack.extend(x.args.defaults + [d for d in x.args.kw_defaults if d])
+            continue
+        if isinstance(x, ast.Name) and isinstance(x.ctx, ast.Load): yield x
+        stack.extend(ast.iter_child_nodes(x))
+for idx, (pn, body) in enumerate(order):
+    for n in body:
+        for x in top_loads(n):
+            if x.id in where and where[x.id][0] > idx:
+                raise AssertionError("top-level code in %s uses %s, defined later in %s" % (pn, x.id, where[x.id][1]))
+print("namespace check ok:", len(where), "top-level names in", len(order), "parts")
+PY
+)
+ok "the parts share one namespace: every name is defined, none twice, no top-level use of a later name"
+
 # F65: a missing or stub recall.py never costs a handoff; the built-in copy masks the secrets
 (
   set -e
