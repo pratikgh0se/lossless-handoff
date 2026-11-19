@@ -6,7 +6,7 @@ Every setting and every file that the hooks write. This page is part of the [doc
 
 | Variable | Effect |
 |---|---|
-| `CLAUDE_CODE_AUTO_COMPACT_WINDOW` | Window size in tokens. Nudge thresholds are 75% of it, then every 25,000, then a final nudge (window minus 45,000). If it is unset, empty or not a positive integer, the nudge learns the window from past compactions, or uses 200000 (see "Which window the nudge uses"). The installer sets 400000. |
+| `CLAUDE_CODE_AUTO_COMPACT_WINDOW` | Window size in tokens. Nudge thresholds are 75% of it, then every 25,000, then a final nudge (window minus 45,000). If it is unset, empty or not a positive integer, the nudge learns the window from past compactions, or uses 200000 (see "Which window the nudge uses"). The installer sets it only with `--window N`. |
 | `HANDOFF_SUMMARY=0` | Disable the fresh summary at compaction (no model call; facts only). |
 | `HANDOFF_SUMMARY_MODEL` | Model for the fresh summary. Default `sonnet`. |
 | `HANDOFF_SUMMARY_TIMEOUT` | Seconds to wait for the summary (1-300). Default 75. |

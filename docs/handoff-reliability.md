@@ -87,7 +87,7 @@ These versions add parts to the system. [architecture.md](architecture.md) shows
 | 1.13.0 | The `SubagentStart` hook. A new subagent gets the active rules of the decisions list and the recall line. Each run adds a `subagent_start` row to `health.jsonl`. | [Subagents](hooks-in-detail.md#subagents) |
 | 1.13.1 | Search finds the work of subagents by default (`--no-subagents` leaves it out). In a plain pattern, a space, `-` and `_` match each other. A hit from a tool call shows `-> result <id>`. | [Recall commands](recall.md#recall-commands) |
 | 1.14.0 and 1.14.1 | `llm_map.py` and its skill: one exact answer for each item of a large list, with `--labels`, `--batch 100`, `--jobs 8` and a cost cap. | [llm_map](llm-map.md#llm_map-label-many-items-with-a-small-model) |
-| 1.14.2 | The nudge learns its window from past compactions (else 200,000) when `CLAUDE_CODE_AUTO_COMPACT_WINDOW` is not set, and health rows hold `window` and `window_source`. Reconcile sets `format_drift` when a session has injects and no `compact_boundary` record. `--prove`, the claims and `--check` show it. | [Limitations](limitations.md#limitations) |
+| 1.14.2 | The nudge learns its window from past compactions (else 200,000) when `CLAUDE_CODE_AUTO_COMPACT_WINDOW` is not set, and health rows hold `window` and `window_source`. Reconcile sets `format_drift` when a session has injects and no `compact_boundary` record. `--prove`, the claims and `--check` show it. | [Limitations](limitations.md) |
 | 1.15.0 | One redaction function masks secrets as `[REDACTED:<kind>]` in handoff files, the decisions list and recall output. The default install is the core only (release 0.13.0). | [Install](install.md#install), SECURITY.md |
 
 ## State files

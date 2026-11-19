@@ -31,7 +31,7 @@ In 4 of 26 searches, the best hit came only from meaning search. Keyword search 
 Behaviour to know:
 
 - **It degrades gracefully.** If Ollama is off, the first line says `mode: keyword only` and search still works. In the measured sample, 10 of 28 classifiable searches ran keyword-only. At least one of them ran so because the embedding service was down.
-- **It is incremental.** The hooks refresh the index at each compaction, at chat end and every night. None of this delays Claude Code.
+- **It is incremental.** The hooks refresh the index at each compaction, at chat end and, with `--nightly`, every night. None of this delays Claude Code.
 - **The decisions list wins.** If recall and the decisions list disagree, the decisions list and your latest words win. If recall and your latest words disagree, your latest words win. Recall can show an older statement.
 
 [Recall commands](#recall-commands) is the command reference.

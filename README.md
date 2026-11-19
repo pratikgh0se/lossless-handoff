@@ -14,11 +14,9 @@ Current versions: product 0.13.0 (`install.sh`), hooks 1.15.0 (`HOOK_VERSION` in
 
 Every compaction turns a long Claude Code session into a generic summary. The exact next step, the dead ends, your standing rules and your exact wording are gone. The model does the work again or asks again.
 
-Before each compaction, the hooks write a structured handoff and feed it back in. Each project keeps a decisions list that survives compactions. `recall` finds the exact words of earlier chats (keyword search plus local semantic search). Python 3 standard library only.
+Before each compaction, the hooks write a structured handoff and feed it back in. Each project keeps a decisions list that survives compactions. `recall` finds the exact words of earlier chats (keyword search, plus optional local meaning search). Python 3 standard library only.
 
 ![How a handoff flows through a compaction](docs/handoff-timeline.svg)
-
-![Parts, events and files](docs/architecture.svg)
 
 ## Quick start
 
@@ -29,7 +27,7 @@ cd lossless-handoff
 ./install.sh
 ```
 
-Then restart open Claude Code sessions. Hooks load when a session starts. The default install is small. It installs the core only. Each option below is opt-in:
+You need `python3` and `bash` on macOS or Linux, and Claude Code. Windows is not supported. Then restart open Claude Code sessions. Hooks load when a session starts. The default install is small. It installs the core only. Each option below is opt-in:
 
 | Flag | What it adds |
 |---|---|
@@ -44,25 +42,27 @@ Run `./install.sh --window 400000 --nightly --semantic --llm-map` to get everyth
 **Verify.**
 
 ```
-claude -p --model haiku "say hi" --output-format json   # note the session_id
+claude -p --model haiku "say hi" --output-format json   # <session_id> is in the JSON output
 claude -p --model haiku --resume <session_id> "/compact"
 tail -n 3 ~/.local/state/claude-handoffs/health.jsonl
 ```
 
-A new line with `"trigger": "manual"` means that the PreCompact hook fired. You can also run `bash tests/smoke.sh`. It uses a temporary HOME and does not touch your real settings.
+These commands make real model calls and use a small part of your quota. A new line with `"trigger": "manual"` means that the PreCompact hook fired. You can also run `bash tests/smoke.sh`. It uses a temporary HOME and does not touch your real settings.
 
 **Uninstall.** Run `./uninstall.sh`. Add `--purge` to also delete the saved install defaults. Handoff files, indexes and decisions lists stay. See [docs/install.md](docs/install.md#uninstall).
 
-**Use it.** Work as usual. After a compaction, ask "what exactly did I say about X?". Claude runs recall and quotes you. Try it yourself: `python3 ~/.claude/hooks/recall.py user --last 5`
+**Use it.** Work as usual. After a compaction, ask "what exactly did I say about X?". Claude runs recall and quotes you. Try it yourself, from a project folder: `python3 ~/.claude/hooks/recall.py user --last 5`
 
 ## How it works
 
+![Parts, events and files](docs/architecture.svg)
+
 - **Nudge** (`handoff-nudge.py`, PostToolUse). At 75% of the auto-compact window, and again every 25,000 tokens, the hook asks the model to write its own handoff.
-- **Handoff** (`precompact-handoff.py`, PreCompact). Just before compaction, the hook writes `<session_id>-latest.md` (14,000 characters at most). It holds the model handoff, a fresh Sonnet summary and facts that the hook extracts with no model.
+- **Handoff** (`precompact-handoff.py`, PreCompact). Just before compaction, the hook writes `<session_id>-latest.md` (14,000 characters at most). It holds the model handoff, a fresh Sonnet summary (it uses your `claude -p` quota) and facts that the hook extracts with no model.
 - **Inject** (`postcompact-inject.py`, SessionStart with matcher `compact`). After compaction, the hook feeds the handoff and the decisions list back into the new context.
 - **Decisions list.** One plain-text list for each project. It holds what you decided or approved, and why. It survives all compactions. See [docs/decisions-list.md](docs/decisions-list.md).
 - **Recall.** `recall.py` finds the exact words of earlier chats with word search and meaning search merged. See [docs/recall.md](docs/recall.md).
-- **No silent misses.** A hook cannot force Claude Code to run it. So the hooks write a handoff early, rebuild it after the fact if it is still missing, and count the misses every night. See [docs/hooks-in-detail.md](docs/hooks-in-detail.md#when-a-compaction-is-missed).
+- **No silent misses.** A hook cannot force Claude Code to run it. So the hooks write a handoff early, rebuild it after the fact if it is still missing, and, with `--nightly`, count the misses every night. See [docs/hooks-in-detail.md](docs/hooks-in-detail.md#when-a-compaction-is-missed).
 - **Subagents** get their own handoff and, at start, the rules of the project.
 - **The hook always exits 0** and never blocks compaction. If anything fails, it still writes a minimal handoff.
 
@@ -71,7 +71,7 @@ The parts, the events and the files are in [docs/architecture.md](docs/architect
 ## Evidence
 
 - **Proof:** in a 30-day reconcile on the author's machine (2026-11-17), 188 of 192 main compactions had a handoff [C2]. In a one-off test (2026-11-13/14), 497 of 497 sampled messages came back byte-identical [C1]. The live C1 rate on 2026-11-18 is 10 of 11.
-- Other claims of the register: a subagent gets only its own context, never the main session's [C3]; the handoff reaches the model after compaction [C4]; recorded project decisions are never lost by a ledger update [C5]; subagent compactions are covered too [C6].
+- Other claims of the register. A subagent gets only its own context, never the main session's [C3]. The handoff reaches the model after compaction [C4]. Recorded project decisions are never lost by a ledger update [C5]. Subagent compactions are covered too [C6].
 - A dated one-off blind quiz (2026-11-14) scored 98% with the handoff against 62% with Claude Code's compaction summary alone [C7]. A dated one-off study (2026-10-20) found about 19% lower cost at a 400k window than at 1M [C8].
 - Two benchmarks are in this repository: [bench/continuity/README.md](bench/continuity/README.md) and [bench/oolong/README.md](bench/oolong/README.md). Both are code-graded. No scored results are published yet, except one 2-task pilot summary in `bench/oolong/evidence/`. That file is harness evidence only. Results come after the full evaluation.
 - All numbers come from the author's machine, one heavy user. The details, the limits of each test and the live claims status are in [docs/evidence.md](docs/evidence.md) and [docs/handoff-reliability.md](docs/handoff-reliability.md).
@@ -82,7 +82,7 @@ The parts, the events and the files are in [docs/architecture.md](docs/architect
 - **Handoffs can be cut.** 20% of handoffs (43 of 217) hit the 14,000-character size cap and were truncated.
 - **Misses still happen.** 4 of 192 main compactions in the 30-day reconcile had no handoff. The hooks make misses fewer and show them. They do not promise zero.
 - **Redaction is pattern-based.** A secret in a shape that the hooks do not know is not masked.
-- **Platform.** The nightly jobs are macOS LaunchAgents. On Linux you add the printed cron lines yourself. Windows is not supported.
+- **Platform.** The nightly jobs (opt-in) are macOS LaunchAgents. On Linux you add the printed cron lines yourself. Windows is not supported.
 - **AI-graded evals.** Models wrote and graded the quizzes, on one user's projects. The 19% cost estimate is a single 4.7-day, one-user figure, not a bill.
 - The nudge works only if the model obeys it. No hook forces the model to run a recall search.
 
@@ -91,8 +91,8 @@ The full list is in [docs/limitations.md](docs/limitations.md).
 ## Security and privacy
 
 - The hooks mask known secret shapes as `[REDACTED:<kind>]` before they write handoff files, the decisions list and recall output. The transcripts of Claude Code are not changed.
-- The scripts do not send anything over the network, except meaning search. Search stays on your machine.
-- Meaning search sends message text to the embedding server that you configure (by default Ollama on your own machine). The two per-compaction calls run your local `claude -p`.
+- The scripts open no connection to a remote host. Word search stays on your machine.
+- Meaning search sends message text to the embedding server that you configure (by default Ollama on your own machine). The two per-compaction calls run your local `claude -p`. These calls send conversation text to Anthropic through Claude Code, as usual.
 
 Read [SECURITY.md](SECURITY.md) for the details.
 

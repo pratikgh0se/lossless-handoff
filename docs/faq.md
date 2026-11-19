@@ -2,8 +2,6 @@
 
 Questions and answers. This page is part of the [docs index](README.md).
 
-## FAQ
-
 **Does it cost tokens?** It costs about one short nudge text each time. It also costs up to about 14,000 characters injected once for each compaction, and up to about 20,000 characters of decisions. Each compaction adds two `claude -p` Sonnet calls (fresh summary and decisions update; 20-40 s in parallel, roughly $0.10-0.20 of API-equivalent usage). Set `HANDOFF_SUMMARY=0` and `HANDOFF_LEDGER=0` to avoid them.
 
 **Will recall find old messages?** Only while Claude Code still keeps the transcript. The default is 30 days. Run `./install.sh --keep-transcripts` (365 days) or set `"cleanupPeriodDays"` yourself. The hooks keep handoff files for 365 days. A longer retention means that more chat text stays on your disk for longer.
@@ -22,4 +20,4 @@ Questions and answers. This page is part of the [docs index](README.md).
 
 **Can the nudge be skipped?** Yes. It reads the token count of the previous turn, so one very large tool result can jump past the threshold without a nudge. The PreCompact hook still writes a handoff.
 
-**Does it send anything over the network?** The scripts do not, except meaning search. Meaning search sends message text to the embedding server that you configure (by default Ollama on your own machine). The two per-compaction calls run your local `claude -p`. See `SECURITY.md`.
+**Does it send anything over the network?** The scripts open no connection to a remote host. Word search stays on your machine. Meaning search sends message text to the embedding server that you configure (by default Ollama on your own machine). The two per-compaction calls run your local `claude -p`. These calls send conversation text to Anthropic through Claude Code, as usual. See `SECURITY.md`.

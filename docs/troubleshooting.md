@@ -2,8 +2,6 @@
 
 What to check when something does not work. This page is part of the [docs index](README.md).
 
-## Troubleshooting
-
 - Logs and health are in `~/.local/state/claude-handoffs/` (or `$HANDOFF_STATE_DIR`). Start with `tail -n 5 ~/.local/state/claude-handoffs/health.jsonl`. It has one line for each compaction with `status` `ok`, `reduced` or `degraded`.
 - `<sid>-degraded.json` and `<sid>-last-health.json` in the same folder say why a compaction was degraded.
 - A `HANDOFF CHECK:` line at session start names what is wrong (hook not wired, file missing or changed, version mismatch, compactions without a handoff). Run `./install.sh` again, then restart open sessions. The `proof failed` and `claims` lines point at `proof-report.md` and `claims-report.md` in the state folder.

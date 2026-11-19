@@ -2,8 +2,6 @@
 
 The full list of limits. This page is part of the [docs index](README.md).
 
-## Limitations
-
 - **One heavy user so far.** All numbers come from the author's machine. Nobody has tested whether it helps other workflows.
 - **Handoffs can be cut.** 20% of handoffs (43 of 217) hit the 14,000-character size cap and were truncated. 15% were `reduced` and 2% `degraded`, and the nightly self-test failed 2 of 34 runs (31 passed and 1 was skipped; see "In daily use").
 - **Recall is new.** It has existed since 2026-11-12. The author did most of its use so far, much of it while the author built and tested it. The meaning half is a minority of wins (4 of 26 searches had a meaning-only top hit). The 143 meaning hits count lines shown, not proof that they were useful.

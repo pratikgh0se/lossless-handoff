@@ -60,7 +60,7 @@ The author measured these results on 2026-11-13/14, on the author's own projects
 
 | Test | Result |
 |---|---|
-| Lossless retrieval: 497 random messages from before a compaction [C1] | 497 of 497 found and returned byte-identical |
+| Lossless retrieval: 497 random messages from before a compaction [C1] | 497 of 497 found and returned byte-identical. The live C1 rate on 2026-11-18 is 10 of 11. |
 | Meaning search, easy paraphrase test, 118 queries | 98% in the top 10, 89% first |
 | Blind quiz after compaction, 33 questions | 41/66 with the v0.4 injection, 50/66 with the full decisions list, 65/66 with the decisions list plus recall |
 | Handoff quality, 18 real compactions (score out of 100) | Claude Code's summary alone 62; plus the model's own handoff 68; plus a fresh Sonnet summary 75-76; given the real recent chat 85 |
