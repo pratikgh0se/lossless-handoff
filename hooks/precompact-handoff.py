@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""PreCompact hook: writes the handoff file from facts and the transcript. It opens no network connection itself. It runs the local `claude -p` command for the summary and the decisions merge (set HANDOFF_SUMMARY=0 and HANDOFF_LEDGER=0 to stop that) and may start the recall indexer. Also holds --reconcile, --prove and --claims. Always exits 0."""
+"""PreCompact hook: writes the handoff file from facts and the transcript. It opens no network connection itself.
+It runs the local `claude -p` command for the summary and the decisions merge. Set HANDOFF_SUMMARY=0 and HANDOFF_LEDGER=0
+to stop that. It may also start the recall indexer. The same file holds --reconcile, --prove and --claims. Always exits 0."""
 import json, os, sys, time, subprocess, shutil, glob, datetime, tempfile, re, hashlib, threading
 try:
     import fcntl
@@ -1809,8 +1811,9 @@ def _scan_transcript(path, start_ms, now):
     return n, last, ent
 
 
-def _count_boundaries_all(path):
-    """compact_boundary records in one transcript, any time (None if unreadable)."""
+def _count_boundaries_all(path, start_ms=None):
+    """compact_boundary records in one transcript with a timestamp at or after start_ms (a record with no readable
+    timestamp always counts; start_ms None counts all). None if unreadable."""
     n = 0
     try:
         with open(path, encoding="utf-8", errors="replace") as f:
@@ -1822,7 +1825,9 @@ def _count_boundaries_all(path):
                 except Exception:
                     continue
                 if is_boundary(o):
-                    n += 1
+                    t = ts_ms(o.get("timestamp"))
+                    if start_ms is None or t is None or t >= start_ms:
+                        n += 1
     except Exception:
         return None
     return n
@@ -1830,13 +1835,15 @@ def _count_boundaries_all(path):
 
 def format_drift_scan(start_ms, canary_sids, base):
     """F63: sessions with >= 1 recorded post-compaction inject event (a main-session row in receipts.jsonl, written by
-    postcompact-inject.py when it emits handoff part 1) in the window and 0 compact_boundary records in the
-    session's transcript. Returns a list of {sid, injects, boundaries}. A session whose transcript is gone is skipped."""
+    postcompact-inject.py when it emits handoff part 1) in the window (not newer than 10 minutes) and 0
+    compact_boundary records since the window start in the session's transcript. Returns a list of {sid, injects, boundaries}. A session whose transcript is gone is skipped."""
     inj = {}
     for r in _read_jsonl(os.path.join(HANDOFFS_DIR, "receipts.jsonl")):
         e = _iso_epoch(r.get("ts"))
         if e is None or e * 1000.0 < start_ms or r.get("agent_id"):
             continue
+        if time.time() - e < 600:
+            continue  # SessionStart runs before Claude Code flushes the boundary record (see F51)
         sid8 = str(r.get("sid") or "")[:8]
         if not sid8 or sid8 in canary_sids:
             continue
@@ -1852,7 +1859,7 @@ def format_drift_scan(start_ms, canary_sids, base):
             tp = g[0] if g else ""
         if not tp:
             continue
-        b = _count_boundaries_all(tp)
+        b = _count_boundaries_all(tp, start_ms)
         if b == 0:
             out.append({"sid": sid8, "injects": n, "boundaries": 0})
     return out
@@ -2564,10 +2571,10 @@ def eval_claims(now):
             for r in proofs:
                 e = _iso_epoch(r.get("ts"))
                 v = (r.get("checks") or {}).get(name)
-                if v in ("pass", "fail") and str(r.get("sid"))[:8] in dsids and not r.get("agent_id"):
-                    v, dhit = "fail", True  # F63
                 if e is None or e < now - win * 86400 or v not in ("pass", "fail"):
                     continue
+                if str(r.get("sid"))[:8] in dsids and not r.get("agent_id"):
+                    v, dhit = "fail", True  # F63: only a row inside the claim window can fail the claim
                 q += 1
                 p += 1 if v == "pass" else 0
                 as_of_e = e if as_of_e is None or e > as_of_e else as_of_e

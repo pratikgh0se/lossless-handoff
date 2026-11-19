@@ -1238,6 +1238,64 @@ import json, sys
 r = [json.loads(x) for x in open(sys.argv[1]) if x.strip()][-1]
 assert r["window"] == 200000 and r["window_source"] == "learned", r
 PY
+
+  # review fixes: manual boundaries are skipped, an absurd window is not used, cache and re-learn
+  python3 - "$W" <<'PY'
+import json, os, sys
+w = sys.argv[1]
+def usage(n):
+    return {"type": "assistant", "message": {"content": [{"type": "text", "text": "x"}],
+            "usage": {"input_tokens": 10, "cache_read_input_tokens": n - 10, "cache_creation_input_tokens": 0}}}
+def boundary(pre, trig="auto"):
+    cm = {"preTokens": pre}
+    if trig:
+        cm["trigger"] = trig
+    return {"type": "system", "subtype": "compact_boundary", "timestamp": "2026-11-01T10:00:00.000Z", "compactMetadata": cm}
+def write(path, rows):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    open(path, "w").write("".join(json.dumps(r) + "\n" for r in rows))
+write(w + "/manual/cur.jsonl", [boundary(30000, "manual"), usage(25000)])
+write(w + "/huge/cur.jsonl", [boundary(10 ** 15), usage(160000)])
+write(w + "/notrig/cur.jsonl", [boundary(267000, None), usage(160000)])
+write(w + "/mixed/cur.jsonl", [boundary(30000, "manual"), boundary(267000), usage(160000)])
+write(w + "/relearn/cur.jsonl", [usage(160000)])
+write(w + "/cache/cur.jsonl", [usage(160000)])
+write(w + "/cache/old.jsonl", [boundary(167000)])
+PY
+  d="$W/s-manual"
+  o="$(CLAUDE_CODE_AUTO_COMPACT_WINDOW='' nrun "$W/manual/cur.jsonl" a "$d")"
+  [ "$(meta "$d" a)" = "200000 default" ] || fail "F62: a manual boundary must not be learned (got $(meta "$d" a))"
+  d="$W/s-huge"
+  o="$(CLAUDE_CODE_AUTO_COMPACT_WINDOW='' nrun "$W/huge/cur.jsonl" a "$d")"
+  [ "$(meta "$d" a)" = "200000 default" ] || fail "F62: an absurd learned window must give the default (got $(meta "$d" a))"
+  d="$W/s-notrig"
+  CLAUDE_CODE_AUTO_COMPACT_WINDOW='' nrun "$W/notrig/cur.jsonl" a "$d" >/dev/null
+  [ "$(meta "$d" a)" = "300000 learned" ] || fail "F62: a boundary with no trigger must be kept (got $(meta "$d" a))"
+  d="$W/s-mixed"
+  CLAUDE_CODE_AUTO_COMPACT_WINDOW='' nrun "$W/mixed/cur.jsonl" a "$d" >/dev/null
+  [ "$(meta "$d" a)" = "300000 learned" ] || fail "F62: manual must be skipped and auto kept (got $(meta "$d" a))"
+  # cache: the learned value stays after the history is gone; it is learned again after 6 hours
+  d="$W/s-cache"
+  CLAUDE_CODE_AUTO_COMPACT_WINDOW='' nrun "$W/cache/cur.jsonl" a "$d" >/dev/null
+  [ "$(meta "$d" a)" = "200000 learned" ] || fail "F62: cache setup (got $(meta "$d" a))"
+  : > "$W/cache/old.jsonl"
+  CLAUDE_CODE_AUTO_COMPACT_WINDOW='' nrun "$W/cache/cur.jsonl" a "$d" >/dev/null || true
+  [ "$(meta "$d" a)" = "200000 learned" ] || fail "F62: the learned value must stay in the 6-hour cache (got $(meta "$d" a))"
+  python3 -c "import json,sys,time; p=sys.argv[1]; m=json.load(open(p)); m['windowAt']=time.time()-7*3600; json.dump(m,open(p,'w'))" "$d/a-agent.meta.json"
+  CLAUDE_CODE_AUTO_COMPACT_WINDOW='' nrun "$W/cache/cur.jsonl" a "$d" >/dev/null || true
+  [ "$(meta "$d" a)" = "200000 default" ] || fail "F62: after 6 hours the window must be learned again (got $(meta "$d" a))"
+  # re-learn after a compaction: the context shrinks, so the cache is dropped
+  d="$W/s-relearn"
+  CLAUDE_CODE_AUTO_COMPACT_WINDOW='' nrun "$W/relearn/cur.jsonl" a "$d" >/dev/null
+  [ "$(meta "$d" a)" = "200000 default" ] || fail "F62: re-learn setup (got $(meta "$d" a))"
+  python3 - "$W/relearn/cur.jsonl" <<'PY'
+import json, sys
+b = {"type": "system", "subtype": "compact_boundary", "timestamp": "2026-11-01T10:00:00.000Z", "compactMetadata": {"trigger": "auto", "preTokens": 267000}}
+u = {"type": "assistant", "message": {"content": [{"type": "text", "text": "x"}], "usage": {"input_tokens": 10, "cache_read_input_tokens": 19990, "cache_creation_input_tokens": 0}}}
+open(sys.argv[1], "a").write(json.dumps(b) + "\n" + json.dumps(u) + "\n")
+PY
+  CLAUDE_CODE_AUTO_COMPACT_WINDOW='' nrun "$W/relearn/cur.jsonl" a "$d" >/dev/null || true
+  [ "$(meta "$d" a)" = "300000 learned" ] || fail "F62: the window must be learned again after a compaction (got $(meta "$d" a))"
   ok "F62: env wins; unset, empty or invalid gives learned or the 200000 default; tiny window sends one final nudge; health row has window and window_source"
 
   # F63
@@ -1246,6 +1304,7 @@ PY
 import datetime, json, os, sys
 r = sys.argv[1]
 now = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+old = (datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
 b = {"type": "system", "subtype": "compact_boundary", "timestamp": now, "compactMetadata": {"trigger": "auto", "preTokens": 300000}}
 u = {"type": "user", "timestamp": now, "message": {"role": "user", "content": "hi"}}
 def mk(case, sid, rows, receipts):
@@ -1254,21 +1313,23 @@ def mk(case, sid, rows, receipts):
     tp = os.path.join(pd, sid + ".jsonl")
     open(tp, "w").write("".join(json.dumps(x) + "\n" for x in rows))
     open(os.path.join(st, "receipts.jsonl"), "w").write("".join(json.dumps(
-        {"ts": now, "sid": sid[:8], "agent_id": None, "key": sid, "transcript": tp, "boundary_ts": now, "kind": "normal",
+        {"ts": old if receipts != 3 else now, "sid": sid[:8], "agent_id": None, "key": sid, "transcript": tp, "boundary_ts": now, "kind": "normal",
          "handoff_sha256": "x", "part1_sha256": "x", "part1_head": "x"}) + "\n" for _ in range(receipts)))
 mk("ok", "aaaaaaaa-1", [u, b, u], 1)
 mk("drift", "bbbbbbbb-2", [u, u], 2)
 mk("none", "cccccccc-3", [u, u], 0)
+mk("fresh", "dddddddd-4", [u, u], 3)  # receipts newer than 10 minutes are not judged
 PY
   rec() { HOME="$R/$1/home" HANDOFF_STATE_DIR="$R/$1/state" python3 "$ROOT/hooks/precompact-handoff.py" --reconcile >/dev/null; }
   chk() { HOME="$R/$1/home" HANDOFF_STATE_DIR="$R/$1/state" python3 "$ROOT/hooks/postcompact-inject.py" --check; }
-  rec ok; rec drift; rec none
+  rec ok; rec drift; rec none; rec fresh
   python3 - "$R" <<'PY'
 import json, sys
 r = sys.argv[1]
 j = lambda c: json.load(open("%s/%s/state/reconcile.json" % (r, c)))
 assert j("ok")["format_drift"] is False and j("ok")["format_drift_sessions"] == []
 assert j("none")["format_drift"] is False
+assert j("fresh")["format_drift"] is False, j("fresh")
 d = j("drift")
 assert d["format_drift"] is True and d["format_drift_sessions"] == [{"sid": "bbbbbbbb", "injects": 2, "boundaries": 0}], d
 assert isinstance(d["format_drift_reason"], str) and "\n" not in d["format_drift_reason"]
@@ -1285,6 +1346,23 @@ PY
   cp "$ROOT/hooks/precompact-handoff.py" "$R/drift/hooks/"
   c="$(HOME="$R/drift/home" HANDOFF_STATE_DIR="$R/drift/state" python3 "$R/drift/hooks/precompact-handoff.py" --claims)"
   grep -q "| fail (format_drift) |" <<<"$c" || fail "F63: claims did not fail with format_drift: $c"
+  # --prove and a proof:* claim: a drift session never passes
+  python3 - "$R/drift" <<'PY'
+import datetime, json, sys
+d = sys.argv[1]
+rc = [json.loads(x) for x in open(d + "/state/receipts.jsonl")][0]
+now = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+ok = {"lossless": "pass", "right_agent": "pass", "delivered": "pass", "decisions_safe": "pass"}
+open(d + "/state/proofs.jsonl", "w").write(json.dumps({"ts": now, "receipt_ts": rc["ts"], "sid": rc["sid"], "agent_id": None,
+    "boundary_ts": None, "checks": ok, "details": {}}) + "\n")
+json.dump({"claims": [{"id": "C1", "text": "t", "source": "proof:delivered", "window_days": 30, "refresh_days": 30, "min_rate": 0.0}]},
+          open(d + "/hooks/claims.json", "w"))
+PY
+  pv="$(HOME="$R/drift/home" HANDOFF_STATE_DIR="$R/drift/state" python3 "$R/drift/hooks/precompact-handoff.py" --prove)"
+  grep -Eq "delivered 0/[1-9]" <<<"$pv" || fail "F63: --prove must not count a drift session as pass: $pv"
+  grep -q "format_drift" "$R/drift/state/proof-report.md" || fail "F63: proof report lacks the format_drift reason"
+  c="$(HOME="$R/drift/home" HANDOFF_STATE_DIR="$R/drift/state" python3 "$R/drift/hooks/precompact-handoff.py" --claims)"
+  grep -q "| fail (format_drift) |" <<<"$c" || fail "F63: a proof:* claim did not fail with format_drift: $c"
   ok "F63: boundaries present, no inject rows, and drift cases give the right reconcile.json; --check prints one warning line only on drift; claims fail with format_drift"
 )
 

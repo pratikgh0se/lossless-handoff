@@ -8,6 +8,7 @@ Hardening: the nudge window and a format drift alarm (hooks 1.14.2). New F62 and
 
 - Nudge window (F62): if `CLAUDE_CODE_AUTO_COMPACT_WINDOW` is not a positive integer, the nudge learns the window from `preTokens` of past `compact_boundary` records (median + 33,000, rounded to 1,000; current transcript, else the newest 5 of the project). With no history it uses 200,000. Before, it assumed 400,000, so with a 200k window it could never fire. A valid value works as before. Health rows have `window` and `window_source`.
 - Format drift alarm (F63): reconcile compares recorded post-compaction injects (`receipts.jsonl`) with `compact_boundary` records per session. A session with injects and no boundary sets `format_drift: true` in `reconcile.json`. `--prove` and the claims mark the affected checks `fail` (`format_drift`). `--check` prints one `format drift` line.
+- Review fixes: the nudge skips manual compactions and ignores a learned window below 100,000 or above 2,100,000 (F62, ACs 298-300). It stops the scan after 1.5 s. The drift check counts boundaries from the window start and skips injects newer than 10 minutes (F63, ACs 301-302). SECURITY.md lists the skill file, the LaunchAgents and the optional model download.
 - The nudge tag is now `[lossless-handoff]` (it was `[claude-handoff]`).
 - Text fixes: the docstring of `precompact-handoff.py`, a stale comment about subagent compaction, and `SECURITY.md` (file list, permissions, network use).
 
