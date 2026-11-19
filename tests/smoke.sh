@@ -1072,7 +1072,7 @@ PY
   grep -q "AH8X-2548-MJ8D" <<<"$(R search 'ledger.key' --keyword)" || fail "F59: regex ledger.key"
   grep -q "AH8X-2548-MJ8D" <<<"$(R search 'zzz|ledger-key' --keyword)" || fail "F59: regex with |"
   grep -q -- "-> result" "$ROOT/agents/recall.md" && grep -q -- "-> result" "$ROOT/hooks/postcompact-inject.py" \
-    && cat "$ROOT"/hooks/lossless_handoff/*.py | grep -q -- "-> result" || fail "F59: AC 273, text"
+    && grep -q -- "-> result" "$ROOT"/hooks/lossless_handoff/*.py || fail "F59: AC 273, text"
 )
 ok "F59: loose separators find ledger-key; a tool call hit points to its result"
 
