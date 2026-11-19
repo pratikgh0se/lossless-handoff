@@ -4,14 +4,26 @@
 Reads the hook JSON on stdin and the TAIL of the transcript only. When context crosses
 75% of the auto-compact window (then every 25,000 tokens, plus one final note) it prints one
 PostToolUse additionalContext note. Steps stay 12,000 tokens below the real compaction point
-(window minus 33,000), so with a 400k window the notes come at 300k, 325k, 350k and a final at 355k. State lives in <sid>-agent.meta.json, which precompact-handoff.py
-reads for its freshness rule. A subagent event (non-empty `agent_id`) is ignored entirely. Never fails: any error means exit 0 with no output.
+(window minus 33,000), so with a 400k window the notes come at 300k, 325k, 350k and a final at 355k.
+The window comes from CLAUDE_CODE_AUTO_COMPACT_WINDOW when it is a positive integer (source "env").
+Otherwise the hook learns it from the preTokens of real compact_boundary records (median + 33,000, rounded to
+1,000; manual compactions skipped; source "learned"), and without any record it uses 200,000 (source "default"). State lives in
+<sid>-agent.meta.json, which precompact-handoff.py reads for its freshness rule and copies `window` and
+`window_source` from into its health row. A subagent event (non-empty `agent_id`) is ignored entirely.
+Never fails: any error means exit 0 with no output.
 """
 import hashlib, json, os, re, sys, time
 
 HOME = os.path.expanduser("~")
 HANDOFFS_DIR = (os.environ.get("HANDOFF_STATE_DIR") or "").strip() or os.path.join(HOME, ".local", "state", "claude-handoffs")
-DEFAULT_WINDOW = 400000
+DEFAULT_WINDOW = 200000
+LEARN_MAX = 20
+LEARN_FILES = 5
+LEARN_TTL_S = 6 * 3600
+LEARN_BUDGET_S = 1.5
+LEARN_MIN = 100000
+LEARN_MAX_WINDOW = 2100000
+GAP = 33000
 AT_PERCENT = 75
 EVERY = 25000
 CEILING_GAP = 33000
@@ -22,11 +34,96 @@ STALE_NAMES = ["Parallel work running", "In progress", "Exact next step"]
 WRITE_TOOLS = {"Write", "Edit", "MultiEdit"}
 
 
-def window():
+def env_window():
     s = os.environ.get("CLAUDE_CODE_AUTO_COMPACT_WINDOW", "")
     if re.fullmatch(r"\s*\d+\s*", s) and int(s) > 0:
         return int(s)
-    return DEFAULT_WINDOW
+    return None
+
+
+def boundary_counts(path, want, deadline=None):
+    """preTokens of the newest `want` compact_boundary records of one transcript (newest first). Same fields as the
+    summary nodes of recall.py (compactMetadata.preTokens); kept here so the hook stays small and fast.
+    A record with trigger "manual" is skipped. A record with no trigger is kept. After `deadline` (monotonic time)
+    the scan stops and returns what it found so far."""
+    out = []
+    try:
+        with open(path, "rb") as f:
+            for ln in f:
+                if deadline is not None and time.monotonic() > deadline:
+                    break
+                if b"compact_boundary" not in ln:
+                    continue
+                try:
+                    o = json.loads(ln)
+                except ValueError:
+                    continue
+                if not isinstance(o, dict) or (o.get("subtype") != "compact_boundary" and o.get("type") != "compact_boundary"):
+                    continue
+                cm = o.get("compactMetadata")
+                if not isinstance(cm, dict) or cm.get("trigger") == "manual":
+                    continue
+                v = cm.get("preTokens")
+                if isinstance(v, int) and not isinstance(v, bool) and v > 0:
+                    out.append(v)
+    except Exception:
+        return []
+    return out[::-1][:want]
+
+
+def learn_window(tpath):
+    """F62 (2): median of the newest pre-compaction token counts + 33,000, rounded to the nearest 1,000.
+    Current transcript first; if it has none, the newest 5 other transcripts of the same project folder.
+    The scan has a time budget of LEARN_BUDGET_S. A result below 100,000 or above 2,100,000 is not used."""
+    deadline = time.monotonic() + LEARN_BUDGET_S
+    counts = boundary_counts(tpath, LEARN_MAX, deadline)
+    if not counts and time.monotonic() <= deadline:
+        d = os.path.dirname(os.path.abspath(tpath))
+        files = []
+        try:
+            names = os.listdir(d)
+        except Exception:
+            names = []
+        for n in names:
+            fp = os.path.join(d, n)
+            try:
+                if n.endswith(".jsonl") and os.path.abspath(fp) != os.path.abspath(tpath) and os.path.isfile(fp):
+                    files.append((os.path.getmtime(fp), fp))
+            except Exception:
+                continue  # a deleted file must not stop the scan
+        for _, fp in sorted(files, reverse=True)[:LEARN_FILES]:
+            if time.monotonic() > deadline:
+                break
+            try:
+                counts += boundary_counts(fp, LEARN_MAX - len(counts), deadline)
+            except Exception:
+                continue
+            if len(counts) >= LEARN_MAX:
+                break
+    if not counts:
+        return None
+    c = sorted(counts)
+    n = len(c)
+    med = c[n // 2] if n % 2 else (c[n // 2 - 1] + c[n // 2]) / 2.0
+    w = int((med + GAP) / 1000.0 + 0.5) * 1000
+    return w if LEARN_MIN <= w <= LEARN_MAX_WINDOW else None
+
+
+def pick_window(tpath, meta, rearm):
+    """(window, source, from_cache). The learned or default answer is cached in meta and refreshed after a compaction or 6 hours."""
+    e = env_window()
+    if e:
+        return e, "env", False
+    src, w, at = meta.get("windowSource"), meta.get("window"), meta.get("windowAt")
+    now = time.time()
+    if (not rearm and src in ("learned", "default") and isinstance(w, int) and w > 0 and isinstance(at, (int, float))
+            and 0 <= now - at < LEARN_TTL_S):
+        return w, src, True
+    try:
+        lw = learn_window(tpath)
+    except Exception:
+        lw = None
+    return (lw, "learned", False) if lw else (DEFAULT_WINDOW, "default", False)
 
 
 def threshold(w, k):
@@ -102,7 +199,7 @@ def kfmt(n):
 def nudge_text(t, w, path, exists, final=False, stale=False):
     pct = (t * 100) // w
     return (
-        "[claude-handoff] This note comes from the claude-handoff PostToolUse hook that the user installed in "
+        "[lossless-handoff] This note comes from the lossless-handoff PostToolUse hook that the user installed in "
         "~/.claude/settings.json. It is not part of the tool result. "
         "Context is %d%% of the auto-compact window (%s of %s).%s Compaction will drop your working memory.%s "
         "Please, in one Write call, %s %s (create the folder if missing) with exactly these headings: %s. "
@@ -135,7 +232,6 @@ def main():
     t = context_tokens(tpath)
     if t is None:
         return
-    w = window()
     agent = os.path.join(HANDOFFS_DIR, "%s-agent.md" % sid)
     meta_path = os.path.join(HANDOFFS_DIR, "%s-agent.meta.json" % sid)
     try:
@@ -147,6 +243,13 @@ def main():
         meta = {}
     now = int(time.time() * 1000)
     changed = False
+    rearm = isinstance(meta.get("ctxTokens"), int) and t < meta["ctxTokens"]
+    w, wsrc, cached = pick_window(tpath, meta, rearm)
+    if wsrc == "env":
+        meta.pop("windowAt", None)
+    elif not cached:
+        meta["windowAt"] = time.time()
+        changed = True
 
     # The model wrote the agent file: record it so the PreCompact freshness rule sees it.
     if payload.get("tool_name") in WRITE_TOOLS:
@@ -188,7 +291,7 @@ def main():
         changed = True
 
     if changed or meta.get("ctxTokens") != t:
-        meta.update({"v": 1, "sessionId": sid, "window": w, "ctxTokens": t})
+        meta.update({"v": 1, "sessionId": sid, "window": w, "windowSource": wsrc, "ctxTokens": t})
         try:
             os.makedirs(HANDOFFS_DIR, exist_ok=True)
             tmp = meta_path + ".tmp"

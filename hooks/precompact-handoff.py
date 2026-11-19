@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""PreCompact hook: deterministic handoff file. No LLM, no network. Always exits 0."""
+"""PreCompact hook: writes the handoff file from facts and the transcript. It opens no network connection itself.
+It runs the local `claude -p` command for the summary and the decisions merge. Set HANDOFF_SUMMARY=0 and HANDOFF_LEDGER=0
+to stop that. It may also start the recall indexer. The same file holds --reconcile, --prove and --claims. Always exits 0."""
 import json, os, sys, time, subprocess, shutil, glob, datetime, tempfile, re, hashlib, threading
 try:
     import fcntl
@@ -10,7 +12,7 @@ if os.environ.get("HANDOFF_HOOK_CHILD"):  # spawned by our own summary call: nev
     sys.exit(0)
 
 _T0 = time.monotonic()
-HOOK_VERSION = "1.14.1"
+HOOK_VERSION = "1.14.2"
 HOME = os.path.expanduser("~")
 HANDOFFS_DIR = (os.environ.get("HANDOFF_STATE_DIR") or "").strip() or os.path.join(HOME, ".local", "state", "claude-handoffs")
 HEALTH_FILE = os.path.join(HANDOFFS_DIR, "health.jsonl")
@@ -1472,11 +1474,9 @@ def agent_view(d):
 
 def is_subagent(d):
     """F42.5. A subagent compaction is recognised by a non-empty `agent_id` in the input, or a transcript_path under
-    /subagents/. Verified against Claude Code 2.1.316 (binary strings, 2026-11-08) and 102 recorded handoffs: the
-    PreCompact input is built from the SESSION (session_id = parent's, transcript_path = the parent's main
-    transcript, no agent_id), so a subagent compaction currently looks identical to a parent one and neither test
-    fires. Both are kept for versions that add the field (SubagentStop already carries agent_id and
-    agent_transcript_path)."""
+    /subagents/. Claude Code fires the hooks for a compacting subagent with `agent_id` set, but with the parent's
+    session_id and transcript_path (since 1.10.0 this hook builds the subagent handoff from the subagent's own
+    transcript). The /subagents/ test covers a transcript_path that already points at the subagent."""
     aid = d.get("agent_id")
     tp = d.get("transcript_path")
     return (isinstance(aid, str) and bool(aid.strip())) or (isinstance(tp, str) and "/subagents/" in tp)
@@ -1678,6 +1678,14 @@ def write_health(d, sid, info, body, status_override=None, sidecar=True, reasons
     }
     if _STEER[0]:
         line["steer"] = _STEER[0]
+    try:  # F62: the window and its source that the nudge hook chose (absent when no nudge meta exists)
+        with open(os.path.join(HANDOFFS_DIR, f"{sid}-agent.meta.json"), encoding="utf-8") as _mf:
+            _m = json.load(_mf)
+        if isinstance(_m, dict) and isinstance(_m.get("window"), int) and _m.get("windowSource") in ("env", "learned", "default"):
+            line["window"] = _m["window"]
+            line["window_source"] = _m["windowSource"]
+    except Exception:
+        pass
     if isinstance(info.get("ledger_ids"), dict):
         line.update(info["ledger_ids"])
     if agent_id_of(d):  # F46.b
@@ -1803,6 +1811,69 @@ def _scan_transcript(path, start_ms, now):
     return n, last, ent
 
 
+def _count_boundaries_all(path, start_ms=None):
+    """compact_boundary records in one transcript with a timestamp at or after start_ms (a record with no readable
+    timestamp always counts; start_ms None counts all). None if unreadable."""
+    n = 0
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            for line in f:
+                if "compact_boundary" not in line:
+                    continue
+                try:
+                    o = json.loads(line)
+                except Exception:
+                    continue
+                if is_boundary(o):
+                    t = ts_ms(o.get("timestamp"))
+                    if start_ms is None or t is None or t >= start_ms:
+                        n += 1
+    except Exception:
+        return None
+    return n
+
+
+def format_drift_scan(start_ms, canary_sids, base):
+    """F63: sessions with >= 1 recorded post-compaction inject event (a main-session row in receipts.jsonl, written by
+    postcompact-inject.py when it emits handoff part 1) in the window and 0
+    compact_boundary records since the window start in the session's transcript. Returns a list of {sid, injects, boundaries}. A session whose transcript is gone is skipped."""
+    inj = {}
+    for r in _read_jsonl(os.path.join(HANDOFFS_DIR, "receipts.jsonl")):
+        e = _iso_epoch(r.get("ts"))
+        if e is None or e * 1000.0 < start_ms or r.get("agent_id"):
+            continue
+        sid8 = str(r.get("sid") or "")[:8]
+        if not sid8 or sid8 in canary_sids:
+            continue
+        tp = r.get("transcript") if isinstance(r.get("transcript"), str) else ""
+        d = inj.setdefault(sid8, [0, ""])
+        d[0] += 1
+        if tp and os.path.isfile(tp):
+            d[1] = tp
+    out = []
+    for sid8, (n, tp) in sorted(inj.items()):
+        if not tp:
+            g = [x for x in glob.glob(os.path.join(base, "*", sid8 + "*.jsonl")) if "handoff-canary" not in x]
+            tp = g[0] if g else ""
+        if not tp:
+            continue
+        b = _count_boundaries_all(tp, start_ms)
+        if b == 0:
+            out.append({"sid": sid8, "injects": n, "boundaries": 0})
+    return out
+
+
+def drift_sids():
+    """Session ids that the newest reconcile.json lists in format_drift_sessions (empty when no drift)."""
+    try:
+        rj = json.load(open(os.path.join(HANDOFFS_DIR, "reconcile.json"), encoding="utf-8"))
+        if isinstance(rj, dict) and rj.get("format_drift") is True:
+            return {str(x.get("sid")) for x in rj.get("format_drift_sessions") or [] if isinstance(x, dict)}
+    except Exception:
+        pass
+    return set()
+
+
 def reconcile(days=7):
     """F45.c/F46.d: count compact_boundary records in main transcripts (and, per agent, in
     <project>/<session>/subagents/agent-*.jsonl) against health.jsonl rows; print the summary line, the subagent line and
@@ -1898,6 +1969,11 @@ def reconcile(days=7):
                 killed += 1
         except Exception:
             continue
+    try:
+        drift = format_drift_scan(start_ms, canary_sids, base)
+    except Exception as e:
+        log_error("unknown", e)
+        drift = []
     tot = {k: sum(s[k] for s in sessions) for k in ("boundaries", "handoffs", "recovered", "missed")}
     mi = sum(s["missed"] for s in sessions if not s["headless"])
     mh = sum(s["missed"] for s in sessions if s["headless"])
@@ -1905,6 +1981,9 @@ def reconcile(days=7):
     _out(f"compactions {tot['boundaries']} · handoffs {tot['handoffs']} · recovered {tot['recovered']} · "
          f"missed {tot['missed']} (interactive {mi}, headless {mh}) · killed {killed}")
     _out(f"subagent compactions {sub_n} · missed {sub_m}")
+    if drift:
+        _out("format drift: " + ", ".join(f"{x['sid']} (inject {x['injects']}, boundary {x['boundaries']})" for x in drift)
+             + " - the transcript has no compact_boundary record; Claude Code may have changed its transcript format")
     for s in sorted([s for s in sessions if s["missed"] and not s["headless"]], key=lambda s: s["last_boundary"], reverse=True):
         _out(f"missed {s['missed']} {s['sid']} {s['project']} {s['last_boundary']}")
     for s in sorted([s for s in subs if s["missed"]], key=lambda s: s["last_boundary"], reverse=True):
@@ -1916,7 +1995,11 @@ def reconcile(days=7):
                "days": days, "compactions": tot["boundaries"], "handoffs": tot["handoffs"],
                "recovered": tot["recovered"], "missed": tot["missed"], "missed_interactive": mi,
                "missed_headless": mh, "killed": killed, "subagent_compactions": sub_n, "subagent_missed": sub_m,
-               "sessions": sessions, "subagent_sessions": subs}
+               "sessions": sessions, "subagent_sessions": subs,
+               "format_drift": bool(drift), "format_drift_sessions": drift}
+        if drift:
+            out["format_drift_reason"] = ("post-compaction inject events recorded but no compact_boundary record in the "
+                                          "transcript: the transcript format may have changed")
         try:
             with open(rp, encoding="utf-8") as f:
                 old = json.load(f)
@@ -2362,6 +2445,7 @@ def prove(days=7):
     have = {(str(p.get("receipt_ts")), str(p.get("sid")), str(p.get("agent_id") or "")): p for p in proofs}
     health = [r for r in _read_jsonl(HEALTH_FILE) if r.get("event") != "subagent_start"]  # F58.d
     new_rows = []
+    dsids = drift_sids()  # F63: a session with format drift never passes
     for rc in receipts:
         k = _rkey(rc)
         if k in have:
@@ -2376,6 +2460,9 @@ def prove(days=7):
                 v, why = "skip", f"check error {type(e).__name__}"
                 log_error(rc.get("key") or "unknown", e)
             checks[name], details[name] = v, why[:200]
+        if str(rc.get("sid"))[:8] in dsids and not rc.get("agent_id"):
+            for name in CHECKS:  # F63.c: the file records the failure, not a skip
+                checks[name], details[name] = "fail", "format_drift"
         row = {"ts": run_ts, "receipt_ts": rc.get("ts"), "sid": rc.get("sid"), "agent_id": rc.get("agent_id"),
                "boundary_ts": rc.get("boundary_ts"), "checks": checks, "details": details}
         new_rows.append(row)
@@ -2393,9 +2480,12 @@ def prove(days=7):
         p = have.get(_rkey(rc))
         if not p:
             continue
+        drifted = str(rc.get("sid"))[:8] in dsids and not rc.get("agent_id")
         for c in CHECKS:
             v = (p.get("checks") or {}).get(c)
             why = str((p.get("details") or {}).get(c) or "")
+            if drifted:
+                v, why = "fail", "format_drift"
             if v == "pass":
                 tally[c][0] += 1
             elif v == "fail":
@@ -2467,19 +2557,26 @@ def eval_claims(now):
     except Exception:
         rj = None
     out = []
+    dsids = drift_sids()
+    drift_on = bool(dsids)
     for c in reg:
         if not isinstance(c, dict) or not c.get("id"):
             continue
         src, refresh = str(c.get("source") or ""), c.get("refresh_days") or 0
         win, minr = c.get("window_days") or 30, c.get("min_rate")
         p = q = 0
+        dhit = False
         as_of_e, value = None, ""
         if src.startswith("proof:"):
             name = src[6:]
             for r in proofs:
                 e = _iso_epoch(r.get("ts"))
                 v = (r.get("checks") or {}).get(name)
-                if e is None or e < now - win * 86400 or v not in ("pass", "fail"):
+                if e is None or e < now - win * 86400:
+                    continue
+                if str(r.get("sid"))[:8] in dsids and not r.get("agent_id"):
+                    v, dhit = "fail", True  # F63: any stored verdict of a drift session fails; only rows inside the claim window count
+                if v not in ("pass", "fail"):
                     continue
                 q += 1
                 p += 1 if v == "pass" else 0
@@ -2501,24 +2598,31 @@ def eval_claims(now):
                         "as_of": str(ev.get("date", ""))[:10], "status": "stale" if stale else "pass"})
             continue
         as_of = datetime.datetime.fromtimestamp(as_of_e, datetime.timezone.utc).strftime("%Y-%m-%d") if as_of_e else ""
-        if q == 0:
+        if drift_on and src.startswith("reconcile:"):
+            status, rate = "fail", (p / q if q else None)  # F63: the counts cannot be trusted
+        elif q == 0:
             status, rate = "no-data", None
         else:
             rate = p / q
-            if minr is not None and rate < minr:
+            if dhit:
+                status = "fail"  # F63: the counts cannot be trusted
+            elif minr is not None and rate < minr:
                 status = "fail"
             elif as_of_e is None or now - as_of_e > refresh * 86400:
                 status = "stale"
             else:
                 status = "pass"
-        out.append({"id": c["id"], "text": c.get("text", ""), "value": f"{p}/{q}", "rate": rate, "as_of": as_of, "status": status})
+        row = {"id": c["id"], "text": c.get("text", ""), "value": f"{p}/{q}", "rate": rate, "as_of": as_of, "status": status}
+        if drift_on and status == "fail" and (dhit or src.startswith("reconcile:")):
+            row["reason"] = "format_drift"
+        out.append(row)
     return out
 
 
 def claims_table(st):
     rows = ["| id | claim | value | as of | status |", "|---|---|---|---|---|"]
     for c in st:
-        rows.append(f"| {c['id']} | {c['text']} | {c['value']} | {c['as_of'] or '-'} | {c['status']} |")
+        rows.append(f"| {c['id']} | {c['text']} | {c['value']} | {c['as_of'] or '-'} | {c['status']}{' (' + c['reason'] + ')' if c.get('reason') else ''} |")
     return "\n".join(rows) + "\n"
 
 
