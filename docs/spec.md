@@ -1008,3 +1008,46 @@ ACs (fake `claude` as in F60):
 - 286. The installed SKILL.md holds `--labels`, `600000`, and the word `pgrep`; the description holds `count`.
 
 Version: hooks 1.14.1; release 0.12.1. `HOOK_VERSION` in both hooks and `hook_version` in health rows and sidecars is `1.14.1`. This amends the version value in ACs 136, 150, 172, 180, 188 and 267 again.
+
+
+## F62 Nudge window source (2026-11-19)
+Why: an independent review found that the nudge assumed a 400,000-token window when `CLAUDE_CODE_AUTO_COMPACT_WINDOW` is unset. With a 200,000-token model the first reminder (300,000) is above the real compaction point, so the nudge never fires. The window differs for each user, so the hook calculates it from real compactions and does not hard-code it.
+
+**F62.a Order.** The nudge hook (`hooks/handoff-nudge.py`) picks the window in this order:
+1. If `CLAUDE_CODE_AUTO_COMPACT_WINDOW` is a positive integer, use it. This is today's behaviour, unchanged. Source: `env`.
+2. Else learn it from real compactions. Take the pre-compaction token counts of the newest `compact_boundary` records (up to 20) in the current transcript. The count is the field `compactMetadata.preTokens` (the same field that the summary nodes of `recall.py` store as `pre_tokens`). If the current transcript has none, take them from the other transcripts of the same project folder (`~/.claude/projects/<slug>/*.jsonl`, newest files first, at most 5 files, read-only, stop at 20 counts). If at least 1 count exists, window = median of the counts + 33,000, rounded to the nearest 1,000. Source: `learned`.
+3. Else use 200,000. Source: `default`.
+
+**F62.b Thresholds.** All thresholds derive from the chosen window with the existing formulas: the first reminder at 75% of the window, then every 25,000 tokens, and the final nudge at window minus 45,000. If the final threshold is at or below the first reminder threshold, the hook sends only the final nudge, at the first threshold reached. A valid set value keeps today's behaviour exactly.
+
+**F62.c Record.** The hook writes the chosen window and its source to `<sid>-agent.meta.json` as `window` (integer) and `windowSource` (`env`, `learned` or `default`). The PreCompact health row in `health.jsonl` holds them as `window` (integer) and `window_source` when that meta file exists (the nudge hook writes no health row of its own). The hook keeps a `learned` or `default` value in the meta for 6 hours, and re-computes it after a compaction (context shrank), so a scan of a large transcript does not run on every tool call.
+
+**F62.d Nudge tag.** The nudge text starts with `[lossless-handoff] This note comes from the lossless-handoff PostToolUse hook that the user installed in ~/.claude/settings.json.` (before 0.12.2: `[claude-handoff]` and `claude-handoff PostToolUse hook`).
+
+ACs:
+- 287. `CLAUDE_CODE_AUTO_COMPACT_WINDOW=400000` and a transcript at 160,000 tokens: no nudge; meta has `window` 400000 and `windowSource` `env`.
+- 288. The variable unset, empty, `abc`, `0`, `-5` or `1.5`, and a project with no `compact_boundary` record: a nudge at 160,000 tokens (first reminder 150,000); `window` 200000, `windowSource` `default`.
+- 289. The variable unset and the current transcript holds boundaries with `preTokens` 367000, 167000 and 267000: `window` 300000, `windowSource` `learned`; no nudge at 160,000 tokens.
+- 290. The variable unset, the current transcript holds no boundary, a sibling transcript of the same folder holds three boundaries with `preTokens` 167000: `window` 200000, `windowSource` `learned`.
+- 291. `CLAUDE_CODE_AUTO_COMPACT_WINDOW=40000`: the final threshold (window minus 45,000) is at or below the first threshold. The first call sends one nudge that says "Compaction is imminent"; the next call sends none.
+- 292. After a nudge with a `learned` window, the next PreCompact health row for that session has `window` and `window_source` with the same values.
+
+## F63 Format drift alarm (2026-11-19)
+Why: if Claude Code changes its transcript format, reconcile finds no `compact_boundary` record, and it counts 0 compactions and 0 misses. That looks healthy but it is blind. Two independent counts catch it.
+
+**F63.a The two counts.** For each session in its window, reconcile compares (1) the post-compaction inject events that the hooks recorded, and (2) the `compact_boundary` records in the transcript of that session. The inject event is one main-session row (`agent_id` null) in `receipts.jsonl`, which `postcompact-inject.py` appends when it emits part 1 of a handoff (`kind` `normal` or `recovered`). Its fields are `ts`, `sid` (first 8 characters of the session id), `agent_id`, `key`, `transcript`, `boundary_ts`, `kind`. `health.jsonl` has no SessionStart row, so the receipt row is the existing equivalent. Rows of canary sessions are ignored. The transcript is the path in the row, or else `~/.claude/projects/*/<sid>*.jsonl`. If the transcript is gone, the session is skipped. Boundaries are counted over the whole transcript.
+
+**F63.b Result.** If a session has 1 or more inject events in the window and 0 `compact_boundary` records, reconcile writes to `reconcile.json`: `format_drift: true`, `format_drift_sessions` (a list of `{"sid", "injects", "boundaries"}`) and `format_drift_reason` (one line). It also prints one line that starts with `format drift:`. If no session has inject events, or every such session has a boundary, `format_drift` is `false` and the list is empty. A transcript that holds `compact_boundary` records keeps today's behaviour.
+
+**F63.c Prove and claims.** While the newest `reconcile.json` has `format_drift: true`: `--prove` marks every check of a receipt of a drift session `fail` with the reason `format_drift` (never `pass`); a claim with source `proof:*` that counts such a check gets status `fail`; a claim with source `reconcile:*` gets status `fail`. A failed claim of this kind shows `(format_drift)` after the status in `claims-report.md` and `--claims`, and has `reason: "format_drift"` in the evaluation.
+
+**F63.d Check.** `postcompact-inject.py --check` prints exactly one extra line, `HANDOFF CHECK: format drift: ...`, while the newest `reconcile.json` has `format_drift: true`. It prints it on each run (not once only). The line contains the words `format drift`. It is separate from the other `HANDOFF CHECK:` line.
+
+ACs:
+- 293. A session with 1 inject row and a transcript with 1 `compact_boundary`: `format_drift` false, list empty.
+- 294. A session with 2 inject rows and a transcript with 0 boundaries: `format_drift` true, `format_drift_sessions` equals `[{"sid": "<sid8>", "injects": 2, "boundaries": 0}]`, `format_drift_reason` is one line.
+- 295. No inject rows and a transcript with 0 boundaries: `format_drift` false.
+- 296. `--check` prints one line with `format drift` for the drift state and none for 293 and 295.
+- 297. In the drift state, a `reconcile:coverage` claim has status `fail` and `--claims` shows `fail (format_drift)`.
+
+Version: hooks 1.14.2; release 0.12.2. `HOOK_VERSION` in both hooks and `hook_version` in health rows and sidecars is `1.14.2`. This amends the version value in ACs 136, 150, 172, 180, 188 and 267 again. The nudge tag changes as F62.d says (it amends any earlier AC that names `[claude-handoff]`).

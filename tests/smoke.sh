@@ -74,7 +74,7 @@ python3 - "$H" <<'PY'
 import hashlib, json, sys
 h = sys.argv[1]
 m = json.load(open(h + "/.handoff-manifest.json"))
-assert m["version"] == "1.14.1" and m["installed_at"], m
+assert m["version"] == "1.14.2" and m["installed_at"], m
 assert sorted(m["files"]) == ["claims.json", "handoff-nudge.py", "postcompact-inject.py", "precompact-handoff.py", "recall.py"], m
 for n, want in m["files"].items():
     assert hashlib.sha256(open(h + "/" + n, "rb").read()).hexdigest() == want, n
@@ -372,13 +372,13 @@ row = {"type": "assistant", "message": {"content": [{"type": "text", "text": "x"
 open(sys.argv[1], "a").write(json.dumps(row) + "\n")
 PY
 }
-nudge() { printf '{"session_id":"nsess","transcript_path":"%s","tool_name":"Bash","tool_input":{}}' "$TR" | python3 "$H/handoff-nudge.py"; }
+nudge() { printf '{"session_id":"nsess","transcript_path":"%s","tool_name":"Bash","tool_input":{}}' "$TR" | CLAUDE_CODE_AUTO_COMPACT_WINDOW=400000 python3 "$H/handoff-nudge.py"; }
 mk 310000; o1="$(nudge)"
 mk 320000; o2="$(nudge)"
 mk 355000; o3="$(nudge)"
 [ -n "$o1" ] && [ -z "$o2" ] && [ -n "$o3" ] || fail "nudge pattern wrong (got: ${#o1} ${#o2} ${#o3} chars)"
 grep -q "nsess-agent.md" <<<"$o1" || fail "nudge lacks agent path"
-grep -q "claude-handoff PostToolUse hook that the user installed" <<<"$o1" || fail "nudge does not identify its source"
+grep -q "lossless-handoff PostToolUse hook that the user installed" <<<"$o1" || fail "nudge does not identify its source"
 python3 -c "import json,sys; t=json.load(sys.stdin)['hookSpecificOutput']['additionalContext']; assert len(t)<1300, len(t)" <<<"$o1" || fail "nudge too long"
 echo "$o1" | python3 -c "import json,sys; assert json.load(sys.stdin)['hookSpecificOutput']['hookEventName']=='PostToolUse'"
 grep -q "Parallel work running" <<<"$o1" && ! grep -q "imminent" <<<"$o1" || fail "first nudge: seventh heading missing or wrongly imminent"
@@ -945,7 +945,7 @@ rows = {json.loads(x)["sid"]: json.loads(x) for x in open(sys.argv[1]) if x.stri
 a, b = rows["f56a"], rows["f56b"]
 assert a["excerpt_chars"] > 0 and a["excerpt_dropped"] == 0, a
 assert b["excerpt_dropped"] > 0 and 0 < b["excerpt_chars"] <= 120000, b
-assert a["hook_version"] == "1.14.1"
+assert a["hook_version"] == "1.14.2"
 PY
   p="$(python3 "$ROOT/hooks/precompact-handoff.py" --prove --days 1; echo "rc=$?")"
   grep -qE "^excerpt cut: 1 of 2 compactions, median dropped [0-9]+ chars$" <<<"$p" || fail "F56.b: prove line: $p"
@@ -1110,7 +1110,7 @@ PY
 import json, sys
 rows = [json.loads(x) for x in open(sys.argv[1]) if x.strip()]
 r = [x for x in rows if x.get("event") == "subagent_start"][-1]
-assert r["rules"] == 2 and r["chars"] > 0 and r["hook_version"] == "1.14.1" and r["agent_type"] == "general-purpose", r
+assert r["rules"] == 2 and r["chars"] > 0 and r["hook_version"] == "1.14.2" and r["agent_type"] == "general-purpose", r
 PY
   # AC 262: no handoff text, no agent notes
   printf '# Handoff\n- cwd: %s\nLATESTTOKEN\n' "$PROJ" > "$STF/s58-latest.md"; printf 'AGENTTOKEN\n' > "$STF/s58-agent.md"
@@ -1178,6 +1178,115 @@ PY
   python3 -c "import json,sys; h=json.load(open(sys.argv[1])).get('hooks',{}); assert 'SubagentStart' not in h and 'PreToolUse' in h, h" "$SS" || fail "F58: uninstall left the hook or lost another"
 )
 ok "F58: install adds one SubagentStart entry and the restart line once; uninstall removes it"
+
+# F62: where the nudge window comes from (env, learned, default 200,000) and F63: format drift alarm
+(
+  set -euo pipefail
+  W="$T/f62"; mkdir -p "$W"
+  python3 - "$W" <<'PY'
+import json, os, sys
+w = sys.argv[1]
+def usage(n):
+    return {"type": "assistant", "message": {"content": [{"type": "text", "text": "x"}],
+            "usage": {"input_tokens": 10, "cache_read_input_tokens": n - 10, "cache_creation_input_tokens": 0}}}
+def boundary(pre):
+    return {"type": "system", "subtype": "compact_boundary", "timestamp": "2026-11-01T10:00:00.000Z",
+            "compactMetadata": {"trigger": "auto", "preTokens": pre}}
+def write(path, rows):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    open(path, "w").write("".join(json.dumps(r) + "\n" for r in rows))
+# 160,000 tokens: nudges with a 200k window (first at 150k), not with 400k (first at 300k)
+write(w + "/none/cur.jsonl", [usage(160000)])
+write(w + "/cur/cur.jsonl", [boundary(367000), boundary(167000), boundary(267000), usage(160000)])  # median 267k + 33k = 300k
+write(w + "/sib/cur.jsonl", [usage(160000)])
+write(w + "/sib/old.jsonl", [boundary(167000), boundary(167000), boundary(167000)])  # 167k + 33k = 200k
+PY
+  nrun() { # $1 transcript, $2 sid, $3 state dir; the caller sets or unsets the window variable
+    printf '{"session_id":"%s","transcript_path":"%s","tool_name":"Bash","tool_input":{}}' "$2" "$1" | HANDOFF_STATE_DIR="$3" python3 "$ROOT/hooks/handoff-nudge.py"
+  }
+  meta() { python3 -c "import json,sys; m=json.load(open(sys.argv[1])); print(m['window'], m['windowSource'])" "$1/$2-agent.meta.json"; }
+  i=0
+  for v in "" "abc" "0" "-5" "1.5"; do
+    i=$((i+1)); d="$W/s-bad$i"
+    o="$(CLAUDE_CODE_AUTO_COMPACT_WINDOW="$v" nrun "$W/none/cur.jsonl" a "$d")"
+    [ -n "$o" ] && [ "$(meta "$d" a)" = "200000 default" ] || fail "F62: value '$v' did not give the 200000 default"
+  done
+  d="$W/s-unset"
+  o="$(env -u CLAUDE_CODE_AUTO_COMPACT_WINDOW HANDOFF_STATE_DIR="$d" python3 "$ROOT/hooks/handoff-nudge.py" < <(printf '{"session_id":"a","transcript_path":"%s","tool_name":"Bash","tool_input":{}}' "$W/none/cur.jsonl"))"
+  [ -n "$o" ] && [ "$(meta "$d" a)" = "200000 default" ] || fail "F62: unset variable did not give the 200000 default"
+  d="$W/s-env"
+  o="$(CLAUDE_CODE_AUTO_COMPACT_WINDOW=400000 nrun "$W/none/cur.jsonl" a "$d")"
+  [ -z "$o" ] && [ "$(meta "$d" a)" = "400000 env" ] || fail "F62: a valid env value must win and keep the 400k behaviour"
+  d="$W/s-cur"
+  o="$(CLAUDE_CODE_AUTO_COMPACT_WINDOW='' nrun "$W/cur/cur.jsonl" a "$d")"
+  [ -z "$o" ] && [ "$(meta "$d" a)" = "300000 learned" ] || fail "F62: window not learned from the current transcript (got $(meta "$d" a))"
+  d="$W/s-sib"
+  o="$(CLAUDE_CODE_AUTO_COMPACT_WINDOW='' nrun "$W/sib/cur.jsonl" a "$d")"
+  [ -n "$o" ] && [ "$(meta "$d" a)" = "200000 learned" ] || fail "F62: window not learned from a sibling transcript (got $(meta "$d" a))"
+  # tiny window: the final nudge is at or below the first threshold: one final nudge, none after
+  d="$W/s-tiny"
+  o="$(CLAUDE_CODE_AUTO_COMPACT_WINDOW=40000 nrun "$W/none/cur.jsonl" a "$d")"
+  [ -n "$o" ] && grep -q "Compaction is imminent" <<<"$o" || fail "F62: tiny window must send the final nudge"
+  o="$(CLAUDE_CODE_AUTO_COMPACT_WINDOW=40000 nrun "$W/none/cur.jsonl" a "$d")"
+  [ -z "$o" ] || fail "F62: tiny window nudged twice"
+  # health row copies window and window_source from the nudge meta
+  d="$W/s-health"; mkdir -p "$d"
+  CLAUDE_CODE_AUTO_COMPACT_WINDOW='' nrun "$W/sib/cur.jsonl" hsess "$d" >/dev/null
+  printf '{"session_id":"hsess","transcript_path":"%s","trigger":"auto","cwd":"%s"}' "$W/sib/cur.jsonl" "$W" | HANDOFF_STATE_DIR="$d" python3 "$ROOT/hooks/precompact-handoff.py" >/dev/null
+  python3 - "$d/health.jsonl" <<'PY'
+import json, sys
+r = [json.loads(x) for x in open(sys.argv[1]) if x.strip()][-1]
+assert r["window"] == 200000 and r["window_source"] == "learned", r
+PY
+  ok "F62: env wins; unset, empty or invalid gives learned or the 200000 default; tiny window sends one final nudge; health row has window and window_source"
+
+  # F63
+  R="$T/f63"; mkdir -p "$R"
+  python3 - "$R" <<'PY'
+import datetime, json, os, sys
+r = sys.argv[1]
+now = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+b = {"type": "system", "subtype": "compact_boundary", "timestamp": now, "compactMetadata": {"trigger": "auto", "preTokens": 300000}}
+u = {"type": "user", "timestamp": now, "message": {"role": "user", "content": "hi"}}
+def mk(case, sid, rows, receipts):
+    home = os.path.join(r, case, "home"); st = os.path.join(r, case, "state")
+    pd = os.path.join(home, ".claude", "projects", "proj"); os.makedirs(pd); os.makedirs(st)
+    tp = os.path.join(pd, sid + ".jsonl")
+    open(tp, "w").write("".join(json.dumps(x) + "\n" for x in rows))
+    open(os.path.join(st, "receipts.jsonl"), "w").write("".join(json.dumps(
+        {"ts": now, "sid": sid[:8], "agent_id": None, "key": sid, "transcript": tp, "boundary_ts": now, "kind": "normal",
+         "handoff_sha256": "x", "part1_sha256": "x", "part1_head": "x"}) + "\n" for _ in range(receipts)))
+mk("ok", "aaaaaaaa-1", [u, b, u], 1)
+mk("drift", "bbbbbbbb-2", [u, u], 2)
+mk("none", "cccccccc-3", [u, u], 0)
+PY
+  rec() { HOME="$R/$1/home" HANDOFF_STATE_DIR="$R/$1/state" python3 "$ROOT/hooks/precompact-handoff.py" --reconcile >/dev/null; }
+  chk() { HOME="$R/$1/home" HANDOFF_STATE_DIR="$R/$1/state" python3 "$ROOT/hooks/postcompact-inject.py" --check; }
+  rec ok; rec drift; rec none
+  python3 - "$R" <<'PY'
+import json, sys
+r = sys.argv[1]
+j = lambda c: json.load(open("%s/%s/state/reconcile.json" % (r, c)))
+assert j("ok")["format_drift"] is False and j("ok")["format_drift_sessions"] == []
+assert j("none")["format_drift"] is False
+d = j("drift")
+assert d["format_drift"] is True and d["format_drift_sessions"] == [{"sid": "bbbbbbbb", "injects": 2, "boundaries": 0}], d
+assert isinstance(d["format_drift_reason"], str) and "\n" not in d["format_drift_reason"]
+PY
+  [ -z "$(chk ok | grep -i 'format drift' || true)" ] && [ -z "$(chk none | grep -i 'format drift' || true)" ] || fail "F63: --check warned without drift"
+  [ "$(chk drift | grep -ci 'format drift')" = "1" ] || fail "F63: --check must print exactly one format drift line"
+  # claims: a drifted session fails the claims, never passes
+  mkdir -p "$R/drift/hooks"
+  python3 - "$R/drift/hooks" <<'PY'
+import json, sys
+json.dump({"claims": [{"id": "C1", "text": "t", "source": "reconcile:coverage", "window_days": 30, "refresh_days": 30, "min_rate": 0.0}]},
+          open(sys.argv[1] + "/claims.json", "w"))
+PY
+  cp "$ROOT/hooks/precompact-handoff.py" "$R/drift/hooks/"
+  c="$(HOME="$R/drift/home" HANDOFF_STATE_DIR="$R/drift/state" python3 "$R/drift/hooks/precompact-handoff.py" --claims)"
+  grep -q "| fail (format_drift) |" <<<"$c" || fail "F63: claims did not fail with format_drift: $c"
+  ok "F63: boundaries present, no inject rows, and drift cases give the right reconcile.json; --check prints one warning line only on drift; claims fail with format_drift"
+)
 
 "$ROOT/uninstall.sh" >"$T/un.out"
 python3 - "$S" "$T/original.json" <<'PY'

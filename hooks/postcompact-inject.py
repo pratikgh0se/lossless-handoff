@@ -77,7 +77,7 @@ HARD_MAX = 9900    # each part's total output (warning + header + content + cont
 INLINE_MAX = 9700  # content target per part
 NAMES_MAX = 150    # the section-name list in a continuation line is cut to this many chars
 MAX_PARTS = 3      # F37.6
-HOOK_VERSION = "1.14.1"
+HOOK_VERSION = "1.14.2"
 _SID = ["unknown"]
 
 
@@ -813,6 +813,11 @@ def check_mode():
     rp = os.path.join(HANDOFFS_DIR, "reconcile.json")
     try:
         rj = read_json(rp)
+        if rj and rj.get("format_drift") is True:  # F63: shown on every start while the newest reconcile.json says so
+            ds = rj.get("format_drift_sessions") if isinstance(rj.get("format_drift_sessions"), list) else []
+            sys.stdout.write(f"HANDOFF CHECK: format drift: {len(ds)} session(s) have post-compaction injects but no "
+                             "compact_boundary record; Claude Code may have changed its transcript format; "
+                             "see precompact-handoff.py --reconcile\n")
         if rj:
             mi, kl = rj.get("missed_interactive") or 0, rj.get("killed") or 0
             if (mi > 0 or kl > 0) and str(rj.get("ts") or "") > str(rj.get("noticed_ts") or ""):

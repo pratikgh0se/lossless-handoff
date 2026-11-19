@@ -6,7 +6,7 @@
 
 This documentation uses ASD-STE100 Simplified Technical English.
 
-Current versions: product 0.12.1 (`install.sh`), hooks 1.14.1 (`HOOK_VERSION` in `hooks/precompact-handoff.py` and `hooks/postcompact-inject.py`).
+Current versions: product 0.12.2 (`install.sh`), hooks 1.14.2 (`HOOK_VERSION` in `hooks/precompact-handoff.py` and `hooks/postcompact-inject.py`).
 
 [![CI](https://github.com/pratikgh0se/lossless-handoff/actions/workflows/ci.yml/badge.svg)](https://github.com/pratikgh0se/lossless-handoff/actions/workflows/ci.yml) [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE) [![Release](https://img.shields.io/github/v/release/pratikgh0se/lossless-handoff)](https://github.com/pratikgh0se/lossless-handoff/releases/latest)
 
@@ -263,6 +263,8 @@ Other projects solve parts of this well. The author fetched the stars on 2026-11
 [docs/architecture.md](docs/architecture.md) has the full picture. These are the three main steps.
 
 1. **Nudge** (`handoff-nudge.py`, PostToolUse). When context reaches 75% of the auto-compact window, and again every 25,000 tokens, the hook appends one short nudge text to a tool result. The nudge asks the working model to write its own handoff to `~/.local/state/claude-handoffs/<session_id>-agent.md`. The file has seven fixed headings: Goal, Parallel work running, Decisions and why, Done, In progress, Dead ends, Exact next step. With a 400k window the reminders come at 300k, 325k and 350k. One final nudge, worded "Compaction is imminent", comes at 355k. That is about 12,000 tokens below the real compaction point (window minus 33,000), so the model still has room to write the file. Three sections are living sections: Parallel work running, In progress and Exact next step. If they are byte-identical to the previous reminder, the next nudge says that the handoff is stale. It also asks for a rewrite. It costs no extra turn.
+
+**Which window the nudge uses.** The hook picks the window in this order. (1) `CLAUDE_CODE_AUTO_COMPACT_WINDOW`, if it is a positive integer (source `env`). (2) Otherwise a learned value (source `learned`). The hook reads `compactMetadata.preTokens` of the newest `compact_boundary` records (20 at most) in the current transcript. If there are none, it reads the newest 5 other transcripts of the same project folder, read-only. The window is the median of these counts plus 33,000, rounded to the nearest 1,000. (3) If there is no history, the window is 200,000 (source `default`). The thresholds use the same formulas for every source. If the final threshold is at or below the first reminder threshold, the hook sends only the final nudge. The hook stores `window` and `windowSource` in `<sid>-agent.meta.json`. The next health row copies them as `window` and `window_source`. The hook keeps a learned or default value for 6 hours or until a compaction, so the scan of a large transcript (about 0.25 s for 500 MB) does not run on every tool call.
 2. **Handoff** (`precompact-handoff.py`, PreCompact). Just before compaction, the hook writes `<session_id>-latest.md` (14,000 characters at most). The file starts with an authority line. The line says whom to believe when sources disagree. The file holds:
    - the model's own handoff, if there is one (labelled stale when it is out of date);
    - a fresh summary that Sonnet writes (`claude -p --model sonnet`) of the conversation since the last compaction, labelled "verify against facts". It runs in parallel with the decisions update, so a compaction takes about 20-40 s;
@@ -283,8 +285,8 @@ A hook cannot force Claude Code to run it, so a handoff can be missed. For examp
 |---|---|
 | **Early write** | PreCompact writes `<sid>-pending.json` first. Then it writes a deterministic handoff (facts and your last messages) before the first model call. A hook that stops at its timeout still leaves a handoff. The health line removes the pending file. |
 | **HANDOFF RECOVERED** | If a compaction still has no handoff, the SessionStart `compact` hook rebuilds one from the transcript (no model call, 6 s deadline). The injected text starts with `HANDOFF RECOVERED`. |
-| **`--check`** | At session `startup` and `resume`, `postcompact-inject.py --check` prints one `HANDOFF CHECK:` line in these cases: a hook is not wired, a hook file is missing or changed since install (it compares the manifest), the versions of the two hooks differ, or reconcile found compactions without a handoff. It prints nothing when all is well. |
-| **Nightly reconcile and proof** | At 04:15, `precompact-handoff.py --reconcile --prove --days 30` counts every `compact_boundary` in your transcripts against `health.jsonl`. It proves each receipt (see [Proof, not promises](#proof-not-promises)). |
+| **`--check`** | At session `startup` and `resume`, `postcompact-inject.py --check` prints one `HANDOFF CHECK:` line in these cases: a hook is not wired, a hook file is missing or changed since install (it compares the manifest), the versions of the two hooks differ, or reconcile found compactions without a handoff. It prints a separate `format drift` line when reconcile found format drift (see Limitations). It prints nothing when all is well. |
+| **Nightly reconcile and proof** | At 04:15, `precompact-handoff.py --reconcile --prove --days 30` counts every `compact_boundary` in your transcripts against `health.jsonl`. It proves each receipt (see [Proof, not promises](#proof-not-promises)). It also compares two counts for each session: the recorded post-compaction injects and the `compact_boundary` records. A session with injects and no boundary sets `format_drift` in `reconcile.json`. |
 
 Claude Code can also precompute a compaction. PreCompact runs when Claude Code builds the summary, and Claude Code applies the compaction later, sometimes hours later. The messages from that time on stay word for word after the summary. So the handoff from the first moment, plus the kept messages, cover everything. Hooks 1.10.1 handle this case. If the handoff is newer than the previous compaction boundary, they inject it with the line `Note: this compaction was prepared at <time>; ...` and do not run recovery.
 
@@ -459,7 +461,7 @@ Use a folder name that contains `handoff-canary`, so that the nightly check on y
 
 | Variable | Effect |
 |---|---|
-| `CLAUDE_CODE_AUTO_COMPACT_WINDOW` | Window size in tokens. Nudge thresholds are 75% of it, then every 25,000, then a final nudge (window minus 45,000). Default 400000 if unset. |
+| `CLAUDE_CODE_AUTO_COMPACT_WINDOW` | Window size in tokens. Nudge thresholds are 75% of it, then every 25,000, then a final nudge (window minus 45,000). If it is unset, empty or not a positive integer, the nudge learns the window from past compactions, or uses 200000 (see "Which window the nudge uses"). The installer sets 400000. |
 | `HANDOFF_SUMMARY=0` | Disable the fresh summary at compaction (no model call; facts only). |
 | `HANDOFF_SUMMARY_MODEL` | Model for the fresh summary. Default `sonnet`. |
 | `HANDOFF_SUMMARY_TIMEOUT` | Seconds to wait for the summary (1-300). Default 75. |
@@ -549,6 +551,8 @@ The tests use a temporary HOME and never call `launchctl`, so your own install s
 - The fresh summary and the decisions update each run `claude -p --model sonnet` and use some of your quota (75 s and 100 s timeouts by default).
 - The decisions list needs `fcntl` (macOS and Linux). It records only what you said in chat. It does not capture a decision that you never wrote or approved.
 - The nudge reads the context size from the last usage entry of the transcript, so it lags by one assistant message.
+- **Window source.** If `CLAUDE_CODE_AUTO_COMPACT_WINDOW` is not set, the nudge learns the window from past compactions, or uses 200,000 when there is no history. A manual `/compact` at a small context lowers the learned value. Set the variable if you know your window.
+- **Format drift alarm.** If Claude Code changes its transcript format, reconcile could count 0 compactions and 0 misses. So reconcile compares the post-compaction injects that the hooks recorded (main-session rows of `receipts.jsonl`) with the `compact_boundary` records of the same session. A session with 1 or more injects and 0 boundary records sets `format_drift: true` in `reconcile.json`. The affected `--prove` checks and claims then show `fail` with the reason `format_drift`, and `--check` prints one `format drift` line. A session whose transcript is deleted is skipped, so a deleted transcript does not raise the alarm.
 - The order in which the three injected parts appear in context is not guaranteed. Each part names its number.
 - No hook forces the model to run a recall search. The model chooses, so it can skip a search when it is wrongly sure. See [How Claude decides to use recall](docs/architecture.md#how-claude-decides-to-use-recall).
 

@@ -1,6 +1,6 @@
 # Architecture
 
-This page shows every part of Lossless Handoff, the Claude Code event that calls each part, and the files each part reads and writes. It describes product 0.12.1 and hooks 1.14.1.
+This page shows every part of Lossless Handoff, the Claude Code event that calls each part, and the files each part reads and writes. It describes product 0.12.2 and hooks 1.14.2.
 
 ![Architecture of Lossless Handoff](architecture.svg)
 
@@ -42,7 +42,7 @@ Notes:
 
 ### Before the compaction
 
-1. The model works. After each tool call, `handoff-nudge.py` reads the last token count from the transcript.
+1. The model works. After each tool call, `handoff-nudge.py` reads the last token count from the transcript. It also picks the window: `CLAUDE_CODE_AUTO_COMPACT_WINDOW` if it is a positive integer (`env`), else the median `preTokens` of the newest `compact_boundary` records plus 33,000, rounded to 1,000 (`learned`), else 200,000 (`default`). It stores `window` and `windowSource` in `<sid>-agent.meta.json`.
 2. When the count reaches 75% of the window (300k for a 400k window), the hook adds one nudge text to the tool result. The nudge asks the model to write `<sid>-agent.md` with seven headings.
 3. The hook repeats the nudge every 25,000 tokens (325k and 350k). It adds a final nudge at 355k, worded "Compaction is imminent". The real compaction point is 367k (window minus 33,000).
 4. If the three living sections are byte-identical to the previous nudge, the next nudge says that the handoff is stale.
@@ -51,7 +51,7 @@ Notes:
 
 1. Claude Code runs the `PreCompact` hook. The hook first prints guidance for the summary of Claude Code (quote the user's words, keep exact values, list running work, end with the next step; F53). `HANDOFF_COMPACT_STEER=0` turns this off. The hook writes `<sid>-pending.json`, then a deterministic handoff (facts and your last messages), before the first model call.
 2. The hook then runs two `claude -p --model sonnet` calls in parallel: the fresh summary and the decisions update. A compaction takes about 20-40 s.
-3. The hook writes `<sid>-latest.md` (14,000 characters at most) and one row in `health.jsonl`. It removes the pending file. It always exits 0.
+3. The hook writes `<sid>-latest.md` (14,000 characters at most) and one row in `health.jsonl`. The row holds `window` and `window_source`, copied from the nudge meta when it exists. It removes the pending file. It always exits 0.
 4. The hook starts the indexer in the background.
 
 ### After the compaction
@@ -61,7 +61,8 @@ Notes:
 3. If the handoff is missing, the hook rebuilds it from the transcript with no model call. The text starts with `HANDOFF RECOVERED`.
 4. The hook adds the new summary nodes to `nodes.jsonl` and writes one line to `receipts.jsonl`. Part 1 names the newest node.
 5. In a new or resumed chat (`startup` and `resume`), the hooks inject the decisions list and run the install check.
-6. At 04:15, the reconcile job counts every `compact_boundary` against `health.jsonl` and proves each receipt.
+6. At 04:15, the reconcile job counts every `compact_boundary` against `health.jsonl` and proves each receipt. It also compares the recorded injects (main-session rows of `receipts.jsonl`) with the `compact_boundary` records of each session. If a session has injects and no boundary, it writes `format_drift: true`, `format_drift_sessions` and `format_drift_reason` to `reconcile.json`. `--prove` and the claims then show `fail` (reason `format_drift`) for the affected checks.
+7. At the next `startup` or `resume`, `--check` prints one separate `format drift` line while the newest `reconcile.json` has `format_drift: true`.
 
 ## How Claude decides to use recall
 
@@ -95,11 +96,13 @@ When recall and the decisions list disagree, the decisions list and the latest w
 
 ## Verified facts
 
-These numbers come from the code in this repository (hooks 1.14.1), not from a benchmark run.
+These numbers come from the code in this repository (hooks 1.14.2), not from a benchmark run.
 
 | Fact | Where it is in the code |
 |---|---|
 | The nudge starts at 75% of the window and repeats every 25,000 tokens | `AT_PERCENT`, `EVERY` in `hooks/handoff-nudge.py` |
+| The window comes from the environment, else from past compactions, else it is 200,000 | `env_window`, `learn_window`, `pick_window`, `DEFAULT_WINDOW` in `hooks/handoff-nudge.py` |
+| A session with injects and no `compact_boundary` record sets `format_drift` | `format_drift_scan` in `hooks/precompact-handoff.py` |
 | For a 400k window the nudges come at 300k, 325k, 350k, and a final nudge at 355k | `highest_k`, `final_due`, `limit` in `hooks/handoff-nudge.py` |
 | The real compaction point is the window minus 33,000 (367k), and the final nudge is 12,000 tokens before it | `CEILING_GAP`, `HEADROOM` |
 | The handoff has seven headings | `HEADINGS` in `hooks/handoff-nudge.py` and `hooks/precompact-handoff.py` |
