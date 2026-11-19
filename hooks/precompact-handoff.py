@@ -12,7 +12,7 @@ if os.environ.get("HANDOFF_HOOK_CHILD"):  # spawned by our own summary call: nev
     sys.exit(0)
 
 _T0 = time.monotonic()
-HOOK_VERSION = "1.14.2"
+HOOK_VERSION = "1.15.0"
 HOME = os.path.expanduser("~")
 HANDOFFS_DIR = (os.environ.get("HANDOFF_STATE_DIR") or "").strip() or os.path.join(HOME, ".local", "state", "claude-handoffs")
 HEALTH_FILE = os.path.join(HANDOFFS_DIR, "health.jsonl")
@@ -70,7 +70,7 @@ def result_text(c):
 
 
 def one_line(v, n):
-    return trunc(str(v if v is not None else "").replace("\r", " ").replace("\n", " "), n)
+    return trunc(redact(str(v if v is not None else "")).replace("\r", " ").replace("\n", " "), n)  # F65: mask before the lines are joined
 
 
 QA_RE = re.compile(r'"([^"]*)"="([^"]*)"')
@@ -396,7 +396,7 @@ def read_agent(sid, P):
             return None, None, []
         with open(ap, encoding="utf-8", errors="replace") as f:
             raw = f.read()
-        body = raw.strip()
+        body = redact(raw).strip()
         meta = None
         try:
             with open(os.path.join(HANDOFFS_DIR, f"{sid}-agent.meta.json"), encoding="utf-8") as f:
@@ -569,7 +569,7 @@ def summary_handoff(tp, model, timeout, standing="(none)"):
         out = out.strip()
         if len(out) < 50:
             return None, "empty or too-short output"
-        return trunc(out, SUMMARY_TEXT_CAP), None
+        return trunc(redact(out), SUMMARY_TEXT_CAP), None
     except Exception as e:
         return None, type(e).__name__
 
@@ -965,9 +965,9 @@ def ledger_merge(sid, tp, root, led, timeout):
         if changes:
             if prev_text.strip():
                 ts = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-                write_atomic(os.path.join(ddir, f"decisions.{ts}.md"), prev_text)
+                write_atomic(os.path.join(ddir, f"decisions.{ts}.md"), redact(prev_text))
                 prune_backups(ddir)
-            write_atomic(lpath, ledger_text(root, res))
+            write_atomic(lpath, redact(ledger_text(root, res)))
         write_atomic(spath, json.dumps({"v": 1, "root": root, "updatedAt": int(time.time() * 1000), "lastSid": sid,
                                         "lastEntryTs": newest or last_ts}))
         _snap(led, "after", res)
@@ -1028,7 +1028,7 @@ def ledger_maintain(dirarg):
             print(f"kind=0 resolved=0 superseded=0 active_before=0 active_after=0")
             return
         ts = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-        write_atomic(os.path.join(ddir, f"decisions.{ts}.md"), prev_text)  # F39.6 backup first
+        write_atomic(os.path.join(ddir, f"decisions.{ts}.md"), redact(prev_text))  # F39.6 backup first
         prune_backups(ddir)
         out, err = run_claude("LEDGER:\n" + prev_text.rstrip("\n"), LEDGER_SYSTEM, MAINT_PROMPT, ledger_model(), MAINTAIN_TIMEOUT)
         if err or out is None:
@@ -1037,7 +1037,7 @@ def ledger_maintain(dirarg):
         stats = {}
         res, changes = apply_changes(prev, out, allow_new=False, kind_limit=None, stats=stats)
         if changes:
-            write_atomic(lpath, ledger_text(root, res))
+            write_atomic(lpath, redact(ledger_text(root, res)))
         print(f"kind={stats.get('kind', 0)} resolved={stats.get('resolved', 0)} superseded={stats.get('superseded', 0)} "
               f"active_before={before} active_after={ledger_counts(res)[0]}")
     finally:
@@ -1122,9 +1122,9 @@ def ledger_repair(dirarg):
                     fixed += 1
         if fixed:
             ts = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-            write_atomic(os.path.join(ddir, f"decisions.{ts}.md"), text)  # F39.6 backup first
+            write_atomic(os.path.join(ddir, f"decisions.{ts}.md"), redact(text))  # F39.6 backup first
             prune_backups(ddir)
-            write_atomic(lpath, "\n".join(lines))
+            write_atomic(lpath, redact("\n".join(lines)))
         print(f"repaired {fixed} of {total} cut lines")
     finally:
         try:
@@ -1155,7 +1155,7 @@ def guard(name, info, fn, default=""):
 
 def _f_users(P, cwd):
     return ("## Last user messages (oldest first)\n" +
-            "\n".join("- " + trunc(u, 600).replace("\n", " ") for u in P["users"][-8:]) + "\n") if P["users"] else ""
+            "\n".join("- " + trunc(redact(u), 600).replace("\n", " ") for u in P["users"][-8:]) + "\n") if P["users"] else ""
 
 
 def _f_files(P, cwd):
@@ -1188,12 +1188,12 @@ def _f_bg(P, cwd):
 
 def _f_git(P, cwd):
     g = git(cwd)
-    return f"## Git\n- branch: {g[0]}\n```\n{trunc(g[1], 1500)}\n```\n" if g else ""
+    return f"## Git\n- branch: {redact(g[0])}\n```\n{trunc(redact(g[1]), 1500)}\n```\n" if g else ""
 
 
 def _f_cmds(P, cwd):
     return "## Last Bash commands\n" + "\n".join(
-        "- `" + trunc(c, 200).replace("\n", " ") + "`" for c in P["cmds"][-5:]) + "\n" if P["cmds"] else ""
+        "- `" + trunc(redact(c), 200).replace("\n", " ") + "`" for c in P["cmds"][-5:]) + "\n" if P["cmds"] else ""
 
 
 def _f_asst(P, cwd):
@@ -1225,7 +1225,7 @@ def build(d, info, mode=None):
               + (f"- agent: {d.get('agent_id')} ({d.get('agent_type') or 'unknown type'}), a subagent of this session\n"
                  if agent_id_of(d) else "") + f"{AUTHORITY}{recall_line()}")
     footer = f"\nFull transcript: {tp}. Read it for exact details before guessing.\n"
-    P = parse(tp, before_last_boundary=(mode == "recover"))
+    P = redact_tree(parse(tp, before_last_boundary=(mode == "recover")))  # F65: every section reads masked text
     if "toplevel" in FAULTS:
         raise RuntimeError("injected")
     enabled = summary_enabled() and not nomodel
@@ -1512,8 +1512,131 @@ def write_pending(d, sid):
         "trigger": trig if trig in ("auto", "manual") else "unknown", "hook_version": HOOK_VERSION}))
 
 
+# F65 fallback: a copy of the redaction code of recall.py, used only when recall.py is not next to this hook
+# (the install check and the smoke test keep both copies equal). Normal runs use recall.py.
+_FB_SECRET_RES = [
+    ("aws", re.compile(r"(?<![A-Za-z0-9_-])(?:AKIA|ASIA)[0-9A-Z]{16}"), 0),
+    ("github", re.compile(r"(?<![A-Za-z0-9_-])gh[pousr]_[A-Za-z0-9]{20,}"), 0),
+    ("github", re.compile(r"(?<![A-Za-z0-9_-])github_pat_[A-Za-z0-9_]{20,}"), 0),
+    ("slack", re.compile(r"(?<![A-Za-z0-9_-])xox[abprs]-[A-Za-z0-9-]{10,}"), 0),
+    ("anthropic", re.compile(r"(?<![A-Za-z0-9_-])sk-ant-[A-Za-z0-9_-]{16,}"), 0),
+    ("openai", re.compile(r"(?<![A-Za-z0-9_-])sk-[A-Za-z0-9_-]{16,}"), 0),
+    ("google", re.compile(r"(?<![A-Za-z0-9_-])AIza[0-9A-Za-z_-]{35}"), 0),
+    ("jwt", re.compile(r"(?<![A-Za-z0-9_-])eyJ[A-Za-z0-9_-]*\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+"), 0),
+    ("pem", re.compile(r"-----BEGIN [A-Z0-9 ]{0,40}PRIVATE KEY-----(?:[^-]|-(?!----))*-----END [A-Z0-9 ]{0,40}PRIVATE KEY-----"), 0),
+    # URL credentials: scheme://user:PASSWORD@host (the password goes)
+    ("url", re.compile(r"(?i)\b[a-z][a-z0-9+.-]{1,20}://[^\s/:@]{1,100}:([^\s/@]{3,200})@"), 1),
+    # Authorization: Bearer VALUE
+    ("secret", re.compile(r"(?i)\bauthorization[\"']?\s*[:=]\s*[\"']?(?:bearer|basic)\s+([A-Za-z0-9._~+/=-]{8,})"), 1),
+    # key=value or key: value; the key name ends with a secret word; the key stays, the value goes.
+    # No prefix scan before the key word, so the match time is linear. _fb_value_ok() filters the value.
+    ("secret", re.compile(r"(?i)(?:password|passwd|passphrase|secret(?:[_-]?key)?|token|api[_-]?key|apikey|access[_-]?key|private[_-]?key)"
+                          r"[\"']?\s*[:=][ \t]*(?:bearer[ \t]+)?(\"[^\"\n]{1,200}\"|'[^'\n]{1,200}'|[^\s\"'`,;]+)"), 1),
+]
+_FB_MARK = "[redacted]"  # legacy mark of earlier versions; readers still treat it as redacted
+
+
+def _fb_mark_for(kind):
+    return "[REDACTED:%s]" % kind
+
+
+def _fb_value_ok(v):
+    """True when a key=value value looks like a secret: 8 or more characters, not only letters, not only
+    digits, not a call or an index (get_secret(name), os.environ[...]) and not a variable reference."""
+    if len(v) < 8 or v.isdigit() or re.fullmatch(r"[A-Za-z_.]+", v):
+        return False
+    if re.match(r"[A-Za-z_][\w.]*[(\[]", v) or re.fullmatch(r"\$\{?\w+\}?|<[A-Za-z_ -]*>|\{\{.*\}\}", v):
+        return False
+    return True
+
+
+def _fb_secret_spans(text, kv=True):
+    """-> merged [[start, end, kind], ...] of the secrets in text (end-exclusive)."""
+    spans = []
+    for kind, rx, grp in _FB_SECRET_RES:
+        if not kv and rx is _FB_SECRET_RES[-1][1]:
+            continue  # kv=False: leave out the key=value form (used on text whose lines were already joined)
+        for m in rx.finditer(text):
+            if not grp:
+                spans.append((m.start(), m.end(), kind))
+                continue
+            s, e = m.start(grp), m.end(grp)
+            if text.startswith(("[REDACTED", _FB_MARK), s):
+                continue  # already masked: keep the function idempotent
+            if kind == "secret":
+                if text[s] in "\"'" and e - s >= 2 and text[e - 1] == text[s]:
+                    s, e = s + 1, e - 1  # a quoted value: mask what is inside the quotes
+                if not _fb_value_ok(text[s:e]):
+                    continue
+            spans.append((s, e, kind))
+    spans.sort(key=lambda x: (x[0], -x[1]))
+    merged = []
+    for s, e, k in spans:
+        if merged and s < merged[-1][1]:
+            merged[-1][1] = max(merged[-1][1], e)
+        else:
+            merged.append([s, e, k])
+    return merged
+
+
+def _fb_redact(text, kv=True):
+    """F65: mask secrets as [REDACTED:<kind>]. Text without secrets is returned unchanged."""
+    if not text:
+        return text
+    spans = _fb_secret_spans(text, kv)
+    if not spans:
+        return text
+    out, pos = [], 0
+    for s, e, k in spans:
+        out.append(text[pos:s])
+        out.append(_fb_mark_for(k))
+        pos = e
+    out.append(text[pos:])
+    return "".join(out)
+
+
+_RECALL_MOD = []
+
+
+def redact(text, kv=True):
+    """F65: mask secrets with the shared function in recall.py. A missing or stub recall.py (no redact(), an
+    error, or an exit at import) never costs a handoff: the copy above is used instead."""
+    if not _RECALL_MOD:
+        try:
+            _RECALL_MOD.append(_load_recall())
+        except BaseException as e:  # a stub that calls sys.exit(0) raises SystemExit at import
+            if isinstance(e, KeyboardInterrupt):
+                raise
+            _RECALL_MOD.append(None)
+    fn = getattr(_RECALL_MOD[0], "redact", None)
+    if not callable(fn):
+        return _fb_redact(text, kv)
+    try:
+        out = fn(text, kv)
+    except Exception:
+        return _fb_redact(text, kv)
+    return out if isinstance(out, str) else _fb_redact(text, kv)
+
+
+def redact_tree(v):
+    """F65: one guard for all sections. Mask every string inside the parsed transcript data (key=value included)
+    BEFORE any section cuts, flattens or joins it, so a section cannot forget to do it."""
+    if isinstance(v, str):
+        return redact(v)
+    if isinstance(v, list):
+        return [redact_tree(x) for x in v]
+    if isinstance(v, tuple):
+        return tuple(redact_tree(x) for x in v)
+    if isinstance(v, dict):
+        return {k: redact_tree(x) for k, x in v.items()}
+    return v
+
+
 def write_handoff_files(sid, p, body):
-    """Write the dated handoff file and copy it to <sid>-latest.md, each atomically."""
+    """Write the dated handoff file and copy it to <sid>-latest.md, each atomically. F65: secrets are masked first."""
+    # the key=value form is masked per field before lines are joined (see one_line, _f_users); a pass over the
+    # finished body would mask a path that follows a key word once its line break is gone
+    body = redact(body, kv=False)
     write_atomic(p, body)
     write_atomic(os.path.join(HANDOFFS_DIR, f"{sid}-latest.md"), body)
 
@@ -2123,7 +2246,7 @@ def check_lossless(rc):
         return "skip", "no boundary"
     pool = [m for m in _plain_messages(tp)
             if m[1] is not None and m[1] < bms and len(m[3]) >= 30 and m[3] == m[3].strip()
-            and "<system-reminder" not in m[3] and not m[3].startswith("<") and "[redacted]" not in m[3]]
+            and "<system-reminder" not in m[3] and not m[3].startswith("<") and "[redacted]" not in m[3] and "[REDACTED:" not in m[3]]
     if len(pool) < 5:
         return "skip", "fewer than 5 messages"
     import random
@@ -2159,7 +2282,7 @@ def check_lossless(rc):
             body = "\n".join(lines[1:])
             body = body[:-1] if body.endswith("\n") else body
             if body != text:
-                if "[redacted]" in body:
+                if "[redacted]" in body or "[REDACTED:" in body:
                     continue  # recall hides secrets; that message cannot be compared byte for byte
                 return "fail", f"line {n}: recall printed different text ({len(body)} vs {len(text)} chars)"
             passes += 1

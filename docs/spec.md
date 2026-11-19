@@ -1055,3 +1055,38 @@ ACs:
 - 301. In the drift state, `--prove` counts the checks of the drift session as `fail` (the summary shows `0/N`), `proof-report.md` holds `format_drift`, and a `proof:*` claim has status `fail` with `(format_drift)`.
 
 Version: hooks 1.14.2; release 0.12.2. `HOOK_VERSION` in both hooks and `hook_version` in health rows and sidecars is `1.14.2`. This amends the version value in ACs 136, 150, 172, 180, 188 and 267 again. The nudge tag changes as F62.d says (it amends any earlier AC that names `[claude-handoff]`).
+
+## F64 Minimal default install (2026-11-19)
+
+Why: an independent review found that the default install changed too much (a global window value, two LaunchAgents, a model pull, a skill).
+
+**F64 (minimal default install).** `./install.sh` with no options installs only the core: the hooks (nudge, PreCompact handoff, post-compaction inject, SessionStart check, SubagentStart rules, SessionEnd index), `recall.py`, the recall subagent and the decisions list. It does not set `CLAUDE_CODE_AUTO_COMPACT_WINDOW`, does not install nightly jobs, does not pull an embedding model, and does not install the `llm_map` hook or skill.
+
+- F64.a Opt-in flags add the other parts: `--window N`, `--nightly`, `--semantic` (offers `ollama pull bge-m3`), `--llm-map`. `--semantic` works on the local machine only. If `ollama` is not on PATH it prints how to get it and continues keyword-only. `--yes` pulls without a question.
+- F64.b The old flags `--no-window` and `--no-nightly` stay accepted and do nothing extra. The installer prints one note that the default is now off.
+- F64.c `--dry-run` lists exactly what the chosen options install. `--help` lists the new flags.
+- F64.d A rerun never removes or changes an existing `CLAUDE_CODE_AUTO_COMPACT_WINDOW` value, existing nightly jobs, an existing meaning-search setup or an existing llm_map install. It only adds what the flags ask for. A `--no-*` flag only skips adding a part.
+- F64.e `--save-defaults` saves the opt-in flags of the run (`--semantic`, `--nightly`, `--llm-map`, `--window N`) to `~/.config/lossless-handoff/install-defaults` (lines `semantic=1`, `nightly=1`, `llm_map=1`, `window=N`). Every later run reads the file and applies those options as if given. A command-line flag wins over the file. `--no-semantic`, `--no-nightly`, `--no-llm-map` and `--no-window` turn one saved default off for that run; with `--save-defaults` they remove it from the file. `--dry-run` shows which options come from the file and does not write it.
+- F64.g `--window N` never changes an existing `CLAUDE_CODE_AUTO_COMPACT_WINDOW` value. When a value exists, the installer prints `window already installed, kept: CLAUDE_CODE_AUTO_COMPACT_WINDOW is <value>`, with and without `--window N`. `--window 0` (or a non-number) exits 2. A bad line in the saved defaults file (for example `window=0`) is ignored; the install goes on and exits 0.
+- F64.f Uninstall removes all parts, including the opt-in parts, as before. It keeps the defaults file unless `--purge` is given.
+
+## F65 Redaction (2026-11-19)
+
+**F65 (redaction).** One shared function (`redact()` in `hooks/recall.py`) masks secrets before text is written to: the PreCompact handoff files (deterministic part and fresh summary), the latest and dated handoff copies that the hooks write, the decisions list (and its backups), and recall output. Each match becomes `[REDACTED:<kind>]`:
+
+- `aws`: `AKIA` or `ASIA` and 16 characters.
+- `github`: `ghp_`, `gho_`, `ghu_`, `ghs_`, `ghr_`, `github_pat_`.
+- `slack`: `xox[abprs]-`.
+- `anthropic`: `sk-ant-...`. `openai`: `sk-...`.
+- `google`: `AIza` and 35 characters.
+- `jwt`: three base64url parts, the first starts with `eyJ`.
+- `pem`: `-----BEGIN ... PRIVATE KEY-----` to `-----END ... PRIVATE KEY-----`.
+- `url`: the password in `scheme://user:password@host`.
+- `secret`: the value after `Authorization: Bearer`, and `key=value` or `key: value` where the key name ends with `password`, `passwd`, `passphrase`, `secret`, `secret_key`, `token`, `api_key`, `apikey`, `access_key` or `private_key`. A value after `Bearer` is masked. A quoted value is masked inside its quotes. The key stays.
+- F65.a A prefix (`sk-`, `sk-ant-`, `gh?_`, `github_pat_`, `xox?-`, `AKIA`, `ASIA`, `AIza`, `eyJ`) matches only when no letter, digit, `_` or `-` comes before it. `tests/task-runner-suite.py` stays unchanged; `key=sk-...` and `"sk-proj-..."` are masked.
+- F65.b A `secret` value is masked only when it has 8 or more characters, is not only letters, is not only digits, and is not a call, an index or a placeholder (a name after a dollar sign, a name in braces after a dollar sign, a letters-only name in angle brackets, or a name in double braces). A value that starts with a dollar sign but has other characters, such as `password=$uperS3cret!!`, is masked. A value in angle brackets with digits, such as `token=<abc12345XYZ>`, is masked. The value must start on the same line as the key. `token: 160000 of 400000`, `if not token: return None`, `api_key: str = Field(...)`, `Set HANDOFF_SECRET=0` and `secret = get_secret(name)` stay unchanged.
+- F65.c The time to redact a text is linear: `"a." * 20000` and 200,000 base64url characters take under 1 second.
+
+Text without secrets stays byte-identical. The function is idempotent. The hooks never write the unmasked value to a state file. The model writes its own agent handoff file with the Write tool and a hook cannot mask that write; this limit is documented, and every copy that a hook makes of it is masked. This amends F44.4 and ACs 143 and 152: the mark is now `[REDACTED:<kind>]` instead of `[redacted]`, and the patterns are the ones above. The nightly proof treats both marks as redacted.
+
+Version: hooks 1.15.0; release 0.13.0. `HOOK_VERSION` in both hooks and `hook_version` in health rows and sidecars is `1.15.0`.

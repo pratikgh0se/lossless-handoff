@@ -9,7 +9,7 @@ This page describes handoff hooks 1.10.0 (F45 to F48). Sections at the end add h
 | Write early | PreCompact writes `<sid>-pending.json` first. Then it writes a deterministic handoff (facts and the last messages of the user) before the first model call. The health line removes the pending file. A hook that stops at its timeout still leaves a handoff. | `precompact-handoff.py` |
 | Recover | If the compaction still has no handoff, the SessionStart `compact` hook rebuilds one from the transcript (no model call, 6 s deadline). It prints `HANDOFF RECOVERED` on the first line. | `precompact-handoff.py --recover`, called by `postcompact-inject.py` |
 | Install check | At SessionStart `startup` and `resume`, one `HANDOFF CHECK:` line appears in these cases: a hook is not wired, a hook file is missing or changed since install, the versions of the two hooks differ, or reconcile found compactions without a handoff. A separate `format drift` line appears when reconcile found format drift. The hook is silent when all is well. | `postcompact-inject.py --check` |
-| Nightly reconcile and proof | `--reconcile --prove --days 30` runs at 04:15. It counts every `compact_boundary` in your transcripts against `health.jsonl` and proves each receipt. | LaunchAgent `com.lossless-handoff.handoff-reconcile` (`install.sh` writes it; on Linux it prints a crontab line) |
+| Nightly reconcile and proof | With `--nightly` (opt-in), `--reconcile --prove --days 30` runs at 04:15. It counts every `compact_boundary` in your transcripts against `health.jsonl` and proves each receipt. | LaunchAgent `com.lossless-handoff.handoff-reconcile` (`install.sh --nightly` writes it; on Linux it prints a crontab line)  A default install has no nightly reconcile, proof or format-drift alarm. Install with `--nightly`, or run `precompact-handoff.py --reconcile --prove` yourself. |
 
 `--check` also reads the manifest `~/.claude/hooks/.handoff-manifest.json` that `install.sh` writes (a hash for each installed hook file). Restart open Claude Code sessions after you install: hooks load when a session starts.
 
@@ -88,6 +88,7 @@ These versions add parts to the system. [architecture.md](architecture.md) shows
 | 1.13.1 | Search finds the work of subagents by default (`--no-subagents` leaves it out). In a plain pattern, a space, `-` and `_` match each other. A hit from a tool call shows `-> result <id>`. | README, [Recall commands](../README.md#recall-commands) |
 | 1.14.0 and 1.14.1 | `llm_map.py` and its skill: one exact answer for each item of a large list, with `--labels`, `--batch 100`, `--jobs 8` and a cost cap. | README, [llm_map](../README.md#llm_map-label-many-items-with-a-small-model) |
 | 1.14.2 | The nudge learns its window from past compactions (else 200,000) when `CLAUDE_CODE_AUTO_COMPACT_WINDOW` is not set, and health rows hold `window` and `window_source`. Reconcile sets `format_drift` when a session has injects and no `compact_boundary` record. `--prove`, the claims and `--check` show it. | README, [Limitations](../README.md#limitations) |
+| 1.15.0 | One redaction function masks secrets as `[REDACTED:<kind>]` in handoff files, the decisions list and recall output. The default install is the core only (release 0.13.0). | README, [Install](../README.md#install), SECURITY.md |
 
 ## State files
 

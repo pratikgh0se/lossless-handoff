@@ -6,7 +6,7 @@
 
 This documentation uses ASD-STE100 Simplified Technical English.
 
-Current versions: product 0.12.2 (`install.sh`), hooks 1.14.2 (`HOOK_VERSION` in `hooks/precompact-handoff.py` and `hooks/postcompact-inject.py`).
+Current versions: product 0.13.0 (`install.sh`), hooks 1.15.0 (`HOOK_VERSION` in `hooks/precompact-handoff.py` and `hooks/postcompact-inject.py`).
 
 [![CI](https://github.com/pratikgh0se/lossless-handoff/actions/workflows/ci.yml/badge.svg)](https://github.com/pratikgh0se/lossless-handoff/actions/workflows/ci.yml) [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE) [![Release](https://img.shields.io/github/v/release/pratikgh0se/lossless-handoff)](https://github.com/pratikgh0se/lossless-handoff/releases/latest)
 
@@ -43,19 +43,35 @@ Then restart open Claude Code sessions. Hooks load when a session starts. Prereq
 - Optional: the `claude` binary on `PATH` (the hooks use it for the fresh summary).
 - Optional: [Ollama](https://ollama.com/download) (for meaning search).
 
-The installer does these things in one run:
+The default install is small. It installs the core only:
 
-- It copies the hooks, `recall.py` and `llm_map.py` to `~/.claude/hooks/`.
-- It installs the recall subagent (`~/.claude/agents/recall.md`) and the llm-map skill (`~/.claude/skills/llm-map/SKILL.md`). It keeps a file of that name that is not ours.
+- It copies the hooks and `recall.py` to `~/.claude/hooks/`.
+- It installs the recall subagent (`~/.claude/agents/recall.md`). It keeps a file of that name that is not ours.
 - It merges the entries into `~/.claude/settings.json`, next to your entries, with a timestamped backup.
 - It adds the end-of-chat index (a `SessionEnd` hook).
 - It adds a `SubagentStart` hook that gives project rules to a new subagent.
 - It adds an install check that runs at session start and prints one line only when something is wrong (`postcompact-inject.py --check`). The check compares the hooks with an install manifest (`~/.claude/hooks/.handoff-manifest.json`).
-- On macOS, it adds two nightly jobs: the index (03:30) and the reconcile-and-prove run (04:15).
+- It keeps the project decisions list.
 - It starts a first index of all your projects in the background.
-- Optional: it runs `ollama pull bge-m3` for meaning search, if `ollama` is on your PATH.
 
-Options: `--window N`, `--no-window`, `--yes` (pull bge-m3 without a question), `--no-nightly`, `--no-nudge` (skip the context nudge, and remove one from an earlier install), `--managed-hooks` (see [Headless runs](#headless-runs)), `--canary` (opt-in nightly end-to-end test, see below), `--keep-transcripts[=DAYS]` (set `cleanupPeriodDays` to DAYS, default 365, with 90 as the lowest value; only when the value is missing or lower; see [What gets written where](#what-gets-written-where)), `--dry-run`, `--force`, `--version`, `--help`. Use `--no-nudge` if another tool already nudges you before compaction. The install is idempotent. [What install changes](#what-install-changes) gives the full details.
+The default install does not do these things. Each one is an opt-in flag:
+
+| Flag | What it adds |
+|---|---|
+| `--window N` | Sets `CLAUDE_CODE_AUTO_COMPACT_WINDOW` to N tokens (for example 400000), only when no value is set. |
+| `--nightly` | Two nightly jobs: the index (03:30) and the reconcile-and-prove run (04:15). They are macOS LaunchAgents. On Linux the installer prints the cron lines. |
+| `--semantic` | Meaning search on your machine only. If `ollama` is on your PATH, the installer offers `ollama pull bge-m3` (`--yes` pulls without a question). If `ollama` is missing, it says how to get it and recall stays keyword-only. |
+| `--llm-map` | `llm_map.py` and the llm-map skill (`~/.claude/skills/llm-map/SKILL.md`). |
+
+Run `./install.sh --window 400000 --nightly --semantic --llm-map` to get everything. Use `--dry-run` first: it lists exactly what the chosen options install.
+
+**Saved defaults.** Add `--save-defaults` to save the opt-in flags of that run to `~/.config/lossless-handoff/install-defaults`. The file holds simple lines: `semantic=1`, `nightly=1`, `llm_map=1`, `window=N`. Every later `./install.sh` run reads the file and applies these options as if you gave them. A bad line in the file (for example `window=0`) is ignored and the install goes on with exit code 0. Only the flag `--window 0` is an error (exit code 2). A flag on the command line wins over the file. `--no-semantic`, `--no-nightly`, `--no-llm-map` and `--no-window` turn one saved default off for that run. With `--save-defaults`, a `--no-*` flag removes that saved default. `--dry-run` shows which options come from the file. `./uninstall.sh` keeps the file. Run `./uninstall.sh --purge`, or delete the file, to drop it.
+
+**Re-install is safe.** A rerun never removes, turns off or changes a part that is already installed: the window value, the nightly jobs, meaning search and the llm-map install stay. A `--no-*` flag only skips adding a part. It does not uninstall one. Use `./uninstall.sh` to remove parts.
+
+**Upgrade from 0.12.x.** Earlier versions installed the window, the nightly jobs and llm-map by default. A rerun of the new installer keeps all of them, and prints "already installed, kept" for the window, the nightly jobs and llm-map. `--window N` never changes a value that is already set: the installer prints "window already installed, kept: CLAUDE_CODE_AUTO_COMPACT_WINDOW is <old value>". To change it, edit `~/.claude/settings.json`. It does not update an old `llm_map.py` or skill without `--llm-map`; add the flag to update them. A new machine gets the core only. The old flags `--no-window` and `--no-nightly` are still accepted. The installer prints one note that the default is now off.
+
+Other options: `--no-nudge` (skip the context nudge, and remove one from an earlier install), `--managed-hooks` (see [Headless runs](#headless-runs)), `--canary` (opt-in nightly end-to-end test, see below), `--keep-transcripts[=DAYS]` (set `cleanupPeriodDays` to DAYS, default 365, with 90 as the lowest value; only when the value is missing or lower; see [What gets written where](#what-gets-written-where)), `--force`, `--version`, `--help`. Use `--no-nudge` if another tool already nudges you before compaction. The install is idempotent. [What install changes](#what-install-changes) gives the full details.
 
 ## Quick start
 
@@ -185,7 +201,7 @@ The tables above are one-off measurements. From 1.10.0, the install also keeps i
 | `delivered` | the transcript after the boundary holds the injected text [C4] |
 | `decisions_safe` | no decision id present before a decisions update is missing after it, and no superseded id came back [C5] |
 
-**Nightly report.** The 04:15 job runs `--reconcile --prove --days 30`. It writes `proof-report.md` (summary line first, then failed checks and skip counts) and `reconcile.json`. When a run has failures, `--check` shows `proof failed: <n> checks` once.
+**Nightly report.** With `--nightly`, the 04:15 job runs `--reconcile --prove --days 30`. It writes `proof-report.md` (summary line first, then failed checks and skip counts) and `reconcile.json`. When a run has failures, `--check` shows `proof failed: <n> checks` once.
 
 **Claims register.** `hooks/claims.json` lists each public claim (`C1` to `C8`) with its evidence source, window, refresh time and minimum rate. Each `--prove` run evaluates it into `claims-status.json` and `claims-report.md`:
 
@@ -286,7 +302,7 @@ A hook cannot force Claude Code to run it, so a handoff can be missed. For examp
 | **Early write** | PreCompact writes `<sid>-pending.json` first. Then it writes a deterministic handoff (facts and your last messages) before the first model call. A hook that stops at its timeout still leaves a handoff. The health line removes the pending file. |
 | **HANDOFF RECOVERED** | If a compaction still has no handoff, the SessionStart `compact` hook rebuilds one from the transcript (no model call, 6 s deadline). The injected text starts with `HANDOFF RECOVERED`. |
 | **`--check`** | At session `startup` and `resume`, `postcompact-inject.py --check` prints one `HANDOFF CHECK:` line in these cases: a hook is not wired, a hook file is missing or changed since install (it compares the manifest), the versions of the two hooks differ, or reconcile found compactions without a handoff. It prints a separate `format drift` line when reconcile found format drift (see Limitations). It prints nothing when all is well. |
-| **Nightly reconcile and proof** | At 04:15, `precompact-handoff.py --reconcile --prove --days 30` counts every `compact_boundary` in your transcripts against `health.jsonl`. It proves each receipt (see [Proof, not promises](#proof-not-promises)). It also compares two counts for each session: the recorded post-compaction injects and the `compact_boundary` records. A session with injects and no boundary sets `format_drift` in `reconcile.json`. |
+| **Nightly reconcile and proof** | With `--nightly` (opt-in), at 04:15, `precompact-handoff.py --reconcile --prove --days 30` counts every `compact_boundary` in your transcripts against `health.jsonl`. It proves each receipt (see [Proof, not promises](#proof-not-promises)). It also compares two counts for each session: the recorded post-compaction injects and the `compact_boundary` records. A session with injects and no boundary sets `format_drift` in `reconcile.json`.  A default install has no nightly reconcile, proof or format-drift alarm. Install with `--nightly`, or run `precompact-handoff.py --reconcile --prove` yourself. |
 
 Claude Code can also precompute a compaction. PreCompact runs when Claude Code builds the summary, and Claude Code applies the compaction later, sometimes hours later. The messages from that time on stay word for word after the summary. So the handoff from the first moment, plus the kept messages, cover everything. Hooks 1.10.1 handle this case. If the handoff is newer than the previous compaction boundary, they inject it with the line `Note: this compaction was prepared at <time>; ...` and do not run recovery.
 
@@ -386,16 +402,16 @@ Each `search` hit ends with `[node <id>]`, or `[node live]` when it is after the
 
 **Recall subagent.** The installer writes `~/.claude/agents/recall.md`. It is a small agent (model `haiku`, tools `Bash` and `Read`) that runs `map`, `search`, `describe` and `open`. It returns at most 15 short quotes with message ids and node ids. When the file is installed, the injected recall line tells the main agent to use it for wide lookups, so long recalled text stays out of the main context. The line also tells the main agent to search directly for one exact fact. Nothing stops the main agent from running `recall.py open` itself. [How Claude decides to use recall](docs/architecture.md#how-claude-decides-to-use-recall) explains the details.
 
-Every command accepts `--cwd DIR` (default: the current folder). `search` also takes `--session SID8|all`, `--limit N` and `--no-subagents`. Search, `open` and the meaning index include the work of subagents by default. A subagent hit has the id `<sid8>/<agent8>:<line>` and the tag `[agent <agent8>]`. It shows what a subagent saw or did, not what you typed. `--no-subagents` leaves them out. The old `--subagents` flag is still accepted and does nothing. `user` still reads only the main chats, because the user turns of a subagent are prompts from the main agent. In a plain pattern (letters, digits, spaces, `-`, `_`, `.`), a space, `-` and `_` match each other, so `ledger key` finds `ledger-key`. `--fixed` keeps the match exact (hooks 1.13.1). A hit line from a tool call ends with ` -> result <id>` when the tool returned a result later in the same chat. Run `open <id>` to read what the tool returned. `--keyword` is words only, and `--meaning` is the embedding index only. Output is limited to 12,000 characters. Before it prints or embeds text, recall replaces obvious secrets (API keys, tokens, `password=...`) with `[redacted]`. `open <id> --full` returns up to 40,000 characters. A longer message ends with a line that gives the exact `--from <N>` to continue with.
+Every command accepts `--cwd DIR` (default: the current folder). `search` also takes `--session SID8|all`, `--limit N` and `--no-subagents`. Search, `open` and the meaning index include the work of subagents by default. A subagent hit has the id `<sid8>/<agent8>:<line>` and the tag `[agent <agent8>]`. It shows what a subagent saw or did, not what you typed. `--no-subagents` leaves them out. The old `--subagents` flag is still accepted and does nothing. `user` still reads only the main chats, because the user turns of a subagent are prompts from the main agent. In a plain pattern (letters, digits, spaces, `-`, `_`, `.`), a space, `-` and `_` match each other, so `ledger key` finds `ledger-key`. `--fixed` keeps the match exact (hooks 1.13.1). A hit line from a tool call ends with ` -> result <id>` when the tool returned a result later in the same chat. Run `open <id>` to read what the tool returned. `--keyword` is words only, and `--meaning` is the embedding index only. Output is limited to 12,000 characters. Before it prints or embeds text, recall replaces secrets with `[REDACTED:<kind>]` (see [Limitations](#limitations) and `SECURITY.md` for the kinds). `open <id> --full` returns up to 40,000 characters. A longer message ends with a line that gives the exact `--from <N>` to continue with.
 
-**Meaning search setup.** It needs a local embedding model: [Ollama](https://ollama.com/download) with `ollama pull bge-m3`. If `ollama` is on your PATH, the installer offers to pull it (`--yes` says yes; a non-interactive run skips it and prints the command). If Ollama is not installed, the installer prints a hint and carries on. The installer never installs Ollama itself. The backend settings are `RECALL_EMBED_*` in [Configuration](#configuration).
+**Meaning search setup.** It needs a local embedding model: [Ollama](https://ollama.com/download) with `ollama pull bge-m3`. Run `./install.sh --semantic` to set it up (or save it with `--save-defaults`). If `ollama` is on your PATH, the installer offers to pull the model (`--yes` says yes; a non-interactive run skips it and prints the command). If Ollama is not installed, the installer prints a hint and carries on in keyword-only mode. All search stays on your machine. The installer never installs Ollama itself. The backend settings are `RECALL_EMBED_*` in [Configuration](#configuration).
 
 ## What install changes
 
-- It copies `precompact-handoff.py`, `postcompact-inject.py`, `handoff-nudge.py`, `recall.py`, `llm_map.py` and `claims.json` to `~/.claude/hooks/`. It first saves a differing existing file to `~/.claude/hooks/.claude-handoff-backup-<timestamp>/`.
+- It copies `precompact-handoff.py`, `postcompact-inject.py`, `handoff-nudge.py`, `recall.py` and `claims.json` to `~/.claude/hooks/`. It first saves a differing existing file to `~/.claude/hooks/.claude-handoff-backup-<timestamp>/`.
 - It copies `agents/recall.md` from this repository to `~/.claude/agents/recall.md` (the recall subagent). If a file of that name does not hold the marker line `<!-- lossless-handoff:recall-agent -->`, the installer keeps the file and says so. Uninstall removes the file only when it holds the marker. The repository file is the single source: a benchmark or a project can copy the same file into its own `.claude/agents/` folder.
 - It writes `~/.claude/hooks/.handoff-manifest.json`: version, time and a SHA-256 for each installed file. `--check` compares them.
-- It copies `skills/llm-map/SKILL.md` to `~/.claude/skills/llm-map/SKILL.md`. If a file of that name does not hold the marker line `<!-- lossless-handoff:llm-map-skill -->`, the installer keeps the file and says so.
+- With `--llm-map`: it copies `hooks/llm_map.py` to `~/.claude/hooks/` and `skills/llm-map/SKILL.md` to `~/.claude/skills/llm-map/SKILL.md`. If a file of that name does not hold the marker line `<!-- lossless-handoff:llm-map-skill -->`, the installer keeps the file and says so.
 - It records everything that it added in `~/.claude/hooks/.claude-handoff-install.json`, so uninstall removes exactly that.
 - It merges into `~/.claude/settings.json` (backup `settings.json.bak-<timestamp>`):
   - a PreCompact hook (timeout 150) and a PostToolUse hook (matcher `*`, timeout 5);
@@ -403,11 +419,12 @@ Every command accepts `--cwd DIR` (default: the current folder). `search` also t
   - a `SessionEnd` hook that runs `recall.py session-end` (timeout 5);
   - a `SubagentStart` hook that runs `postcompact-inject.py --subagent-start` (timeout 10);
   - `permissions.allow` entries `Edit(~/.local/state/claude-handoffs/**)` (so the model can write its handoff without a prompt) and `Bash(python3 ~/.claude/hooks/recall.py:*)` (so it can run recall without a prompt);
-  - `env.CLAUDE_CODE_AUTO_COMPACT_WINDOW` = `"400000"` unless it is already set (`--window N` picks another value, `--no-window` leaves it alone).
+  - only with `--window N`: `env.CLAUDE_CODE_AUTO_COMPACT_WINDOW` = `"N"`, unless it is already set (an existing value is never changed).
 - It creates `~/.local/state/claude-handoffs/`.
-- Optional: it runs `ollama pull bge-m3`.
-- On macOS, unless you set `--no-nightly`: it writes the LaunchAgent `~/Library/LaunchAgents/com.lossless-handoff.recall-index.plist` (daily 03:30, runs `recall.py index --all --max-seconds 3000`, log `~/.local/state/claude-handoffs/recall/index-all.log`) and loads it. On Linux it prints the equivalent crontab line and does not edit your crontab.
-- On macOS, unless you set `--no-nightly`: it writes and loads the LaunchAgent `~/Library/LaunchAgents/com.lossless-handoff.handoff-reconcile.plist` (daily 04:15, runs `precompact-handoff.py --reconcile --prove --days 30`, log `~/.local/state/claude-handoffs/reconcile.log`). On Linux it prints that crontab line too (`15 4 * * * python3 ~/.claude/hooks/precompact-handoff.py --reconcile --prove --days 30 >> ~/.local/state/claude-handoffs/reconcile.log 2>&1`, with your real path).
+- With `--semantic`, and only if `ollama` is on your PATH: it offers `ollama pull bge-m3`.
+- With `--save-defaults`: it writes `~/.config/lossless-handoff/install-defaults`.
+- On macOS, with `--nightly`: it writes the LaunchAgent `~/Library/LaunchAgents/com.lossless-handoff.recall-index.plist` (daily 03:30, runs `recall.py index --all --max-seconds 3000`, log `~/.local/state/claude-handoffs/recall/index-all.log`) and loads it. On Linux it prints the equivalent crontab line and does not edit your crontab.
+- On macOS, with `--nightly`: it writes and loads the LaunchAgent `~/Library/LaunchAgents/com.lossless-handoff.handoff-reconcile.plist` (daily 04:15, runs `precompact-handoff.py --reconcile --prove --days 30`, log `~/.local/state/claude-handoffs/reconcile.log`). On Linux it prints that crontab line too (`15 4 * * * python3 ~/.claude/hooks/precompact-handoff.py --reconcile --prove --days 30 >> ~/.local/state/claude-handoffs/reconcile.log 2>&1`, with your real path).
 - With `--managed-hooks` (standalone): it stages a managed-settings file in the state folder and prints the `sudo install -m 644 ...` command. It changes nothing else and never runs sudo.
 - It starts `recall.py index --all` in the background.
 - With `--canary` (opt-in, off by default because it makes real model calls, about $0.03-0.10 per run): it copies `tools/handoff-canary/` to `~/.claude/hooks/handoff-canary/` and `handoff-canary.sh` to `~/.claude/hooks/`. On macOS it writes the LaunchAgent `com.lossless-handoff.handoff-canary` (daily 03:30, `--catch-up`). On Linux it prints the crontab line. The canary drives two headless Claude Code sessions past a compaction and checks that the handoff arrives. See [`tools/handoff-canary/README.md`](tools/handoff-canary/README.md).
@@ -545,7 +562,8 @@ The tests use a temporary HOME and never call `launchctl`, so your own install s
 - **Handoffs can be cut.** 20% of handoffs (43 of 217) hit the 14,000-character size cap and were truncated. 15% were `reduced` and 2% `degraded`, and the nightly self-test failed 2 of 34 runs (31 passed and 1 was skipped; see "In daily use").
 - **Recall is new.** It has existed since 2026-11-12. The author did most of its use so far, much of it while the author built and tested it. The meaning half is a minority of wins (4 of 26 searches had a meaning-only top hit). The 143 meaning hits count lines shown, not proof that they were useful.
 - **Misses still happen.** 4 of 192 main compactions in the 30-day reconcile had no handoff (see [Proof, not promises](#proof-not-promises)). The early write, recovery and `--check` exist to make the misses fewer and to show them. They do not promise zero. Receipts exist only from the first compaction after install, so proof rates start small. C7 and C8 are dated one-off studies, not live rates.
-- **Platform.** The nightly jobs (index and reconcile-and-prove) are macOS LaunchAgents. On Linux you add the printed cron lines yourself. Windows is not supported. The nightly self-test mentioned above is the canary. It ships in `tools/handoff-canary/` and is opt-in (`./install.sh --canary`, about $0.03-0.10 per run).
+- **Redaction is pattern-based.** The hooks mask known secret shapes (AWS, GitHub, Slack, Anthropic and OpenAI style keys, Google API keys, JWTs, PEM private keys, passwords in URLs (kind `url`), `Authorization: Bearer` values, and the values of keys that end with `password`, `passwd`, `passphrase`, `secret`, `secret_key`, `token`, `api_key`, `apikey`, `access_key` or `private_key`) before they write handoff files, the decisions list and recall output. A key value is masked only when it has 8 or more characters, is not only letters, is not only digits, and is not a call such as `get_secret(name)`. A secret in another shape (for example `sk_live_` keys, npm tokens or Slack webhook URLs) is not masked. A secret in prose with no key name is not masked. A PEM block with no END line is not masked. The model writes its own agent handoff file (`<sid>-agent.md`) with the Write tool, and a hook cannot mask that write. The hooks mask every copy that they make of it, but the original file can still hold a secret. The transcripts of Claude Code are not changed. See `SECURITY.md`.
+- **Platform.** The nightly jobs (index and reconcile-and-prove, opt-in with `--nightly`) are macOS LaunchAgents. On Linux you add the printed cron lines yourself. Windows is not supported. The nightly self-test mentioned above is the canary. It ships in `tools/handoff-canary/` and is opt-in (`./install.sh --canary`, about $0.03-0.10 per run).
 - **AI-graded evals.** Models wrote and graded the quizzes in this README, on one user's projects. Both benchmarks are code-graded. The 19% cost estimate is a single 4.7-day, one-user figure against a modelled counterfactual, not a bill.
 - The nudge works only if the model obeys it. If the model does not obey, you still get the fresh summary, which is lossier than the handoff of the model.
 - The fresh summary and the decisions update each run `claude -p --model sonnet` and use some of your quota (75 s and 100 s timeouts by default).
@@ -563,7 +581,7 @@ The tests use a temporary HOME and never call `launchctl`, so your own install s
 ./uninstall.sh
 ```
 
-The script removes exactly the hook entries that install added (it matches them by command path; other hooks in those groups stay). It also removes these items, after it backs up the settings: the allow rules and the window value (if install added them), the macOS LaunchAgents (index and reconcile), the `--check` entries, and the hook files (including `recall.py`, `llm_map.py`, `claims.json` and the manifest). It also removes the recall subagent (`~/.claude/agents/recall.md`) and the llm-map skill, each only when the file holds our marker line. It never touches a system managed-settings file (that needs sudo). Uninstall tells you if one is present. Handoff files, receipts, proofs, indexes and the project decisions lists under `~/.local/state/claude-handoffs/` stay. Delete that folder yourself if you want them gone. The backups stay.
+The script removes exactly the hook entries that install added (it matches them by command path; other hooks in those groups stay). It also removes these items, after it backs up the settings: the allow rules and the window value (if install added them), the macOS LaunchAgents (index and reconcile), the `--check` entries, and the hook files (including `recall.py`, `llm_map.py`, `claims.json` and the manifest). It also removes the recall subagent (`~/.claude/agents/recall.md`) and the llm-map skill, each only when the file holds our marker line. Add `--purge` to also delete the saved install defaults (`~/.config/lossless-handoff/install-defaults`); without it they stay. It never touches a system managed-settings file (that needs sudo). Uninstall tells you if one is present. Handoff files, receipts, proofs, indexes and the project decisions lists under `~/.local/state/claude-handoffs/` stay. Delete that folder yourself if you want them gone. The backups stay.
 
 ## More
 

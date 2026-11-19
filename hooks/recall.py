@@ -41,15 +41,42 @@ WRAPPER_PREFIXES = ("<task-notification", "[SYSTEM NOTIFICATION", "<command-name
                     "<command-message", "<command-args", "Caveat:", "<artifact-content-authored-by-others",
                     "<bash-input>", "<bash-stdout>", "<bash-stderr>", "This session is being continued")
 
+# F65: one shared redaction function. Each pattern is (kind, regex, group); the matched group is
+# replaced by [REDACTED:<kind>]. Order matters for ties: the first kind at one start position wins.
 SECRET_RES = [
-    re.compile(r"sk-[A-Za-z0-9_-]{16,}"),
-    re.compile(r"ghp_[A-Za-z0-9]{20,}"),
-    re.compile(r"github_pat_[A-Za-z0-9_]{20,}"),
-    re.compile(r"AKIA[0-9A-Z]{16}"),
-    re.compile(r"xox[abp]-[A-Za-z0-9-]{10,}"),
+    ("aws", re.compile(r"(?<![A-Za-z0-9_-])(?:AKIA|ASIA)[0-9A-Z]{16}"), 0),
+    ("github", re.compile(r"(?<![A-Za-z0-9_-])gh[pousr]_[A-Za-z0-9]{20,}"), 0),
+    ("github", re.compile(r"(?<![A-Za-z0-9_-])github_pat_[A-Za-z0-9_]{20,}"), 0),
+    ("slack", re.compile(r"(?<![A-Za-z0-9_-])xox[abprs]-[A-Za-z0-9-]{10,}"), 0),
+    ("anthropic", re.compile(r"(?<![A-Za-z0-9_-])sk-ant-[A-Za-z0-9_-]{16,}"), 0),
+    ("openai", re.compile(r"(?<![A-Za-z0-9_-])sk-[A-Za-z0-9_-]{16,}"), 0),
+    ("google", re.compile(r"(?<![A-Za-z0-9_-])AIza[0-9A-Za-z_-]{35}"), 0),
+    ("jwt", re.compile(r"(?<![A-Za-z0-9_-])eyJ[A-Za-z0-9_-]*\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+"), 0),
+    ("pem", re.compile(r"-----BEGIN [A-Z0-9 ]{0,40}PRIVATE KEY-----(?:[^-]|-(?!----))*-----END [A-Z0-9 ]{0,40}PRIVATE KEY-----"), 0),
+    # URL credentials: scheme://user:PASSWORD@host (the password goes)
+    ("url", re.compile(r"(?i)\b[a-z][a-z0-9+.-]{1,20}://[^\s/:@]{1,100}:([^\s/@]{3,200})@"), 1),
+    # Authorization: Bearer VALUE
+    ("secret", re.compile(r"(?i)\bauthorization[\"']?\s*[:=]\s*[\"']?(?:bearer|basic)\s+([A-Za-z0-9._~+/=-]{8,})"), 1),
+    # key=value or key: value; the key name ends with a secret word; the key stays, the value goes.
+    # No prefix scan before the key word, so the match time is linear. _value_ok() filters the value.
+    ("secret", re.compile(r"(?i)(?:password|passwd|passphrase|secret(?:[_-]?key)?|token|api[_-]?key|apikey|access[_-]?key|private[_-]?key)"
+                          r"[\"']?\s*[:=][ \t]*(?:bearer[ \t]+)?(\"[^\"\n]{1,200}\"|'[^'\n]{1,200}'|[^\s\"'`,;]+)"), 1),
 ]
-KV_RE = re.compile(r"(?:password|token|secret)=(\S+)", re.I)  # group 1 = the value
-MARK = "[redacted]"
+MARK = "[redacted]"  # legacy mark of earlier versions; readers still treat it as redacted
+
+
+def mark_for(kind):
+    return "[REDACTED:%s]" % kind
+
+
+def _value_ok(v):
+    """True when a key=value value looks like a secret: 8 or more characters, not only letters, not only
+    digits, not a call or an index (get_secret(name), os.environ[...]) and not a variable reference."""
+    if len(v) < 8 or v.isdigit() or re.fullmatch(r"[A-Za-z_.]+", v):
+        return False
+    if re.match(r"[A-Za-z_][\w.]*[(\[]", v) or re.fullmatch(r"\$\{?\w+\}?|<[A-Za-z_ -]*>|\{\{.*\}\}", v):
+        return False
+    return True
 
 
 class UsageError(Exception):
@@ -83,29 +110,46 @@ def inside(path, root_real):
     return p == root_real or p.startswith(root_real.rstrip(os.sep) + os.sep)
 
 
-def secret_spans(text):
+def secret_spans(text, kv=True):
+    """-> merged [[start, end, kind], ...] of the secrets in text (end-exclusive)."""
     spans = []
-    for rx in SECRET_RES:
-        spans += [m.span() for m in rx.finditer(text)]
-    spans += [m.span(1) for m in KV_RE.finditer(text)]
-    spans.sort()
+    for kind, rx, grp in SECRET_RES:
+        if not kv and rx is SECRET_RES[-1][1]:
+            continue  # kv=False: leave out the key=value form (used on text whose lines were already joined)
+        for m in rx.finditer(text):
+            if not grp:
+                spans.append((m.start(), m.end(), kind))
+                continue
+            s, e = m.start(grp), m.end(grp)
+            if text.startswith(("[REDACTED", MARK), s):
+                continue  # already masked: keep the function idempotent
+            if kind == "secret":
+                if text[s] in "\"'" and e - s >= 2 and text[e - 1] == text[s]:
+                    s, e = s + 1, e - 1  # a quoted value: mask what is inside the quotes
+                if not _value_ok(text[s:e]):
+                    continue
+            spans.append((s, e, kind))
+    spans.sort(key=lambda x: (x[0], -x[1]))
     merged = []
-    for s, e in spans:
-        if merged and s <= merged[-1][1]:
+    for s, e, k in spans:
+        if merged and s < merged[-1][1]:
             merged[-1][1] = max(merged[-1][1], e)
         else:
-            merged.append([s, e])
+            merged.append([s, e, k])
     return merged
 
 
-def redact(text):
-    spans = secret_spans(text)
+def redact(text, kv=True):
+    """F65: mask secrets as [REDACTED:<kind>]. Text without secrets is returned unchanged."""
+    if not text:
+        return text
+    spans = secret_spans(text, kv)
     if not spans:
         return text
     out, pos = [], 0
-    for s, e in spans:
+    for s, e, k in spans:
         out.append(text[pos:s])
-        out.append(MARK)
+        out.append(mark_for(k))
         pos = e
     out.append(text[pos:])
     return "".join(out)
@@ -120,11 +164,11 @@ def redacted_snippet(text, s, e, ctx=120):
     else:
         def pos(i, end_side):
             delta = 0
-            for a, b in spans:
+            for a, b, k in spans:
                 if b <= i:
-                    delta += len(MARK) - (b - a)
+                    delta += len(mark_for(k)) - (b - a)
                 elif a < i < b:
-                    return a + delta + (len(MARK) if end_side else 0)
+                    return a + delta + (len(mark_for(k)) if end_side else 0)
                 else:
                     break
             return i + delta

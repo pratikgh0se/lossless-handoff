@@ -2,6 +2,18 @@
 
 Lossless Handoff, formerly claude-handoff.
 
+## [0.13.0] - 2026-11-19
+
+Smaller default install and one redaction function (hooks 1.15.0). New F64 and F65 in `docs/spec.md`. The install default changes, so this is a minor version.
+
+- `./install.sh` with no flags now installs the core only. It no longer sets `CLAUDE_CODE_AUTO_COMPACT_WINDOW`, installs the two nightly jobs, pulls `bge-m3`, or installs `llm_map.py` and its skill.
+- New opt-in flags: `--window N`, `--nightly`, `--semantic`, `--llm-map`. `--no-window` and `--no-nightly` are still accepted and do nothing extra (the installer prints one note).
+- New `--save-defaults`: saves the opt-in flags to `~/.config/lossless-handoff/install-defaults`. Later runs apply them. A command-line flag wins; `--no-semantic`, `--no-nightly`, `--no-llm-map` and `--no-window` turn one saved default off for that run. `./uninstall.sh --purge` deletes the file.
+- A rerun never removes, turns off or changes an installed part. Existing 0.12.x installs keep their window value, nightly jobs and llm-map.
+- `--dry-run` lists exactly what the chosen options install, and which options come from saved defaults.
+- Redaction: one function masks secrets as `[REDACTED:<kind>]` in the handoff files, their copies, the decisions list and recall output. New kinds: AWS (AKIA and ASIA), GitHub (all token prefixes), Slack, Anthropic, OpenAI, Google, JWT, PEM private keys, and `key=value` secrets. The mark `[redacted]` of earlier versions is replaced.
+- Limit: the model writes its own agent handoff file with the Write tool, and a hook cannot mask that write.
+
 ## [0.12.2] - 2026-11-19
 
 Hardening: the nudge window and a format drift alarm (hooks 1.14.2). New F62 and F63 in `docs/spec.md`.
