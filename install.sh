@@ -173,6 +173,10 @@ MANIFEST="$HOOKS_DIR/.handoff-manifest.json"
 FILES="precompact-handoff.py postcompact-inject.py handoff-nudge.py recall.py claims.json"
 # --no-nudge: the nudge file is not part of the install, so the manifest does not list it
 if [ "$NONUDGE" = 1 ]; then FILES="precompact-handoff.py postcompact-inject.py recall.py claims.json"; fi
+# The PreCompact hook keeps its code in the folder hooks/lossless_handoff/. It is part of the install and of the manifest.
+PKG_FILES="$(cd "$SRC/hooks" 2>/dev/null && ls lossless_handoff/*.py 2>/dev/null | tr '\n' ' ')"
+if [ -z "$PKG_FILES" ]; then echo "error: hooks/lossless_handoff/ is missing from this copy; get a full copy of the repo" >&2; exit 1; fi
+FILES="$FILES $PKG_FILES"
 
 say() { if [ "$DRY" = 1 ]; then echo "[dry-run] $*"; else echo "$*"; fi; }
 
@@ -584,10 +588,10 @@ for f in $FILES; do
   if [ -e "$target" ]; then say "back up existing $target -> $BACKUP/$f"; fi
   say "install hook: $target"
   if [ "$DRY" = 0 ]; then
-    mkdir -p "$HOOKS_DIR"
-    if [ -e "$target" ]; then mkdir -p "$BACKUP"; cp -p "$target" "$BACKUP/$f"; fi
+    mkdir -p "$HOOKS_DIR" "$(dirname "$target")"
+    if [ -e "$target" ]; then mkdir -p "$(dirname "$BACKUP/$f")"; cp -p "$target" "$BACKUP/$f"; fi
     cp "$SRC/hooks/$f" "$target"
-    case "$f" in *.json) chmod 644 "$target" ;; *) chmod 755 "$target" ;; esac
+    case "$f" in *.json|lossless_handoff/*) chmod 644 "$target" ;; *) chmod 755 "$target" ;; esac
   fi
 done
 

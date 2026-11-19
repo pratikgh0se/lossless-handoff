@@ -191,6 +191,31 @@ for f in precompact-handoff.py postcompact-inject.py handoff-nudge.py recall.py 
   fi
 done
 
+# the PreCompact hook code folder: remove our files, then the folder if it is empty (Python can leave a bytecode cache in it)
+if [ -e "$HOOKS_DIR/lossless_handoff" ]; then
+  say "remove $HOOKS_DIR/lossless_handoff/"
+  if [ "$DRY" = 0 ]; then
+    # remove the files that the install manifest lists; without a manifest, remove every .py file in the folder
+    python3 - "$HOOKS_DIR" <<'PY'
+import glob, json, os, sys
+h = sys.argv[1]
+try:
+    names = [n for n in (json.load(open(os.path.join(h, ".handoff-manifest.json"))).get("files") or {}) if n.startswith("lossless_handoff/") and ".." not in n]
+except Exception:
+    names = []
+if not names:
+    names = ["lossless_handoff/" + os.path.basename(p) for p in glob.glob(os.path.join(h, "lossless_handoff", "*.py"))]
+for n in names:
+    try:
+        os.remove(os.path.join(h, n))
+    except OSError:
+        pass
+PY
+    rm -rf "$HOOKS_DIR/lossless_handoff/__pycache__"
+    rmdir "$HOOKS_DIR/lossless_handoff" 2>/dev/null || true
+  fi
+fi
+
 # F55.b: remove the recall subagent only when it holds our marker line
 AGENT_DST="$HOME/.claude/agents/recall.md"
 if [ -e "$AGENT_DST" ]; then

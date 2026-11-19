@@ -18,7 +18,7 @@ This page shows every part of Lossless Handoff, the Claude Code event that calls
 | Part | File | Claude Code event | Reads | Writes |
 |---|---|---|---|---|
 | Nudge | `hooks/handoff-nudge.py` | `PostToolUse` (matcher `*`, timeout 5) | The tail of the transcript, `<sid>-agent.md`, `<sid>-agent.meta.json` | `<sid>-agent.meta.json`. It adds one nudge text to a tool result. The model writes `<sid>-agent.md`. |
-| Handoff | `hooks/precompact-handoff.py` | `PreCompact` (timeout 150) | The transcript, `<sid>-agent.md`, the meta file, `decisions.md` | `<sid>-pending.json`, `<sid>-latest.md` and its timestamped copy, `health.jsonl`, `decisions.md` and its backups. It starts the indexer in the background. |
+| Handoff | `hooks/precompact-handoff.py` (entry) and `hooks/lossless_handoff/` (code) | `PreCompact` (timeout 150) | The transcript, `<sid>-agent.md`, the meta file, `decisions.md` | `<sid>-pending.json`, `<sid>-latest.md` and its timestamped copy, `health.jsonl`, `decisions.md` and its backups. It starts the indexer in the background. |
 | Inject after compaction | `hooks/postcompact-inject.py --part 1/2/3` and `--ledger --part 1/2/3` | `SessionStart`, matcher `compact` (timeout 10) | `<sid>-latest.md`, `decisions.md`, `nodes.jsonl` | `receipts.jsonl`, `nodes.jsonl`, `nodes.state.json`. It prints the handoff and the decisions list as context. |
 | Inject at start | `hooks/postcompact-inject.py --ledger --part 1/2/3`, and `--check` | `SessionStart`, matchers `startup` and `resume` (timeout 5 for `--check`) | `decisions.md`, the install manifest, `reconcile.json` | A once-only alert marker. It prints the decisions list, and one `HANDOFF CHECK:` line when something is wrong. |
 | Subagent rules | `hooks/postcompact-inject.py --subagent-start` | `SubagentStart` (timeout 10) | `decisions.md` | One `subagent_start` row in `health.jsonl`. It prints the active rules and the recall line to the new subagent. |
@@ -67,15 +67,34 @@ Notes:
 
 ## Redaction
 
-`redact()` in `hooks/recall.py` is the one redaction function. `hooks/precompact-handoff.py` loads it from `recall.py`. It replaces each secret with `[REDACTED:<kind>]` and leaves text without a secret unchanged.
+`redact()` in `hooks/recall.py` is the one redaction function. The PreCompact hook (`hooks/lossless_handoff/redaction.py`) loads it from `recall.py`. It replaces each secret with `[REDACTED:<kind>]` and leaves text without a secret unchanged.
 
 | Where the text goes | Who calls `redact()` |
 |---|---|
-| `<sid>-<timestamp>.md` and `<sid>-latest.md` (the deterministic part, the model handoff copy and the fresh summary) | `write_handoff_files` in `precompact-handoff.py` |
-| `decisions.md` and its timestamped backups | The decisions writers in `precompact-handoff.py` |
+| `<sid>-<timestamp>.md` and `<sid>-latest.md` (the deterministic part, the model handoff copy and the fresh summary) | `write_handoff_files` in `hooks/lossless_handoff/redaction.py` |
+| `decisions.md` and its timestamped backups | The decisions writers in `hooks/lossless_handoff/ledger.py` |
 | `recall.py` output and the meaning index | `recall.py` (search, open, user, describe, index) |
 
-The model writes `<sid>-agent.md` itself with the Write tool. No hook sees that write, so the original file is not masked. The hooks mask every copy of it. If `recall.py` cannot load, `precompact-handoff.py` uses a copy of the same patterns that it holds itself (the smoke test checks that both give the same output). See `SECURITY.md` for the kinds and the limits.
+The model writes `<sid>-agent.md` itself with the Write tool. No hook sees that write, so the original file is not masked. The hooks mask every copy of it. If `recall.py` cannot load, the PreCompact hook uses a copy of the same patterns that it holds itself (the smoke test checks that both give the same output). See `SECURITY.md` for the kinds and the limits.
+
+## PreCompact hook code layout
+
+`hooks/precompact-handoff.py` is the entry file. It keeps `HOOK_VERSION` and the command line switch (`--reconcile`, `--prove`, `--claims`, `--claims-lint`, `--recover`, `--ledger-maintain`, `--ledger-repair`). It loads the code from the folder `hooks/lossless_handoff/`.
+
+| File in `hooks/lossless_handoff/` | What it holds |
+|---|---|
+| `transcript.py` | Settings, transcript parsing, the git facts |
+| `summary.py` | The agent file, the fresh summary call, the recall text |
+| `ledger.py` | The decisions list: read, merge, maintain, repair |
+| `handoff.py` | The handoff sections, `build`, the status |
+| `runtime.py` | Atomic writes, the health line, the error log, subagent views, the indexer |
+| `redaction.py` | The fallback copy of the redaction code, `redact`, `redact_tree`, `write_handoff_files` |
+| `pipeline.py` | The main PreCompact pipeline, the health writer, `--recover` |
+| `reconcile.py` | The format drift scan and `--reconcile` |
+| `prove.py` | The receipt checks and `--prove` |
+| `claims.py` | The claims register: `--claims`, `--claims-lint` |
+
+`lossless_handoff/__init__.py` runs each file in the namespace of the entry file, by path and in a fixed order (the order of the old single file). The parts share one namespace. They are not importable alone and they are not separate modules. So every function is still a name of `precompact-handoff.py`, and a caller that loads the entry file with `importlib` can still call it or set a global such as `HANDOFFS_DIR`. If the folder is missing or broken, the entry file prints one line on stderr and exits 0. The hook never breaks a session. `install.sh` installs the folder and lists its files in `.handoff-manifest.json`. `uninstall.sh` removes it.
 
 ## How Claude decides to use recall
 
@@ -115,8 +134,8 @@ These numbers come from the code in this repository (hooks 1.15.0), not from a b
 |---|---|
 | The nudge starts at 75% of the window and repeats every 25,000 tokens | `AT_PERCENT`, `EVERY` in `hooks/handoff-nudge.py` |
 | The window comes from the environment, else from past compactions, else it is 200,000 | `env_window`, `learn_window`, `pick_window`, `DEFAULT_WINDOW` in `hooks/handoff-nudge.py` |
-| A session with injects and no `compact_boundary` record sets `format_drift` | `format_drift_scan` in `hooks/precompact-handoff.py` |
+| A session with injects and no `compact_boundary` record sets `format_drift` | `format_drift_scan` in `hooks/lossless_handoff/reconcile.py` |
 | For a 400k window the nudges come at 300k, 325k, 350k, and a final nudge at 355k | `highest_k`, `final_due`, `limit` in `hooks/handoff-nudge.py` |
 | The real compaction point is the window minus 33,000 (367k), and the final nudge is 12,000 tokens before it | `CEILING_GAP`, `HEADROOM` |
-| The handoff has seven headings | `HEADINGS` in `hooks/handoff-nudge.py` and `hooks/precompact-handoff.py` |
-| The fresh summary uses `sonnet` unless `HANDOFF_SUMMARY_MODEL` is set | `summary_model` in `hooks/precompact-handoff.py` |
+| The handoff has seven headings | `HEADINGS` in `hooks/handoff-nudge.py` and `hooks/lossless_handoff/summary.py` |
+| The fresh summary uses `sonnet` unless `HANDOFF_SUMMARY_MODEL` is set | `summary_model` in `hooks/lossless_handoff/summary.py` |

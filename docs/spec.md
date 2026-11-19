@@ -2,7 +2,7 @@
 
 This is the behaviour contract the code-blind tests are written from: the tests are derived from this document, not from the code. Acceptance criteria (AC) numbers are stable; later sections amend earlier ones and say so. Paths are relative to this repository (`hooks/`, `install.sh`); the hooks install to `~/.claude/hooks/`. References to "the compact plugin" are to a separate optional Claude Code plugin that is not part of this repository.
 
-Scope: `precompact-handoff.py` (PreCompact) and `postcompact-inject.py` (SessionStart, matcher `compact`).
+Scope: `precompact-handoff.py` (PreCompact; its code is in the folder `hooks/lossless_handoff/`, see `docs/architecture.md`) and `postcompact-inject.py` (SessionStart, matcher `compact`).
 Installed at `~/.claude/hooks/`; byte-identical repo copies in `hooks/`. Tests target either copy by path.
 Freshness rule source of truth: the compact plugin spec F33.4 (restated in section 4 and AC 5-11).
 This spec is written for a code-blind tester: it describes behaviour only.

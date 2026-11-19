@@ -39,7 +39,7 @@ Every setting and every file that the hooks write. This page is part of the [doc
 | `receipts.jsonl`, `proofs.jsonl`, `proof-report.md`, `proof-notice.json` | Proof: one receipt for each injected handoff, one verdict for each receipt, the report, and the once-only alert marker. |
 | `claims-status.json`, `claims-report.md`, `claims-notice.json` | Claims register evaluation and its once-only alert marker. |
 | `managed-settings.json` | Only after `install.sh --managed-hooks`: the file that you copy to the system location. |
-| `~/.claude/hooks/.handoff-manifest.json` | Installed hook file hashes (not in the state folder). |
+| `~/.claude/hooks/.handoff-manifest.json` | Installed hook file hashes, including the files in `lossless_handoff/` (not in the state folder). |
 | `projects/<project>-<hash>/nodes.jsonl`, `nodes.state.json`, `nodes.lock` | Summary nodes: one line for each compaction (ids, session, line range, times, token count, paths). It holds no message text. |
 | `~/.claude/agents/recall.md` | The recall subagent (user level; not in the state folder). Source file in this repository: `agents/recall.md`. |
 | `projects/<project>-<hash>/decisions.md` | The decisions list of the project (uninstall keeps it). Next to it: `decisions.<timestamp>.md`, `decisions.state.json`, `decisions.lock`. |

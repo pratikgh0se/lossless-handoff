@@ -4,7 +4,7 @@
 
 `install.sh` and `uninstall.sh` read and write only these paths:
 
-- `~/.claude/hooks/`: the hook files (`precompact-handoff.py`, `postcompact-inject.py`, `handoff-nudge.py`, `recall.py`) and `claims.json`; `llm_map.py` only with `--llm-map`. Also a backup folder `.claude-handoff-backup-<timestamp>/` for any file they replace, `.handoff-manifest.json` (file hashes for `--check`) and `.claude-handoff-install.json` (records what install added so uninstall removes exactly that).
+- `~/.claude/hooks/`: the hook files (`precompact-handoff.py`, `postcompact-inject.py`, `handoff-nudge.py`, `recall.py`) `claims.json` and the folder `lossless_handoff/` (the code of the PreCompact hook, 11 `.py` files); `llm_map.py` only with `--llm-map`. Also a backup folder `.claude-handoff-backup-<timestamp>/` for any file they replace, `.handoff-manifest.json` (file hashes for `--check`) and `.claude-handoff-install.json` (records what install added so uninstall removes exactly that).
 - `~/.claude/settings.json`: merged JSON (hooks, two `permissions.allow` entries, and `env.CLAUDE_CODE_AUTO_COMPACT_WINDOW` only with `--window N`), with a `settings.json.bak-<timestamp>` backup before each write. Invalid JSON is never overwritten.
 - `~/.local/state/claude-handoffs/`: created by install, written by the hooks, kept by uninstall. Project decision lists live in `projects/<project>-<hash>/` inside it (`decisions.md`, timestamped backups, `decisions.state.json`, `decisions.lock`); uninstall keeps them too.
 
@@ -36,7 +36,7 @@ Limits:
 - The model writes its own agent handoff file (`<sid>-agent.md`) with the Write tool. A hook cannot mask that write. The hooks mask every copy that they make of it, so the original file is the only place that can hold the secret.
 - Claude Code keeps its own transcripts. This project does not change them. Recall masks what it shows from them.
 - Files that earlier versions wrote are not rewritten. The next write of a decisions list masks it.
-- If `recall.py` is not next to the PreCompact hook, the hook uses a copy of the same patterns that is kept inside `precompact-handoff.py`. The smoke test checks that both copies give the same output.
+- If `recall.py` is not next to the PreCompact hook, the hook uses a copy of the same patterns that is kept inside the PreCompact hook (`hooks/lossless_handoff/redaction.py`). The smoke test checks that both copies give the same output.
 - Do not put secrets in chat and expect them to be removed everywhere.
 
 Since 0.11.0 the meaning index also holds the text of subagent transcripts (user and assistant messages, redacted like other text), and `recall.py search` and `open` read them by default. A subagent transcript can hold file contents, command output and notes that never appeared in the main chat, so more of your work text is searchable. Use `--no-subagents` to leave it out of a search. The index is in `~/.local/state/claude-handoffs/recall/`; delete it to remove the text. The `SubagentStart` hook (`postcompact-inject.py --subagent-start`) reads the project decisions list and prints the active `rule` entries to the new subagent. It prints no other ledger entry and no handoff text, makes no network call, and adds one row per run to `health.jsonl`. `HANDOFF_SUBAGENT_RULES=0` turns it off.

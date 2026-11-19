@@ -35,6 +35,7 @@ cp "$S" "$T/original.json"
 cmp -s "$S" "$T/original.json" || fail "dry-run changed settings"
 "$ROOT/install.sh" --nightly --dry-run >"$T/dry-nightly.out"
 grep -Eq "handoff-reconcile|--reconcile --prove --days 30" "$T/dry-nightly.out" || fail "dry-run does not mention the nightly reconcile job"
+grep -q "install hook: .*/lossless_handoff/ledger.py" "$T/dry-nightly.out" || fail "dry-run does not list the lossless_handoff package files"
 [ ! -e "$HOME/Library/LaunchAgents" ] || fail "dry-run wrote a LaunchAgent"
 [ ! -e "$H/claims.json" ] || fail "dry-run installed files"
 ok "dry-run changes nothing"
@@ -75,7 +76,8 @@ import hashlib, json, sys
 h = sys.argv[1]
 m = json.load(open(h + "/.handoff-manifest.json"))
 assert m["version"] == "1.15.0" and m["installed_at"], m
-assert sorted(m["files"]) == ["claims.json", "handoff-nudge.py", "postcompact-inject.py", "precompact-handoff.py", "recall.py"], m
+pkg = ["lossless_handoff/%s.py" % n for n in "__init__ transcript summary ledger handoff runtime redaction pipeline reconcile prove claims".split()]
+assert sorted(m["files"]) == sorted(["claims.json", "handoff-nudge.py", "postcompact-inject.py", "precompact-handoff.py", "recall.py"] + pkg), m
 for n, want in m["files"].items():
     assert hashlib.sha256(open(h + "/" + n, "rb").read()).hexdigest() == want, n
 mk = json.load(open(h + "/.claude-handoff-install.json"))
@@ -1070,7 +1072,7 @@ PY
   grep -q "AH8X-2548-MJ8D" <<<"$(R search 'ledger.key' --keyword)" || fail "F59: regex ledger.key"
   grep -q "AH8X-2548-MJ8D" <<<"$(R search 'zzz|ledger-key' --keyword)" || fail "F59: regex with |"
   grep -q -- "-> result" "$ROOT/agents/recall.md" && grep -q -- "-> result" "$ROOT/hooks/postcompact-inject.py" \
-    && grep -q -- "-> result" "$ROOT/hooks/precompact-handoff.py" || fail "F59: AC 273, text"
+    && grep -q -- "-> result" "$ROOT"/hooks/lossless_handoff/*.py || fail "F59: AC 273, text"
 )
 ok "F59: loose separators find ledger-key; a tool call hit points to its result"
 
@@ -1342,7 +1344,7 @@ import json, sys
 json.dump({"claims": [{"id": "C1", "text": "t", "source": "reconcile:coverage", "window_days": 30, "refresh_days": 30, "min_rate": 0.0}]},
           open(sys.argv[1] + "/claims.json", "w"))
 PY
-  cp "$ROOT/hooks/precompact-handoff.py" "$R/drift/hooks/"
+  cp -R "$ROOT/hooks/precompact-handoff.py" "$ROOT/hooks/lossless_handoff" "$R/drift/hooks/"
   c="$(HOME="$R/drift/home" HANDOFF_STATE_DIR="$R/drift/state" python3 "$R/drift/hooks/precompact-handoff.py" --claims)"
   grep -q "| fail (format_drift) |" <<<"$c" || fail "F63: claims did not fail with format_drift: $c"
   # --prove and a proof:* claim: a drift session never passes
@@ -1369,7 +1371,7 @@ import json, sys
 json.dump({"claims": [{"id": "C1", "text": "t", "source": "proof:delivered", "window_days": 30, "refresh_days": 30, "min_rate": 0.0}]},
           open(sys.argv[1] + "/claims.json", "w"))
 PY
-  cp "$ROOT/hooks/precompact-handoff.py" "$R/real/hooks/"
+  cp -R "$ROOT/hooks/precompact-handoff.py" "$ROOT/hooks/lossless_handoff" "$R/real/hooks/"
   HOME="$R/real/home" HANDOFF_STATE_DIR="$R/real/state" python3 "$R/real/hooks/precompact-handoff.py" --reconcile --prove >/dev/null
   python3 - "$R/real/state/proofs.jsonl" <<'PY'
 import json, sys
@@ -1550,13 +1552,123 @@ PY
 )
 ok "F65: every secret kind masked in handoff files, decisions list and recall output; plain text unchanged"
 
+# The PreCompact code folder (hooks/lossless_handoff/) is missing or broken: the hook still exits 0 and breaks no session
+(
+  set -e
+  PK="$T/pkgmiss"; mkdir -p "$PK/home" "$PK/state"
+  inp='{"session_id":"pkg1","transcript_path":"/nonexistent.jsonl","cwd":"/tmp","trigger":"auto"}'
+  for case in missing broken empty; do
+    mkdir -p "$PK/$case/hooks"; cp "$ROOT/hooks/precompact-handoff.py" "$ROOT/hooks/claims.json" "$PK/$case/hooks/"
+    case "$case" in
+      broken) mkdir "$PK/$case/hooks/lossless_handoff"; cp "$ROOT"/hooks/lossless_handoff/*.py "$PK/$case/hooks/lossless_handoff/"; printf 'def (:\n' > "$PK/$case/hooks/lossless_handoff/ledger.py" ;;
+      empty) mkdir "$PK/$case/hooks/lossless_handoff" ;;
+    esac
+    for args in "" "--reconcile" "--prove" "--claims" "--recover"; do
+      rc=0; printf '%s' "$inp" | HOME="$PK/home" HANDOFF_STATE_DIR="$PK/state" python3 "$PK/$case/hooks/precompact-handoff.py" $args >"$PK/o" 2>"$PK/e" || rc=$?
+      [ "$rc" = 0 ] || fail "package $case: precompact-handoff.py $args exited $rc"
+      grep -q "lossless_handoff folder is missing or broken" "$PK/e" || fail "package $case: no message on stderr for '$args': $(cat "$PK/e")"
+    done
+  done
+)
+ok "package folder missing, empty or broken: the hook exits 0 with one stderr line for every mode"
+
+# Two copies of the entry file loaded in one process each run their own parts; sys.path stays as it was
+(
+  set -e
+  TC="$T/twocopies"; mkdir -p "$TC/home"
+  for c in h1 h2; do mkdir -p "$TC/$c"; cp -R "$ROOT/hooks/precompact-handoff.py" "$ROOT/hooks/lossless_handoff" "$ROOT/hooks/claims.json" "$TC/$c/"; printf "\nCOPY_MARK = '%s'\n" "$c" >> "$TC/$c/lossless_handoff/transcript.py"; done
+  HOME="$TC/home" HANDOFF_STATE_DIR="$TC/state" python3 - "$TC" <<'PY'
+import importlib.util, io, contextlib, os, sys
+tc = sys.argv[1]
+sys.argv = ["x", "--claims"]
+p0 = list(sys.path)
+def load(name, path):
+    spec = importlib.util.spec_from_file_location(name, path); m = importlib.util.module_from_spec(spec)
+    with contextlib.redirect_stdout(io.StringIO()):
+        try: spec.loader.exec_module(m)
+        except SystemExit: pass
+    return m
+a = load("pc1", tc + "/h1/precompact-handoff.py"); b = load("pc2", tc + "/h2/precompact-handoff.py")
+assert (a.COPY_MARK, b.COPY_MARK) == ("h1", "h2"), (a.COPY_MARK, b.COPY_MARK)
+assert a.trunc.__code__.co_filename == tc + "/h1/lossless_handoff/transcript.py", a.trunc.__code__.co_filename
+assert b.trunc.__code__.co_filename == tc + "/h2/lossless_handoff/transcript.py", b.trunc.__code__.co_filename
+assert sys.path == p0 and "lossless_handoff" not in sys.modules, "the loader changed sys.path or sys.modules"
+print("two copies ok")
+PY
+)
+ok "two copies of the entry file in one process use their own parts; sys.path and sys.modules are unchanged"
+
+# The parts share one namespace: every name is defined, none is defined twice, no top-level code uses a later name
+(
+  set -e
+  python3 - "$ROOT" <<'PY'
+import ast, builtins, sys
+root = sys.argv[1] + "/hooks/"
+ns = {}; exec(open(root + "lossless_handoff/__init__.py").read(), ns)
+files = [("entry-head", root + "precompact-handoff.py")] + [(p, root + "lossless_handoff/%s.py" % p) for p in ns["PARTS"]]
+trees = [(n, ast.parse(open(f, encoding="utf-8").read())) for n, f in files]
+# the entry file has its head, the loader try, and the tail (dispatch). The loader sits between head and the parts.
+head, tail = [], []
+entry = trees[0][1]
+li = next(i for i, n in enumerate(entry.body) if isinstance(n, ast.Try) and "load_into" in ast.dump(n))
+order = [("entry-head", entry.body[:li])] + [(n, t.body) for n, t in trees[1:]] + [("entry-tail", entry.body[li + 1:])]
+def target_names(t):
+    return [x.id for x in ast.walk(t) if isinstance(x, ast.Name) and isinstance(x.ctx, ast.Store)]
+defined, where = {}, {}
+for idx, (pn, body) in enumerate(order):
+    for n in body:
+        names = [n.name] if isinstance(n, (ast.FunctionDef, ast.ClassDef)) else []
+        if isinstance(n, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
+            names = [x for t in (n.targets if isinstance(n, ast.Assign) else [n.target]) for x in target_names(t)]
+        if isinstance(n, (ast.Import, ast.ImportFrom)):
+            names = [(a.asname or a.name).split(".")[0] for a in n.names]
+        for nm in names:
+            if isinstance(n, (ast.Assign, ast.FunctionDef, ast.ClassDef)):
+                assert nm not in where, "top-level name defined twice: %s (%s and %s)" % (nm, where[nm][1], pn)
+            where.setdefault(nm, (idx, pn))
+# every name loaded anywhere must be bound somewhere (top level, local, argument, import, loop, except ...) or a builtin
+bound = set(where) | set(dir(builtins)) | {"__file__", "__name__", "_LH", "_f", "_INIT", "_PKG", "_e"}
+for _, t in trees:
+    for x in ast.walk(t):
+        if isinstance(x, ast.Name) and isinstance(x.ctx, (ast.Store, ast.Del)): bound.add(x.id)
+        elif isinstance(x, ast.arg): bound.add(x.arg)
+        elif isinstance(x, ast.ExceptHandler) and x.name: bound.add(x.name)
+        elif isinstance(x, (ast.FunctionDef, ast.ClassDef)): bound.add(x.name)
+        elif isinstance(x, (ast.Import, ast.ImportFrom)):
+            for a in x.names: bound.add((a.asname or a.name).split(".")[0])
+        elif isinstance(x, (ast.Global, ast.Nonlocal)): bound.update(x.names)
+for pn, t in trees:
+    for x in ast.walk(t):
+        if isinstance(x, ast.Name) and isinstance(x.ctx, ast.Load):
+            assert x.id in bound, "name not defined in any part, the entry or builtins: %s (%s line %d)" % (x.id, pn, x.lineno)
+# top-level code (not function bodies) must not use a name that a later part defines
+def top_loads(n):
+    stack = [n]
+    while stack:
+        x = stack.pop()
+        if isinstance(x, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+            stack.extend(x.decorator_list if hasattr(x, "decorator_list") else [])
+            stack.extend(x.args.defaults + [d for d in x.args.kw_defaults if d])
+            continue
+        if isinstance(x, ast.Name) and isinstance(x.ctx, ast.Load): yield x
+        stack.extend(ast.iter_child_nodes(x))
+for idx, (pn, body) in enumerate(order):
+    for n in body:
+        for x in top_loads(n):
+            if x.id in where and where[x.id][0] > idx:
+                raise AssertionError("top-level code in %s uses %s, defined later in %s" % (pn, x.id, where[x.id][1]))
+print("namespace check ok:", len(where), "top-level names in", len(order), "parts")
+PY
+)
+ok "the parts share one namespace: every name is defined, none twice, no top-level use of a later name"
+
 # F65: a missing or stub recall.py never costs a handoff; the built-in copy masks the secrets
 (
   set -e
   SB="$T/f65stub"; mkdir -p "$SB"
   for case in nofile exit0 noredact; do
     D="$SB/$case"; mkdir -p "$D/hooks" "$D/home" "$D/state"
-    cp "$ROOT/hooks/precompact-handoff.py" "$ROOT/hooks/claims.json" "$D/hooks/"
+    cp -R "$ROOT/hooks/precompact-handoff.py" "$ROOT/hooks/lossless_handoff" "$ROOT/hooks/claims.json" "$D/hooks/"
     case "$case" in
       exit0) printf 'import sys; sys.exit(0)\n' > "$D/hooks/recall.py" ;;
       noredact) printf 'X = 1\n' > "$D/hooks/recall.py" ;;
@@ -1620,7 +1732,7 @@ a = json.load(open(sys.argv[1], encoding="utf-8")); b = json.load(open(sys.argv[
 assert a == b, (a, b)
 PY
 python3 -c "import json,sys; assert 'SessionEnd' not in json.load(open(sys.argv[1])).get('hooks', {})" "$S" || fail "SessionEnd hook left behind"
-for f in precompact-handoff.py postcompact-inject.py handoff-nudge.py recall.py claims.json .handoff-manifest.json .claude-handoff-install.json; do [ ! -e "$H/$f" ] || fail "$f left behind"; done
+for f in precompact-handoff.py postcompact-inject.py handoff-nudge.py recall.py claims.json .handoff-manifest.json .claude-handoff-install.json lossless_handoff; do [ ! -e "$H/$f" ] || fail "$f left behind"; done
 [ ! -e "$HOME/Library/LaunchAgents/com.lossless-handoff.handoff-reconcile.plist" ] || fail "reconcile LaunchAgent left behind"
 [ ! -e "$HOME/Library/LaunchAgents/com.lossless-handoff.handoff-canary.plist" ] && [ ! -e "$H/handoff-canary" ] && [ ! -e "$H/handoff-canary.sh" ] || fail "canary left behind"
 [ -d "$T/canary-state" ] || fail "canary state should be kept"
