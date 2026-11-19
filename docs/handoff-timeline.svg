@@ -45,7 +45,7 @@
 <circle cx="830.0" cy="240" r="11" class="c-warn"/>
 <text x="830.0" y="244.5" class="tsb" text-anchor="middle">2</text>
 <text x="830.0" y="112" class="tb" text-anchor="end">Reminders: 325k, 350k</text>
-<text x="830.0" y="128" class="t" text-anchor="end">final note at 355k</text>
+<text x="830.0" y="128" class="t" text-anchor="end">final nudge at 355k</text>
 <line x1="867.4" y1="276" x2="867.4" y2="231" class="lns" />
 <circle cx="867.4" cy="240" r="11" class="c-bad"/>
 <text x="867.4" y="244.5" class="tsb" text-anchor="middle">3</text>

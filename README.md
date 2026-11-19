@@ -91,9 +91,7 @@ Two benchmarks are in this repository. Both are code-graded: no model grades an 
 
 **OOLONG** ([bench/oolong/README.md](bench/oolong/README.md)) tests two things on large aggregation tasks: the `llm_map` tool, and that the hooks do no harm. In this harness the context is a file. The report counts compactions of the main session only, and subagents can compact. If the count is 0, the hooks add only their session-start text to the main session. The test shows if plain Claude Code still loses on counting tasks, and if `llm_map` helps.
 
-No benchmark result is published yet. One 2-task pilot summary is in `bench/oolong/evidence/` as harness evidence only.
-
-No scored results are published yet. Results come after the full evaluation (continuity at 30 compactions, and LoCoMo, a published benchmark for memory over long conversations, and OOLONG with forced compactions).
+No scored results are published yet, except one 2-task pilot summary in `bench/oolong/evidence/`. That file is harness evidence only. Results come after the full evaluation: continuity at 30 compactions, and LoCoMo and OOLONG with forced compactions. LoCoMo is a published benchmark for memory over long conversations.
 
 ## How word search and meaning search work together
 
@@ -264,7 +262,7 @@ Other projects solve parts of this well. The author fetched the stars on 2026-11
 
 [docs/architecture.md](docs/architecture.md) has the full picture. These are the three main steps.
 
-1. **Nudge** (`handoff-nudge.py`, PostToolUse). When context reaches 75% of the auto-compact window, and again every 25,000 tokens, the hook appends one short nudge text to a tool result. The note asks the working model to write its own handoff to `~/.local/state/claude-handoffs/<session_id>-agent.md`. The file has seven fixed headings: Goal, Parallel work running, Decisions and why, Done, In progress, Dead ends, Exact next step. With a 400k window the reminders come at 300k, 325k and 350k. One final nudge, worded "Compaction is imminent", comes at 355k. That is about 12,000 tokens below the real compaction point (window minus 33,000), so the model still has room to write the file. Three sections are living sections: Parallel work running, In progress and Exact next step. If they are byte-identical to the previous reminder, the next nudge says that the handoff is stale. It also asks for a rewrite. It costs no extra turn.
+1. **Nudge** (`handoff-nudge.py`, PostToolUse). When context reaches 75% of the auto-compact window, and again every 25,000 tokens, the hook appends one short nudge text to a tool result. The nudge asks the working model to write its own handoff to `~/.local/state/claude-handoffs/<session_id>-agent.md`. The file has seven fixed headings: Goal, Parallel work running, Decisions and why, Done, In progress, Dead ends, Exact next step. With a 400k window the reminders come at 300k, 325k and 350k. One final nudge, worded "Compaction is imminent", comes at 355k. That is about 12,000 tokens below the real compaction point (window minus 33,000), so the model still has room to write the file. Three sections are living sections: Parallel work running, In progress and Exact next step. If they are byte-identical to the previous reminder, the next nudge says that the handoff is stale. It also asks for a rewrite. It costs no extra turn.
 2. **Handoff** (`precompact-handoff.py`, PreCompact). Just before compaction, the hook writes `<session_id>-latest.md` (14,000 characters at most). The file starts with an authority line. The line says whom to believe when sources disagree. The file holds:
    - the model's own handoff, if there is one (labelled stale when it is out of date);
    - a fresh summary that Sonnet writes (`claude -p --model sonnet`) of the conversation since the last compaction, labelled "verify against facts". It runs in parallel with the decisions update, so a compaction takes about 20-40 s;

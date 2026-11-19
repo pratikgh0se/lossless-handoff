@@ -33,7 +33,7 @@ It replaces each `~/.claude/hooks/llm_map.py` in the file with the absolute path
 `--disable-slash-commands` also turns off skills. So arm C runs without that flag. A and B keep it. The config record names this difference in `llm_map_skill`.
 If the checkout has no `skills/llm-map/SKILL.md` or no `hooks/llm_map.py`, arm C stops before the first call with a clear message.
 
-Arm C: at lengths under the compaction window, no compaction occurs. In this harness the context is a file, so the context never fills the window. Then C equals A, except for the session-start text.
+Arm C: at lengths under the compaction window, no compaction occurs in the main session. Then C equals A, except for the session-start text.
 The report counts compactions of the main session only. Subagents can compact. If the count is 0, C tests only the session-start text, and that the hooks do no harm.
 
 Arm B: the report prints the subagent use rate. At 0 percent, B equals A in practice.
