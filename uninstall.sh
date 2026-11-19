@@ -191,6 +191,16 @@ for f in precompact-handoff.py postcompact-inject.py handoff-nudge.py recall.py 
   fi
 done
 
+# the PreCompact hook code folder: remove our files, then the folder if it is empty (Python can leave a bytecode cache in it)
+if [ -e "$HOOKS_DIR/lossless_handoff" ]; then
+  say "remove $HOOKS_DIR/lossless_handoff/"
+  if [ "$DRY" = 0 ]; then
+    for f in __init__ transcript summary ledger handoff runtime redaction pipeline reconcile prove claims; do rm -f "$HOOKS_DIR/lossless_handoff/$f.py"; done
+    rm -rf "$HOOKS_DIR/lossless_handoff/__pycache__"
+    rmdir "$HOOKS_DIR/lossless_handoff" 2>/dev/null || true
+  fi
+fi
+
 # F55.b: remove the recall subagent only when it holds our marker line
 AGENT_DST="$HOME/.claude/agents/recall.md"
 if [ -e "$AGENT_DST" ]; then

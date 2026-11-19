@@ -35,6 +35,7 @@ cp "$S" "$T/original.json"
 cmp -s "$S" "$T/original.json" || fail "dry-run changed settings"
 "$ROOT/install.sh" --nightly --dry-run >"$T/dry-nightly.out"
 grep -Eq "handoff-reconcile|--reconcile --prove --days 30" "$T/dry-nightly.out" || fail "dry-run does not mention the nightly reconcile job"
+grep -q "install hook: .*/lossless_handoff/ledger.py" "$T/dry-nightly.out" || fail "dry-run does not list the lossless_handoff package files"
 [ ! -e "$HOME/Library/LaunchAgents" ] || fail "dry-run wrote a LaunchAgent"
 [ ! -e "$H/claims.json" ] || fail "dry-run installed files"
 ok "dry-run changes nothing"
@@ -75,7 +76,8 @@ import hashlib, json, sys
 h = sys.argv[1]
 m = json.load(open(h + "/.handoff-manifest.json"))
 assert m["version"] == "1.15.0" and m["installed_at"], m
-assert sorted(m["files"]) == ["claims.json", "handoff-nudge.py", "postcompact-inject.py", "precompact-handoff.py", "recall.py"], m
+pkg = ["lossless_handoff/%s.py" % n for n in "__init__ transcript summary ledger handoff runtime redaction pipeline reconcile prove claims".split()]
+assert sorted(m["files"]) == sorted(["claims.json", "handoff-nudge.py", "postcompact-inject.py", "precompact-handoff.py", "recall.py"] + pkg), m
 for n, want in m["files"].items():
     assert hashlib.sha256(open(h + "/" + n, "rb").read()).hexdigest() == want, n
 mk = json.load(open(h + "/.claude-handoff-install.json"))
@@ -1070,7 +1072,7 @@ PY
   grep -q "AH8X-2548-MJ8D" <<<"$(R search 'ledger.key' --keyword)" || fail "F59: regex ledger.key"
   grep -q "AH8X-2548-MJ8D" <<<"$(R search 'zzz|ledger-key' --keyword)" || fail "F59: regex with |"
   grep -q -- "-> result" "$ROOT/agents/recall.md" && grep -q -- "-> result" "$ROOT/hooks/postcompact-inject.py" \
-    && grep -q -- "-> result" "$ROOT/hooks/precompact-handoff.py" || fail "F59: AC 273, text"
+    && cat "$ROOT"/hooks/lossless_handoff/*.py | grep -q -- "-> result" || fail "F59: AC 273, text"
 )
 ok "F59: loose separators find ledger-key; a tool call hit points to its result"
 
@@ -1342,7 +1344,7 @@ import json, sys
 json.dump({"claims": [{"id": "C1", "text": "t", "source": "reconcile:coverage", "window_days": 30, "refresh_days": 30, "min_rate": 0.0}]},
           open(sys.argv[1] + "/claims.json", "w"))
 PY
-  cp "$ROOT/hooks/precompact-handoff.py" "$R/drift/hooks/"
+  cp -R "$ROOT/hooks/precompact-handoff.py" "$ROOT/hooks/lossless_handoff" "$R/drift/hooks/"
   c="$(HOME="$R/drift/home" HANDOFF_STATE_DIR="$R/drift/state" python3 "$R/drift/hooks/precompact-handoff.py" --claims)"
   grep -q "| fail (format_drift) |" <<<"$c" || fail "F63: claims did not fail with format_drift: $c"
   # --prove and a proof:* claim: a drift session never passes
@@ -1369,7 +1371,7 @@ import json, sys
 json.dump({"claims": [{"id": "C1", "text": "t", "source": "proof:delivered", "window_days": 30, "refresh_days": 30, "min_rate": 0.0}]},
           open(sys.argv[1] + "/claims.json", "w"))
 PY
-  cp "$ROOT/hooks/precompact-handoff.py" "$R/real/hooks/"
+  cp -R "$ROOT/hooks/precompact-handoff.py" "$ROOT/hooks/lossless_handoff" "$R/real/hooks/"
   HOME="$R/real/home" HANDOFF_STATE_DIR="$R/real/state" python3 "$R/real/hooks/precompact-handoff.py" --reconcile --prove >/dev/null
   python3 - "$R/real/state/proofs.jsonl" <<'PY'
 import json, sys
@@ -1550,13 +1552,33 @@ PY
 )
 ok "F65: every secret kind masked in handoff files, decisions list and recall output; plain text unchanged"
 
+# The PreCompact code folder (hooks/lossless_handoff/) is missing or broken: the hook still exits 0 and breaks no session
+(
+  set -e
+  PK="$T/pkgmiss"; mkdir -p "$PK/home" "$PK/state"
+  inp='{"session_id":"pkg1","transcript_path":"/nonexistent.jsonl","cwd":"/tmp","trigger":"auto"}'
+  for case in missing broken empty; do
+    mkdir -p "$PK/$case/hooks"; cp "$ROOT/hooks/precompact-handoff.py" "$ROOT/hooks/claims.json" "$PK/$case/hooks/"
+    case "$case" in
+      broken) mkdir "$PK/$case/hooks/lossless_handoff"; cp "$ROOT"/hooks/lossless_handoff/*.py "$PK/$case/hooks/lossless_handoff/"; printf 'def (:\n' > "$PK/$case/hooks/lossless_handoff/ledger.py" ;;
+      empty) mkdir "$PK/$case/hooks/lossless_handoff" ;;
+    esac
+    for args in "" "--reconcile" "--prove" "--claims" "--recover"; do
+      rc=0; printf '%s' "$inp" | HOME="$PK/home" HANDOFF_STATE_DIR="$PK/state" python3 "$PK/$case/hooks/precompact-handoff.py" $args >"$PK/o" 2>"$PK/e" || rc=$?
+      [ "$rc" = 0 ] || fail "package $case: precompact-handoff.py $args exited $rc"
+      grep -q "lossless_handoff folder is missing or broken" "$PK/e" || fail "package $case: no message on stderr for '$args': $(cat "$PK/e")"
+    done
+  done
+)
+ok "package folder missing, empty or broken: the hook exits 0 with one stderr line for every mode"
+
 # F65: a missing or stub recall.py never costs a handoff; the built-in copy masks the secrets
 (
   set -e
   SB="$T/f65stub"; mkdir -p "$SB"
   for case in nofile exit0 noredact; do
     D="$SB/$case"; mkdir -p "$D/hooks" "$D/home" "$D/state"
-    cp "$ROOT/hooks/precompact-handoff.py" "$ROOT/hooks/claims.json" "$D/hooks/"
+    cp -R "$ROOT/hooks/precompact-handoff.py" "$ROOT/hooks/lossless_handoff" "$ROOT/hooks/claims.json" "$D/hooks/"
     case "$case" in
       exit0) printf 'import sys; sys.exit(0)\n' > "$D/hooks/recall.py" ;;
       noredact) printf 'X = 1\n' > "$D/hooks/recall.py" ;;
@@ -1620,7 +1642,7 @@ a = json.load(open(sys.argv[1], encoding="utf-8")); b = json.load(open(sys.argv[
 assert a == b, (a, b)
 PY
 python3 -c "import json,sys; assert 'SessionEnd' not in json.load(open(sys.argv[1])).get('hooks', {})" "$S" || fail "SessionEnd hook left behind"
-for f in precompact-handoff.py postcompact-inject.py handoff-nudge.py recall.py claims.json .handoff-manifest.json .claude-handoff-install.json; do [ ! -e "$H/$f" ] || fail "$f left behind"; done
+for f in precompact-handoff.py postcompact-inject.py handoff-nudge.py recall.py claims.json .handoff-manifest.json .claude-handoff-install.json lossless_handoff; do [ ! -e "$H/$f" ] || fail "$f left behind"; done
 [ ! -e "$HOME/Library/LaunchAgents/com.lossless-handoff.handoff-reconcile.plist" ] || fail "reconcile LaunchAgent left behind"
 [ ! -e "$HOME/Library/LaunchAgents/com.lossless-handoff.handoff-canary.plist" ] && [ ! -e "$H/handoff-canary" ] && [ ! -e "$H/handoff-canary.sh" ] || fail "canary left behind"
 [ -d "$T/canary-state" ] || fail "canary state should be kept"
