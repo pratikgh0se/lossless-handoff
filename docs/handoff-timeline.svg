@@ -45,8 +45,8 @@
 <line x1="830.0" y1="138" x2="830.0" y2="231" class="lns" />
 <circle cx="830.0" cy="240" r="11" class="c-warn"/>
 <text x="830.0" y="244.5" class="tsb" text-anchor="middle">2</text>
-<text x="830.0" y="112" class="tb" text-anchor="end">Re-nudge at 350k</text>
-<text x="830.0" y="128" class="t" text-anchor="end">(every 50k of growth)</text>
+<text x="830.0" y="112" class="tb" text-anchor="end">Reminders: 325k, 350k</text>
+<text x="830.0" y="128" class="t" text-anchor="end">final note at 355k</text>
 <line x1="867.4" y1="276" x2="867.4" y2="231" class="lns" />
 <circle cx="867.4" cy="240" r="11" class="c-bad"/>
 <text x="867.4" y="244.5" class="tsb" text-anchor="middle">3</text>
@@ -60,40 +60,40 @@
 <text x="932" y="80" class="t" text-anchor="end">session continues</text>
 <rect x="24" y="342" width="214" height="176" rx="8" class="k-warn" />
 <text x="36" y="366" class="tb">1  Nudge, 300k</text>
-<text x="36" y="386" class="ts">The compact plugin adds one</text>
+<text x="36" y="386" class="ts">The nudge hook adds one</text>
 <text x="36" y="401" class="ts">short note to the next tool</text>
 <text x="36" y="416" class="ts">result.</text>
 <text x="36" y="439" class="tsb">Writes:</text>
 <text x="36" y="455" class="ts">agent file &lt;session&gt;-agent.md</text>
-<text x="36" y="470" class="ts">(six headings, by the model);</text>
+<text x="36" y="470" class="ts">(seven headings, by the model);</text>
 <text x="36" y="485" class="ts">&lt;session&gt;-agent.meta.json</text>
-<text x="36" y="500" class="ts">(counts only, by the plugin)</text>
+<text x="36" y="500" class="ts">(numbers only, by the hook)</text>
 <rect x="252" y="342" width="214" height="176" rx="8" class="k-warn" />
-<text x="264" y="366" class="tb">2  Re-nudge, 350k</text>
-<text x="264" y="386" class="ts">Same note again after another</text>
-<text x="264" y="401" class="ts">50k tokens of growth, if the</text>
-<text x="264" y="416" class="ts">work moved on.</text>
-<text x="264" y="439" class="tsb">Writes:</text>
-<text x="264" y="455" class="ts">the agent rewrites</text>
-<text x="264" y="470" class="ts">&lt;session&gt;-agent.md; the plugin</text>
-<text x="264" y="485" class="ts">updates the meta file</text>
+<text x="264" y="366" class="tb">2  Reminders, 325k to 355k</text>
+<text x="264" y="386" class="ts">Another note every 25k tokens:</text>
+<text x="264" y="401" class="ts">325k, 350k, then a final note</text>
+<text x="264" y="416" class="ts">at 355k. A stale handoff gets</text>
+<text x="264" y="431" class="ts">a rewrite request.</text>
+<text x="264" y="454" class="tsb">Writes:</text>
+<text x="264" y="470" class="ts">the model rewrites</text>
+<text x="264" y="485" class="ts">&lt;session&gt;-agent.md; the hook</text>
+<text x="264" y="500" class="ts">updates the meta file</text>
 <rect x="480" y="342" width="214" height="176" rx="8" class="k-bad" />
 <text x="492" y="366" class="tb">3  Compaction, ~367k</text>
 <text x="492" y="386" class="ts">Claude Code compacts. The</text>
-<text x="492" y="401" class="ts">PreCompact hook builds a</text>
-<text x="492" y="416" class="ts">deterministic handoff around</text>
-<text x="492" y="431" class="ts">the agent file (Haiku fallback</text>
-<text x="492" y="446" class="ts">if none is fresh).</text>
-<text x="492" y="469" class="tsb">Writes:</text>
-<text x="492" y="485" class="ts">the handoff file and one line</text>
-<text x="492" y="500" class="ts">in health.jsonl</text>
+<text x="492" y="401" class="ts">PreCompact hook builds the</text>
+<text x="492" y="416" class="ts">handoff: agent file, Sonnet</text>
+<text x="492" y="431" class="ts">summary, extracted facts.</text>
+<text x="492" y="454" class="tsb">Writes:</text>
+<text x="492" y="470" class="ts">&lt;session&gt;-latest.md and one</text>
+<text x="492" y="485" class="ts">line in health.jsonl</text>
 <rect x="708" y="342" width="214" height="176" rx="8" class="k-ok" />
 <text x="720" y="366" class="tb">4  Continue</text>
 <text x="720" y="386" class="ts">The SessionStart hook injects</text>
 <text x="720" y="401" class="ts">the handoff once, in up to</text>
-<text x="720" y="416" class="ts">three parts. A degraded handoff</text>
-<text x="720" y="431" class="ts">also raises a toast and a band</text>
-<text x="720" y="446" class="ts">chip.</text>
-<text x="720" y="469" class="tsb">Writes:</text>
-<text x="720" y="485" class="ts">nothing new; reads the handoff</text>
+<text x="720" y="416" class="ts">three parts, then the</text>
+<text x="720" y="431" class="ts">decisions list.</text>
+<text x="720" y="454" class="tsb">Writes:</text>
+<text x="720" y="470" class="ts">receipts.jsonl, nodes.jsonl;</text>
+<text x="720" y="485" class="ts">reads the handoff file</text>
 <text x="24" y="548" class="cap">Illustration — not a screenshot</text></svg>
