@@ -1573,6 +1573,31 @@ PY
     ls "$D"/state/stubsid-2*.md >/dev/null 2>&1 || fail "F65: no dated handoff with recall.py case $case"
     ! grep -q "ghp_aaaa\|hunter2xx" "$D"/state/stubsid-*.md || fail "F65: secret in a handoff with recall.py case $case"
     grep -q "REDACTED" "$D/state/stubsid-latest.md" || fail "F65: nothing masked with recall.py case $case"
+    # a key=value secret in every section is masked (the final pass leaves key=value to the per-section masking)
+    D3="$D/q"; mkdir -p "$D3/state" "$D3/repo"
+    git -C "$D3/repo" init -q 2>/dev/null; : > "$D3/repo/password=Hunter2xx99zz.txt"
+    printf '# Agent handoff\n## Decisions\nkeep password=Hunter2xx99zz in mind\n%s\n' "$(python3 -c "print('x' * 400)")" > "$D3/state/qsid-agent.md"
+    python3 - "$D3/tr.jsonl" <<'PY'
+import json, sys
+S = "password=Hunter2xx99zz"
+def tu(i, name, inp):
+    return {"type": "assistant", "timestamp": "2026-11-19T10:00:0%dZ" % i, "message": {"role": "assistant", "content": [{"type": "tool_use", "id": "t%d" % i, "name": name, "input": inp}]}}
+rows = [{"type": "user", "timestamp": "2026-11-19T10:00:00Z", "message": {"role": "user", "content": "please use " + S + " here"}},
+        tu(1, "TaskCreate", {"subject": "rotate " + S, "description": "d"}),
+        tu(2, "TodoWrite", {"todos": [{"content": "todo " + S, "status": "pending", "activeForm": "x"}]}),
+        tu(3, "Bash", {"command": "echo " + S}),
+        tu(4, "Write", {"file_path": "/tmp/proj/" + S + ".txt", "content": "x"}),
+        {"type": "assistant", "timestamp": "2026-11-19T10:00:09Z", "message": {"role": "assistant", "content": [{"type": "text", "text": "done with " + S}]}}]
+open(sys.argv[1], "w").write("".join(json.dumps(r) + "\n" for r in rows))
+PY
+    printf '{"session_id":"qsid","transcript_path":"%s","trigger":"auto","cwd":"%s"}' "$D3/tr.jsonl" "$D3/repo" \
+      | HOME="$D/home" HANDOFF_STATE_DIR="$D3/state" HANDOFF_SUMMARY=0 HANDOFF_HAIKU_FALLBACK=0 HANDOFF_LEDGER=0 python3 "$D/hooks/precompact-handoff.py" >/dev/null 2>&1 || true
+    [ -s "$D3/state/qsid-latest.md" ] || fail "F65: no handoff for the all-sections case ($case)"
+    ! grep -rq "Hunter2xx99zz" "$D3/state"/qsid-2*.md "$D3/state/qsid-latest.md" || fail "F65: a section wrote password=Hunter2xx99zz unmasked (case $case): $(grep -rn Hunter2xx99zz "$D3/state"/qsid-latest.md | cut -c1-120)"
+    for h in "## Last assistant message" "## Task state" "## Last Bash commands" "## Last user messages" "## Open tasks" "## Files touched" "## Git"; do
+      grep -q "^$h" "$D3/state/qsid-latest.md" || fail "F65: section '$h' missing, so the all-sections case proves nothing (case $case)"
+    done
+    grep -c "REDACTED:secret" "$D3/state/qsid-latest.md" | grep -qv '^0$' || fail "F65: nothing masked in the all-sections case ($case)"
     # a key word, a newline and a path: the handoff keeps the path (the text is masked before the lines are joined)
     D2="$D/p"; mkdir -p "$D2/state"
     python3 - "$D2/tr.jsonl" <<'PY'

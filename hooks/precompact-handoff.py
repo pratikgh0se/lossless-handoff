@@ -1188,7 +1188,7 @@ def _f_bg(P, cwd):
 
 def _f_git(P, cwd):
     g = git(cwd)
-    return f"## Git\n- branch: {g[0]}\n```\n{trunc(g[1], 1500)}\n```\n" if g else ""
+    return f"## Git\n- branch: {redact(g[0])}\n```\n{trunc(redact(g[1]), 1500)}\n```\n" if g else ""
 
 
 def _f_cmds(P, cwd):
@@ -1225,7 +1225,7 @@ def build(d, info, mode=None):
               + (f"- agent: {d.get('agent_id')} ({d.get('agent_type') or 'unknown type'}), a subagent of this session\n"
                  if agent_id_of(d) else "") + f"{AUTHORITY}{recall_line()}")
     footer = f"\nFull transcript: {tp}. Read it for exact details before guessing.\n"
-    P = parse(tp, before_last_boundary=(mode == "recover"))
+    P = redact_tree(parse(tp, before_last_boundary=(mode == "recover")))  # F65: every section reads masked text
     if "toplevel" in FAULTS:
         raise RuntimeError("injected")
     enabled = summary_enabled() and not nomodel
@@ -1616,6 +1616,20 @@ def redact(text, kv=True):
     except Exception:
         return _fb_redact(text, kv)
     return out if isinstance(out, str) else _fb_redact(text, kv)
+
+
+def redact_tree(v):
+    """F65: one guard for all sections. Mask every string inside the parsed transcript data (key=value included)
+    BEFORE any section cuts, flattens or joins it, so a section cannot forget to do it."""
+    if isinstance(v, str):
+        return redact(v)
+    if isinstance(v, list):
+        return [redact_tree(x) for x in v]
+    if isinstance(v, tuple):
+        return tuple(redact_tree(x) for x in v)
+    if isinstance(v, dict):
+        return {k: redact_tree(x) for k, x in v.items()}
+    return v
 
 
 def write_handoff_files(sid, p, body):
