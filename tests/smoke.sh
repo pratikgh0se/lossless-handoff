@@ -1422,8 +1422,17 @@ PY
   # --window 0 is rejected; an upgrade run says "already installed, kept"
   r=0; "$ROOT/install.sh" --window 0 --dry-run >/dev/null 2>&1 || r=$?; [ "$r" = 2 ] || fail "F64: --window 0 was not rejected"
   o="$("$ROOT/install.sh" --dry-run)"
-  grep -q "window already set, kept" <<<"$o" && grep -q "llm-map: already installed, kept" <<<"$o" || fail "F64: upgrade run does not say already installed, kept"
+  grep -q "window already installed, kept" <<<"$o" && grep -q "llm-map: already installed, kept" <<<"$o" || fail "F64: upgrade run does not say already installed, kept"
   [ "$(uname)" != Darwin ] || grep -q "nightly jobs: already installed, kept" <<<"$o" || fail "F64: upgrade run: nightly message"
+  o="$("$ROOT/install.sh" --window 300000 --dry-run)"
+  grep -q "window already installed, kept.*250000" <<<"$o" || fail "F64: --window N on an existing value: no kept line"
+  "$ROOT/install.sh" --window 300000 >/dev/null
+  python3 -c "import json,sys; assert json.load(open(sys.argv[1]))['env']['CLAUDE_CODE_AUTO_COMPACT_WINDOW']=='250000'" "$FS" || fail "F64: --window N changed an existing value"
+  # a saved window=0 (or any bad line) is ignored with exit 0; only the --window 0 flag exits 2
+  mkdir -p "$(dirname "$DF")"; printf 'window=0\nbogus line\nsemantic=maybe\n' > "$DF"
+  r=0; o="$("$ROOT/install.sh" --dry-run 2>&1)" || r=$?; [ "$r" = 0 ] || fail "F64: a bad saved defaults line made install fail"
+  grep -q "saved defaults" <<<"$o" && fail "F64: a bad saved line was applied"
+  rm -f "$DF"
   # old flags: accepted, one note
   o="$("$ROOT/install.sh" --no-window --no-nightly --dry-run)"
   [ "$(grep -c "no longer needed" <<<"$o")" = 1 ] || fail "F64: old flags note"
@@ -1490,19 +1499,26 @@ keep = ["tests/task-runner-integration-suite.py", "disk-usage-report-2026-11-19.
         "pytest tests/test_flask-application-factory.py", "skill mask-secrets-in-every-file-they-write",
         "token: 160000 of 400000", "if not token: return None", "api_key: str = Field(...)", "Set `HANDOFF_SECRET=0` to stop",
         "secret = get_secret(name)", "token = os.environ['GITHUB_TOKEN']", "password=args.password, user=args.user",
+        "token=${VAR_NAME_X}", "token=<placeholder>", "token={{tmplname}}", "password=$VARIABLE_1", "Secret:\n/Users/x/docs/file-name-1.md",
         "max_token = 4096", "Tokens: 12 in, 40 out", "commit 5b5c7de4a1f0c3e2b9d8a7f6e5d4c3b2a1f0e9d8", "token="]
 for k in keep:
     assert rc.redact(k) == k, (k, rc.redact(k))
 miss = [("token: Bearer " + "aB3dE5gH7jK9mN1p", "aB3dE5gH7jK9mN1p"), ("Authorization: Bearer " + "aB3dE5gH7jK9mN1p", "aB3dE5gH7jK9mN1p"),
         ('password: "correct horse battery"', "horse"), ("SECRET_KEY=" + "aB3dE5gH7jK9mN1p", "aB3dE5gH7jK9mN1p"),
-        ("private_key=" + "aB3dE5gH7jK9mN1p", "aB3dE5gH7jK9mN1p"), ("postgres://admin:" + "s3cr3tPass99" + "@db.example.com/x", "s3cr3tPass99"),
+        ("private_key=" + "aB3dE5gH7jK9mN1p", "aB3dE5gH7jK9mN1p"), ("password=$uperS3cret!!", "$uperS3cret!!"), ("token=<abc12345XYZ>", "abc12345XYZ"),
+        ("postgres://admin:" + "s3cr3tPass99" + "@db.example.com/x", "s3cr3tPass99"),
         ("key=sk-" + "abcdefghijklmnop1234", "abcdefghijklmnop"), ('"sk-proj-' + 'abcdefghijklmnop1234"', "abcdefghijklmnop")]
 for t_, sec in miss:
     o = rc.redact(t_)
     assert sec not in o and "[REDACTED:" in o, (t_, o)
 assert rc.redact("postgres://admin:s3cr3tPass99@db/x").startswith("postgres://admin:") and rc.redact("postgres://admin:s3cr3tPass99@db/x").endswith("@db/x")
 import time
-for big in ("a." * 20000, ("Qm9vdHN0cmFw-" * 16000)[:200000], "The hook writes the token file. " * 3000):
+pem_in = "-----BEGIN PRIVATE KEY-----\nabc\n"
+for pem_t in ("-----BEGIN RSA PRIVATE KEY-----\nMIIabc\n-----END RSA PRIVATE KEY-----", "-----BEGIN PRIVATE KEY-----\\nMIIabc\\n-----END PRIVATE KEY-----",
+              "-----BEGIN OPENSSH PRIVATE KEY-----\nb3Bl\n-----END OPENSSH PRIVATE KEY-----", "-----BEGIN RSA PRIVATE KEY-----\nProc-Type: 4,ENCRYPTED\nxyz\n-----END RSA PRIVATE KEY-----"):
+    assert rc.redact("a " + pem_t + " b") == "a [REDACTED:pem] b", pem_t
+assert rc.redact("x -----BEGIN PRIVATE KEY-----\nk1\n-----END PRIVATE KEY----- MID -----BEGIN PRIVATE KEY-----\nk2\n-----END PRIVATE KEY----- y") == "x [REDACTED:pem] MID [REDACTED:pem] y"
+for big in (pem_in * 35000, "a." * 20000, ("Qm9vdHN0cmFw-" * 16000)[:200000], "The hook writes the token file. " * 3000):
     t0 = time.time(); rc.redact(big); assert time.time() - t0 < 1.0, ("redact is too slow", len(big), time.time() - t0)
 plain = "Plain text: we chose sqlite. tokens: 5000 and a path /tmp/x.py, the AKIA prefix idea.\nline two é"
 assert rc.redact(plain) == plain

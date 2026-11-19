@@ -1523,7 +1523,7 @@ _FB_SECRET_RES = [
     ("openai", re.compile(r"(?<![A-Za-z0-9_-])sk-[A-Za-z0-9_-]{16,}"), 0),
     ("google", re.compile(r"(?<![A-Za-z0-9_-])AIza[0-9A-Za-z_-]{35}"), 0),
     ("jwt", re.compile(r"(?<![A-Za-z0-9_-])eyJ[A-Za-z0-9_-]*\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+"), 0),
-    ("pem", re.compile(r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----.*?-----END [A-Z0-9 ]*PRIVATE KEY-----", re.S), 0),
+    ("pem", re.compile(r"-----BEGIN [A-Z0-9 ]{0,40}PRIVATE KEY-----(?:[^-]|-(?!----))*-----END [A-Z0-9 ]{0,40}PRIVATE KEY-----"), 0),
     # URL credentials: scheme://user:PASSWORD@host (the password goes)
     ("url", re.compile(r"(?i)\b[a-z][a-z0-9+.-]{1,20}://[^\s/:@]{1,100}:([^\s/@]{3,200})@"), 1),
     # Authorization: Bearer VALUE
@@ -1531,7 +1531,7 @@ _FB_SECRET_RES = [
     # key=value or key: value; the key name ends with a secret word; the key stays, the value goes.
     # No prefix scan before the key word, so the match time is linear. _fb_value_ok() filters the value.
     ("secret", re.compile(r"(?i)(?:password|passwd|passphrase|secret(?:[_-]?key)?|token|api[_-]?key|apikey|access[_-]?key|private[_-]?key)"
-                          r"[\"']?\s*[:=]\s*(?:bearer\s+)?(\"[^\"\n]{1,200}\"|'[^'\n]{1,200}'|[^\s\"'`,;]+)"), 1),
+                          r"[\"']?\s*[:=][ \t]*(?:bearer[ \t]+)?(\"[^\"\n]{1,200}\"|'[^'\n]{1,200}'|[^\s\"'`,;]+)"), 1),
 ]
 _FB_MARK = "[redacted]"  # legacy mark of earlier versions; readers still treat it as redacted
 
@@ -1545,7 +1545,7 @@ def _fb_value_ok(v):
     digits, not a call or an index (get_secret(name), os.environ[...]) and not a variable reference."""
     if len(v) < 8 or v.isdigit() or re.fullmatch(r"[A-Za-z_.]+", v):
         return False
-    if re.match(r"[A-Za-z_][\w.]*[(\[]", v) or v[0] in "$<{":
+    if re.match(r"[A-Za-z_][\w.]*[(\[]", v) or re.fullmatch(r"\$\{?\w+\}?|<[A-Za-z_ -]*>|\{\{.*\}\}", v):
         return False
     return True
 

@@ -510,14 +510,15 @@ if os.environ["HC_SETWINDOW"] == "1":
         sys.exit("settings.json: env is not an object")
     key = "CLAUDE_CODE_AUTO_COMPACT_WINDOW"
     if key in env:
-        changes.append("%s already set to %r, left alone" % (key, env[key]))
+        changes.append("window already installed, kept: %s is %r (a value that is set is never changed; --window %s ignored)" % (key, env[key], os.environ["HC_WINDOW"]))
     else:
         env[key] = os.environ["HC_WINDOW"]
         window_set = os.environ["HC_WINDOW"]
         changes.append("set env.%s = %s" % (key, window_set))
 else:
-    if "CLAUDE_CODE_AUTO_COMPACT_WINDOW" in (data.get("env") or {}):
-        changes.append("window already set, kept (CLAUDE_CODE_AUTO_COMPACT_WINDOW)")
+    cur_env = data.get("env") if isinstance(data.get("env"), dict) else {}
+    if "CLAUDE_CODE_AUTO_COMPACT_WINDOW" in cur_env:
+        changes.append("window already installed, kept: CLAUDE_CODE_AUTO_COMPACT_WINDOW is %r" % cur_env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"])
     else:
         changes.append("window not set (opt-in: --window N)")
 

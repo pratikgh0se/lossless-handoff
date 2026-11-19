@@ -32,7 +32,7 @@ A prefix such as `sk-` or `ghp_` counts only at the start of a word. A letter, d
 
 Limits:
 
-- The function knows these shapes only. A secret in any other shape (for example `sk_live_` keys, npm tokens and Slack webhook URLs), or a secret in prose without a key name, is not masked. A PEM block with no END line is not masked. A short password (under 8 characters) or a password of only letters is not masked.
+- The function knows these shapes only. A secret in any other shape (for example `sk_live_` keys, npm tokens and Slack webhook URLs), or a secret in prose without a key name, is not masked. A PEM block with no END line is not masked. A short password (under 8 characters), a password of only letters or only digits (`password: 12345678`), and a value with dots such as `secret=abc.def.ghi` that looks like an identifier are not masked. A prose word after a key word can be masked, for example `token: src/auth/token-store-v2.ts`. The value must start on the same line as the key.
 - The model writes its own agent handoff file (`<sid>-agent.md`) with the Write tool. A hook cannot mask that write. The hooks mask every copy that they make of it, so the original file is the only place that can hold the secret.
 - Claude Code keeps its own transcripts. This project does not change them. Recall masks what it shows from them.
 - Files that earlier versions wrote are not rewritten. The next write of a decisions list masks it.
