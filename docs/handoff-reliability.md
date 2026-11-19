@@ -11,7 +11,7 @@ This page describes handoff hooks 1.10.0 (F45 to F48). Sections at the end add h
 | Install check | At SessionStart `startup` and `resume`, one `HANDOFF CHECK:` line appears in these cases: a hook is not wired, a hook file is missing or changed since install, the versions of the two hooks differ, or reconcile found compactions without a handoff. A separate `format drift` line appears when reconcile found format drift. The hook is silent when all is well. | `postcompact-inject.py --check` |
 | Nightly reconcile and proof | With `--nightly` (opt-in), `--reconcile --prove --days 30` runs at 04:15. It counts every `compact_boundary` in your transcripts against `health.jsonl` and proves each receipt. | LaunchAgent `com.lossless-handoff.handoff-reconcile` (`install.sh --nightly` writes it; on Linux it prints a crontab line)  A default install has no nightly reconcile, proof or format-drift alarm. Install with `--nightly`, or run `precompact-handoff.py --reconcile --prove` yourself. |
 
-`--check` also reads the manifest `~/.claude/hooks/.handoff-manifest.json` that `install.sh` writes (a hash for each installed hook file). Restart open Claude Code sessions after you install: hooks load when a session starts.
+`--check` also reads the manifest `~/.claude/hooks/.handoff-manifest.json` that `install.sh` writes (a hash for each installed hook file, including the files in `lossless_handoff/`). Restart open Claude Code sessions after you install: hooks load when a session starts.
 
 Real result, first 30-day reconcile on 2026-11-17: 188 of 192 main compactions were covered. Of the 4 that were missed, 3 came from a deliberate sandbox probe run with user settings turned off, and 1 was on 2026-10-23. For subagents, 0 of 28 compactions were covered. All of those are from before this change.
 
@@ -105,4 +105,4 @@ All files are in `~/.local/state/claude-handoffs/` unless the table says another
 | `claims-notice.json` | Once-only tracker for the claims alert in `--check` (like `proof-notice.json`) |
 | `reconcile.log` | Output of the nightly job |
 | `projects/<project>-<hash>/nodes.jsonl` | Summary nodes: one line for each compaction |
-| `~/.claude/hooks/.handoff-manifest.json` | Installed hook file hashes |
+| `~/.claude/hooks/.handoff-manifest.json` | Installed hook file hashes (including `lossless_handoff/`) |
