@@ -6,7 +6,7 @@
 
 This documentation uses ASD-STE100 Simplified Technical English.
 
-Current versions: product 0.12.1 (`install.sh`), hooks 1.14.1 (`hooks/*.py`).
+Current versions: product 0.12.1 (`install.sh`), hooks 1.14.1 (`HOOK_VERSION` in `hooks/precompact-handoff.py` and `hooks/postcompact-inject.py`).
 
 [![CI](https://github.com/pratikgh0se/lossless-handoff/actions/workflows/ci.yml/badge.svg)](https://github.com/pratikgh0se/lossless-handoff/actions/workflows/ci.yml) [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE) [![Release](https://img.shields.io/github/v/release/pratikgh0se/lossless-handoff)](https://github.com/pratikgh0se/lossless-handoff/releases/latest)
 
@@ -19,7 +19,7 @@ For the parts, the events that call them and the files they use, read [docs/arch
 - **Without it:** every compaction turns your session into a generic summary. The exact next step, the dead ends, your standing rules and your exact wording are gone. The model does the work again or asks again.
 - **With it:** before each compaction, the hooks write a structured handoff and feed it back in. Each project keeps a decisions list that survives compactions. `recall` finds the exact words of earlier chats (keyword search plus local semantic search). Python 3 standard library only.
 - **No silent misses:** a hook cannot force Claude Code to run it. So three steps catch a missed compaction: the hooks write a handoff early, rebuild it after the fact if it is still missing, and count the misses every night. Subagents get their own handoff. See [When a compaction is missed](#when-a-compaction-is-missed).
-- **Proof:** in a 30-day reconcile on the author's machine (2026-11-17), 188 of 192 main compactions had a handoff [C2]. Also, 497 of 497 sampled messages came back byte-identical [C1]. [Proof, not promises](#proof-not-promises) lists the 4 misses and the subagent gap.
+- **Proof:** in a 30-day reconcile on the author's machine (2026-11-17), 188 of 192 main compactions had a handoff [C2]. In a one-off test (2026-11-13/14), 497 of 497 sampled messages came back byte-identical [C1]. The live C1 rate on 2026-11-18 is 10 of 11. [Proof, not promises](#proof-not-promises) lists the 4 misses and the subagent gap.
 
 ## Why this exists
 
@@ -45,9 +45,11 @@ Then restart open Claude Code sessions. Hooks load when a session starts. Prereq
 
 The installer does these things in one run:
 
-- It copies the hooks and `recall.py` to `~/.claude/hooks/`.
+- It copies the hooks, `recall.py` and `llm_map.py` to `~/.claude/hooks/`.
+- It installs the recall subagent (`~/.claude/agents/recall.md`) and the llm-map skill (`~/.claude/skills/llm-map/SKILL.md`). It keeps a file of that name that is not ours.
 - It merges the entries into `~/.claude/settings.json`, next to your entries, with a timestamped backup.
 - It adds the end-of-chat index (a `SessionEnd` hook).
+- It adds a `SubagentStart` hook that gives project rules to a new subagent.
 - It adds an install check that runs at session start and prints one line only when something is wrong (`postcompact-inject.py --check`). The check compares the hooks with an install manifest (`~/.claude/hooks/.handoff-manifest.json`).
 - On macOS, it adds two nightly jobs: the index (03:30) and the reconcile-and-prove run (04:15).
 - It starts a first index of all your projects in the background.
@@ -67,7 +69,7 @@ Options: `--window N`, `--no-window`, `--yes` (pull bge-m3 without a question), 
 |---|---|
 | Compactions with a handoff | 217 over 32 days, across 23 sessions; the busiest session had 96 compactions |
 | Handoff status | 83% ok, 15% reduced, 2% degraded |
-| Nightly self-test | passed 31 of 34 runs; the last 7 nights all passed |
+| Nightly self-test | 34 runs: 31 passed, 2 failed and 1 was skipped; the last 7 nights all passed |
 | Decisions lists | 12 projects, 495 active entries (84 standing rules), 111 finished |
 | Search index | 48,282 chunks from about 30.6k messages across 1,242 sessions |
 | Hook time | median 17 s (90th percentile 29 s); it always exits 0 and never blocks compaction |
@@ -85,11 +87,13 @@ Two benchmarks are in this repository. Both are code-graded: no model grades an 
 - After 1, 3, 10 and 30 compactions, the runner forks the session and asks probes.
 - Probe types: R rule, D decision, X decision that was replaced, S exact string, E dead end, C user contradiction, M order of three decisions made at different times. F is a fresh control. U is a fact that only a subagent saw.
 - Arms: A plain Claude Code (no hooks), B Lossless Handoff, Z no history (amnesia control), O no compaction (oracle control).
-- Code grades the answers. The report records a lookup trace per arm.
+- Code grades the answers. The report records a lookup trace per arm for type U probes.
 
-**OOLONG** ([bench/oolong/README.md](bench/oolong/README.md)) tests two things on large aggregation tasks: the `llm_map` tool, and that the hooks do no harm. In this harness the context is a file, so 0 compactions occur below the compaction window. The hooks therefore add only their session-start text. The test shows if plain Claude Code still loses on counting tasks, and if `llm_map` helps.
+**OOLONG** ([bench/oolong/README.md](bench/oolong/README.md)) tests two things on large aggregation tasks: the `llm_map` tool, and that the hooks do no harm. In this harness the context is a file. The report counts compactions of the main session only, and subagents can compact. If the count is 0, the hooks add only their session-start text to the main session. The test shows if plain Claude Code still loses on counting tasks, and if `llm_map` helps.
 
-No scored results are published yet. Results come after the full evaluation (continuity at 30 compactions, and LoCoMo and OOLONG with forced compactions).
+No benchmark result is published yet. One 2-task pilot summary is in `bench/oolong/evidence/` as harness evidence only.
+
+No scored results are published yet. Results come after the full evaluation (continuity at 30 compactions, and LoCoMo, a published benchmark for memory over long conversations, and OOLONG with forced compactions).
 
 ## How word search and meaning search work together
 
@@ -156,9 +160,9 @@ The author measured these results on 2026-11-13/14, on the author's own projects
 | Lossless retrieval: 497 random messages from before a compaction [C1] | 497 of 497 found and returned byte-identical |
 | Meaning search, easy paraphrase test, 118 queries | 98% in the top 10, 89% first |
 | Blind quiz after compaction, 33 questions | 41/66 with the v0.4 injection, 50/66 with the full decisions list, 65/66 with the decisions list plus recall |
-| Handoff quality, 18 real compactions (score out of 100) | Claude Code's summary alone 62; plus the model's own note 68; plus a fresh Sonnet summary 75-76; given the real recent chat 85 |
+| Handoff quality, 18 real compactions (score out of 100) | Claude Code's summary alone 62; plus the model's own handoff 68; plus a fresh Sonnet summary 75-76; given the real recent chat 85 |
 | Decisions list, 96 questions about older decisions (out of 100) | 13.5 with the 0.2.0 handoff, 56 with the decisions list |
-| Continuity, first 13 real compactions | 13 of 13 had a fresh model-written note, no degraded cases |
+| Continuity, first 13 real compactions | 13 of 13 had a fresh model-written handoff, no degraded cases |
 
 **Lossless retrieval.** The test sampled 497 messages at random (297 of yours and 200 of Claude's; fixed seed) from before a compaction, across 4 projects with up to 196 compactions each. `recall.py search` found them and `recall.py open --full` returned them byte-identical. Mean search time was 0.7 s, and the worst time was 3.1 s on a loaded machine. Limits: it is a sample, not every message. Messages that contain secrets are redacted by design. Subagent transcripts are excluded. A message over 40,000 characters needs `--from` paging. The author added that in 0.6.1 after the test found one 14,300-character message cut at the old 12,000-character output cap.
 
@@ -200,7 +204,7 @@ The tables above are one-off measurements. From 1.10.0, the install also keeps i
 python3 ~/.claude/hooks/precompact-handoff.py --claims-lint README.md
 ```
 
-The command exits 1 unless every marker is known and `pass`. An unknown, `fail`, `stale` or `no-data` marker blocks publishing. On a machine with no receipts yet, C1 to C6 are `no-data`, so lint is for the author's own machine. On the author's machine, lint reports C2 and C6 as `fail` until about 2026-12-17. The 30-day window still holds misses from before hooks 1.10.0 (deliberate probe runs, and subagent compactions from before the fix). The author does not exclude them, because hiding real data would make the register worthless.
+The command exits 1 unless every marker is known and `pass`. An unknown, `fail`, `stale` or `no-data` marker blocks publishing. On a machine with no receipts yet, C1 to C6 are `no-data`, so lint is for the author's own machine. On the author's machine (nightly run of 2026-11-18), lint reports C1 (10/11), C2 (196/200) and C6 (9/86) as `fail`. C1: one lossless check failed for a subagent receipt of 2026-11-18 (recall found no hit for one sampled message). C2: the 30-day window holds 4 misses (3 from a deliberate probe run, 1 on 2026-10-23). C6: of 77 misses, 26 are subagent compactions from before hooks 1.10.0, 2 are from the probe run, and 49 are from OOLONG benchmark units of 2026-11-18. Benchmark units use their own settings and state folder, so the installed hooks record no handoff for them. C2 and C6 stay `fail` until these dates leave the window (about 2026-12-18, if no new benchmark run adds misses). The author does not exclude these misses, because hiding real data would make the register worthless.
 
 **What the author's own data says.** In a 30-day reconcile on the author's machine (2026-11-17), 188 of 192 main compactions had a handoff [C2]. Of the 4 misses, 3 came from a deliberate probe run with user settings switched off. The other one was a hook that most likely stopped at its timeout on 2026-10-23. For subagents, 0 of 28 compactions had a handoff before this release. That gap is the bug that 1.10.0 fixes. A live subagent test after the fix gave right-agent 2/2 [C3], delivered 2/2 [C4], failed 0. A dated one-off blind quiz (2026-11-14, same sessions with and without the handoff) scored 98% with the handoff against 62% with Claude Code's compaction summary alone [C7]. This is one author, one machine, and small counts.
 
@@ -260,7 +264,7 @@ Other projects solve parts of this well. The author fetched the stars on 2026-11
 
 [docs/architecture.md](docs/architecture.md) has the full picture. These are the three main steps.
 
-1. **Nudge** (`handoff-nudge.py`, PostToolUse). When context reaches 75% of the auto-compact window, and again every 25,000 tokens, the hook appends one short note to a tool result. The note asks the working model to write its own handoff to `~/.local/state/claude-handoffs/<session_id>-agent.md`. The file has seven fixed headings: Goal, Parallel work running, Decisions and why, Done, In progress, Dead ends, Exact next step. With a 400k window the reminders come at 300k, 325k and 350k. One final note, worded "Compaction is imminent", comes at 355k. That is about 12,000 tokens below the real compaction point (window minus 33,000), so the model still has room to write the file. Three sections are living sections: Parallel work running, In progress and Exact next step. If they are byte-identical to the previous reminder, the next note says that the handoff is stale. It also asks for a rewrite. It costs no extra turn.
+1. **Nudge** (`handoff-nudge.py`, PostToolUse). When context reaches 75% of the auto-compact window, and again every 25,000 tokens, the hook appends one short nudge text to a tool result. The note asks the working model to write its own handoff to `~/.local/state/claude-handoffs/<session_id>-agent.md`. The file has seven fixed headings: Goal, Parallel work running, Decisions and why, Done, In progress, Dead ends, Exact next step. With a 400k window the reminders come at 300k, 325k and 350k. One final nudge, worded "Compaction is imminent", comes at 355k. That is about 12,000 tokens below the real compaction point (window minus 33,000), so the model still has room to write the file. Three sections are living sections: Parallel work running, In progress and Exact next step. If they are byte-identical to the previous reminder, the next nudge says that the handoff is stale. It also asks for a rewrite. It costs no extra turn.
 2. **Handoff** (`precompact-handoff.py`, PreCompact). Just before compaction, the hook writes `<session_id>-latest.md` (14,000 characters at most). The file starts with an authority line. The line says whom to believe when sources disagree. The file holds:
    - the model's own handoff, if there is one (labelled stale when it is out of date);
    - a fresh summary that Sonnet writes (`claude -p --model sonnet`) of the conversation since the last compaction, labelled "verify against facts". It runs in parallel with the decisions update, so a compaction takes about 20-40 s;
@@ -293,11 +297,11 @@ Restart open Claude Code sessions after you install: hooks load when a session s
 When a subagent compacts, Claude Code fires the hooks with `agent_id` set, but with the `session_id` and `transcript_path` of the parent. Before 1.10.0, that looked like a main-session compaction and no subagent handoff was written. Now each compacting subagent gets its own handoff. The hooks build it from its own transcript (`<session>/subagents/agent-<agent_id>.jsonl` next to the parent transcript) and store it in `<sid>-a-<agent_id>` files.
 
 - A subagent never reads or writes the handoff of the main session [C3]. The main session never reads or writes the handoff of a subagent.
-- A subagent never merges the decisions list and never starts the indexer. The nudge hook ignores subagent events (non-empty `agent_id`), so no one tells a subagent to write the handoff file of the main session.
+- A subagent never merges the decisions list and never starts the indexer. The nudge hook (`handoff-nudge.py`) ignores subagent events (non-empty `agent_id`), so it never nudges a subagent.
 - If the subagent transcript is missing, the health row says `degraded` / `agent_transcript_missing` and the hooks write no handoff.
 - Reconcile counts subagent compactions separately, and the register tracks that they are covered [C6]. Before 1.10.0 they were not: 0 of 28 in the first 30-day reconcile of the author.
 
-**Rules at subagent start (hooks 1.13.0).** A new subagent gets no project rules, and most subagents never compact. So the installer registers a `SubagentStart` hook (`postcompact-inject.py --subagent-start`, timeout 10). The hook gives the new subagent, and only the subagent, one block of context. The block holds the active `rule` entries of the project decisions list (newest first, 4,000 characters at most, cut at an entry boundary) and the recall line. The hook never gives decisions, tasks, the handoff of the main agent or the agent notes [D3]. If there is no decisions list or no rule, the hook gives only the recall line. `HANDOFF_SUBAGENT_RULES=0` turns the hook off. Each run adds a row with `event: "subagent_start"` to `health.jsonl`. `--prove` and `--reconcile` skip these rows. The hook takes about 50 ms with 200 rules. `SubagentStart` is a new hook event: restart open Claude Code sessions after you update. The installer prints a line about this only when it adds the entry.
+**Rules at subagent start (hooks 1.13.0).** A new subagent gets no project rules, and most subagents never compact. So the installer registers a `SubagentStart` hook (`postcompact-inject.py --subagent-start`, timeout 10). The hook gives the new subagent, and only the subagent, one block of context. The block holds the active `rule` entries of the project decisions list (newest first, 4,000 characters at most, cut at an entry boundary) and the recall line. The hook never gives decisions, tasks, the handoff of the main agent or the agent notes. If there is no decisions list or no rule, the hook gives only the recall line. `HANDOFF_SUBAGENT_RULES=0` turns the hook off. Each run adds a row with `event: "subagent_start"` to `health.jsonl`. `--prove` and `--reconcile` skip these rows. The hook takes about 50 ms with 200 rules. `SubagentStart` is a new hook event: restart open Claude Code sessions after you update. The installer prints a line about this only when it adds the entry.
 
 ## Headless runs
 
@@ -321,7 +325,7 @@ With managed hooks installed, only `--bare` skips them. `--check` accepts hooks 
 
 ## The project decisions list
 
-A handoff belongs to one session, but decisions belong to the project. The hooks keep one plain-text list for each project (a git repo, or the folder where you started if there is no repo). The path is `~/.local/state/claude-handoffs/projects/<project>-<hash>/decisions.md`. Each decision has one line: an id (`D12`), the date, a kind, what was decided, and why.
+A handoff belongs to one session, but decisions belong to the project. The hooks keep one plain-text list for each project (a git repo, or the folder where you started if there is no repo). The path is `~/.local/state/claude-handoffs/projects/<project>-<hash>/decisions.md`. The code and some option names (`HANDOFF_LEDGER`, `--ledger`) call the decisions list the "ledger". Each decision has one line: an id (`D12`), the date, a kind, what was decided, and why.
 
 - **Kinds.** `[rule]` (a standing rule or working preference), `[decision]` (a choice) or `[task]` (a follow-up that you asked for). Older untagged lines count as decisions.
 - **What goes in.** Only things that you decided or approved explicitly: a choice, a rule, a constraint, a permission, a rejected option. Plans, progress and unapproved ideas of the assistant do not go in.
@@ -337,7 +341,7 @@ Set `HANDOFF_LEDGER=0` to turn it off. Turning it off or uninstalling never dele
 
 `llm_map.py` sends each item of a large list through a small model (Haiku by default) and writes one exact answer for each item. The main model then counts or aggregates the answers with a script, so it does not guess a count from a sample.
 
-When to use it: a task needs a label, class, extracted value or check for each of hundreds of items or more. A pre-registered OOLONG test (`bench/oolong/`) showed that plain Claude Code filters with a regex, reads a sample and estimates the count.
+When to use it: a task needs a label, class, extracted value or check for each of hundreds of items or more. In OOLONG pilot runs on the author's machine (2026-11-18, results not published), plain Claude Code filtered with a regex, read a sample and estimated the count.
 
 ```
 python3 ~/.claude/hooks/llm_map.py --in reviews.txt --prompt "Label each review as positive, negative or mixed." --out labels.jsonl [--labels "positive|negative|mixed"] [--model haiku] [--batch 100] [--jobs 8] [--max-usd 2.00] [--json-out]
@@ -388,9 +392,10 @@ Every command accepts `--cwd DIR` (default: the current folder). `search` also t
 
 ## What install changes
 
-- It copies `precompact-handoff.py`, `postcompact-inject.py`, `handoff-nudge.py`, `recall.py` and `claims.json` to `~/.claude/hooks/`. It first saves a differing existing file to `~/.claude/hooks/.claude-handoff-backup-<timestamp>/`.
+- It copies `precompact-handoff.py`, `postcompact-inject.py`, `handoff-nudge.py`, `recall.py`, `llm_map.py` and `claims.json` to `~/.claude/hooks/`. It first saves a differing existing file to `~/.claude/hooks/.claude-handoff-backup-<timestamp>/`.
 - It copies `agents/recall.md` from this repository to `~/.claude/agents/recall.md` (the recall subagent). If a file of that name does not hold the marker line `<!-- lossless-handoff:recall-agent -->`, the installer keeps the file and says so. Uninstall removes the file only when it holds the marker. The repository file is the single source: a benchmark or a project can copy the same file into its own `.claude/agents/` folder.
 - It writes `~/.claude/hooks/.handoff-manifest.json`: version, time and a SHA-256 for each installed file. `--check` compares them.
+- It copies `skills/llm-map/SKILL.md` to `~/.claude/skills/llm-map/SKILL.md`. If a file of that name does not hold the marker line `<!-- lossless-handoff:llm-map-skill -->`, the installer keeps the file and says so.
 - It records everything that it added in `~/.claude/hooks/.claude-handoff-install.json`, so uninstall removes exactly that.
 - It merges into `~/.claude/settings.json` (backup `settings.json.bak-<timestamp>`):
   - a PreCompact hook (timeout 150) and a PostToolUse hook (matcher `*`, timeout 5);
@@ -456,7 +461,7 @@ Use a folder name that contains `handoff-canary`, so that the nightly check on y
 
 | Variable | Effect |
 |---|---|
-| `CLAUDE_CODE_AUTO_COMPACT_WINDOW` | Window size in tokens. Nudge thresholds are 75% of it, then every 25,000, then a final note (window minus 45,000). Default 400000 if unset. |
+| `CLAUDE_CODE_AUTO_COMPACT_WINDOW` | Window size in tokens. Nudge thresholds are 75% of it, then every 25,000, then a final nudge (window minus 45,000). Default 400000 if unset. |
 | `HANDOFF_SUMMARY=0` | Disable the fresh summary at compaction (no model call; facts only). |
 | `HANDOFF_SUMMARY_MODEL` | Model for the fresh summary. Default `sonnet`. |
 | `HANDOFF_SUMMARY_TIMEOUT` | Seconds to wait for the summary (1-300). Default 75. |
@@ -475,7 +480,7 @@ Use a folder name that contains `handoff-canary`, so that the nightly check on y
 
 ## FAQ
 
-**Does it cost tokens?** It costs about one short note for each nudge. It also costs up to about 14,000 characters injected once for each compaction, and up to about 20,000 characters of decisions. Each compaction adds two `claude -p` Sonnet calls (fresh summary and decisions update; 20-40 s in parallel, roughly $0.10-0.20 of API-equivalent usage). Set `HANDOFF_SUMMARY=0` and `HANDOFF_LEDGER=0` to avoid them.
+**Does it cost tokens?** It costs about one short nudge text each time. It also costs up to about 14,000 characters injected once for each compaction, and up to about 20,000 characters of decisions. Each compaction adds two `claude -p` Sonnet calls (fresh summary and decisions update; 20-40 s in parallel, roughly $0.10-0.20 of API-equivalent usage). Set `HANDOFF_SUMMARY=0` and `HANDOFF_LEDGER=0` to avoid them.
 
 **Will recall find old messages?** Only while Claude Code still keeps the transcript. The default is 30 days. Run `./install.sh --keep-transcripts` (365 days) or set `"cleanupPeriodDays"` yourself. The hooks keep handoff files for 365 days. A longer retention means that more chat text stays on your disk for longer.
 
@@ -537,12 +542,12 @@ The tests use a temporary HOME and never call `launchctl`, so your own install s
 ## Limitations
 
 - **One heavy user so far.** All numbers come from the author's machine. Nobody has tested whether it helps other workflows.
-- **Handoffs can be cut.** 20% of handoffs (43 of 217) hit the 14,000-character size cap and were truncated. 15% were `reduced` and 2% `degraded`, and the nightly self-test failed 2 of 34 runs.
+- **Handoffs can be cut.** 20% of handoffs (43 of 217) hit the 14,000-character size cap and were truncated. 15% were `reduced` and 2% `degraded`, and the nightly self-test failed 2 of 34 runs (31 passed and 1 was skipped; see "In daily use").
 - **Recall is new.** It has existed since 2026-11-12. The author did most of its use so far, much of it while the author built and tested it. The meaning half is a minority of wins (4 of 26 searches had a meaning-only top hit). The 143 meaning hits count lines shown, not proof that they were useful.
 - **Misses still happen.** 4 of 192 main compactions in the 30-day reconcile had no handoff (see [Proof, not promises](#proof-not-promises)). The early write, recovery and `--check` exist to make the misses fewer and to show them. They do not promise zero. Receipts exist only from the first compaction after install, so proof rates start small. C7 and C8 are dated one-off studies, not live rates.
 - **Platform.** The nightly jobs (index and reconcile-and-prove) are macOS LaunchAgents. On Linux you add the printed cron lines yourself. Windows is not supported. The nightly self-test mentioned above is the canary. It ships in `tools/handoff-canary/` and is opt-in (`./install.sh --canary`, about $0.03-0.10 per run).
-- **AI-graded evals.** Models wrote and graded the quizzes and benchmarks, on one user's projects. The 19% cost estimate is a single 4.7-day, one-user figure against a modelled counterfactual, not a bill.
-- The nudge works only if the model obeys it. If the model does not obey, you still get the fresh summary, which is lossier than the note of the model.
+- **AI-graded evals.** Models wrote and graded the quizzes in this README, on one user's projects. Both benchmarks are code-graded. The 19% cost estimate is a single 4.7-day, one-user figure against a modelled counterfactual, not a bill.
+- The nudge works only if the model obeys it. If the model does not obey, you still get the fresh summary, which is lossier than the handoff of the model.
 - The fresh summary and the decisions update each run `claude -p --model sonnet` and use some of your quota (75 s and 100 s timeouts by default).
 - The decisions list needs `fcntl` (macOS and Linux). It records only what you said in chat. It does not capture a decision that you never wrote or approved.
 - The nudge reads the context size from the last usage entry of the transcript, so it lags by one assistant message.
@@ -555,7 +560,7 @@ The tests use a temporary HOME and never call `launchctl`, so your own install s
 ./uninstall.sh
 ```
 
-The script removes exactly the hook entries that install added (it matches them by command path; other hooks in those groups stay). It also removes these items, after it backs up the settings: the allow rules and the window value (if install added them), the macOS LaunchAgents (index and reconcile), the `--check` entries, and the hook files (including `recall.py`, `claims.json` and the manifest). It never touches a system managed-settings file (that needs sudo). Uninstall tells you if one is present. Handoff files, receipts, proofs, indexes and the project decisions lists under `~/.local/state/claude-handoffs/` stay. Delete that folder yourself if you want them gone. The backups stay.
+The script removes exactly the hook entries that install added (it matches them by command path; other hooks in those groups stay). It also removes these items, after it backs up the settings: the allow rules and the window value (if install added them), the macOS LaunchAgents (index and reconcile), the `--check` entries, and the hook files (including `recall.py`, `llm_map.py`, `claims.json` and the manifest). It also removes the recall subagent (`~/.claude/agents/recall.md`) and the llm-map skill, each only when the file holds our marker line. It never touches a system managed-settings file (that needs sudo). Uninstall tells you if one is present. Handoff files, receipts, proofs, indexes and the project decisions lists under `~/.local/state/claude-handoffs/` stay. Delete that folder yourself if you want them gone. The backups stay.
 
 ## More
 

@@ -36,7 +36,6 @@
 <text x="720.0" y="270" class="ts" text-anchor="middle">300k</text>
 <line x1="940.0" y1="249" x2="940.0" y2="256" class="ln" />
 <text x="940.0" y="270" class="ts" text-anchor="middle">400k</text>
-<style>.mk text{fill:#fff}</style>
 <line x1="720.0" y1="188" x2="720.0" y2="231" class="lns" />
 <circle cx="720.0" cy="240" r="11" class="c-warn"/>
 <text x="720.0" y="244.5" class="tsb" text-anchor="middle">1</text>
@@ -61,7 +60,7 @@
 <rect x="24" y="342" width="214" height="176" rx="8" class="k-warn" />
 <text x="36" y="366" class="tb">1  Nudge, 300k</text>
 <text x="36" y="386" class="ts">The nudge hook adds one</text>
-<text x="36" y="401" class="ts">short note to the next tool</text>
+<text x="36" y="401" class="ts">short nudge to the next tool</text>
 <text x="36" y="416" class="ts">result.</text>
 <text x="36" y="439" class="tsb">Writes:</text>
 <text x="36" y="455" class="ts">agent file &lt;session&gt;-agent.md</text>
@@ -69,9 +68,9 @@
 <text x="36" y="485" class="ts">&lt;session&gt;-agent.meta.json</text>
 <text x="36" y="500" class="ts">(numbers only, by the hook)</text>
 <rect x="252" y="342" width="214" height="176" rx="8" class="k-warn" />
-<text x="264" y="366" class="tb">2  Reminders, 325k to 355k</text>
-<text x="264" y="386" class="ts">Another note every 25k tokens:</text>
-<text x="264" y="401" class="ts">325k, 350k, then a final note</text>
+<text x="264" y="366" class="tb">2  Reminders, 325k-355k</text>
+<text x="264" y="386" class="ts">Another nudge every 25k tokens:</text>
+<text x="264" y="401" class="ts">325k, 350k, then a final nudge</text>
 <text x="264" y="416" class="ts">at 355k. A stale handoff gets</text>
 <text x="264" y="431" class="ts">a rewrite request.</text>
 <text x="264" y="454" class="tsb">Writes:</text>

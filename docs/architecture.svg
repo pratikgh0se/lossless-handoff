@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 690" width="1000" height="690" role="img" aria-label="Architecture: Claude Code events, Lossless Handoff components and the files they read and write"><title>Lossless Handoff architecture</title><style>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 750" width="1000" height="750" role="img" aria-label="Architecture: Claude Code events, Lossless Handoff components and the files they read and write"><title>Lossless Handoff architecture</title><style>
 :root{--bg:#ffffff;--panel2:#eaeef2;--line:#d0d7de;--text:#1f2328;--muted:#59636e;--accent:#0969da;--accent-bg:#ddf4ff;--warn:#9a6700;--warn-bg:#fff8c5;--orange:#bc4c00;--orange-bg:#fff1e5}
 @media (prefers-color-scheme: dark){:root{--bg:#0d1117;--panel2:#21262d;--line:#3d444d;--text:#e6edf3;--muted:#9198a1;--accent:#58a6ff;--accent-bg:#14304f;--warn:#d29922;--warn-bg:#3a2d0a;--orange:#ffa657;--orange-bg:#3d2410}}
 .bg{fill:var(--bg)}.k-n{fill:var(--panel2);stroke:var(--line)}.k-acc{fill:var(--accent-bg);stroke:var(--accent)}.k-warn{fill:var(--warn-bg);stroke:var(--warn)}.k-or{fill:var(--orange-bg);stroke:var(--orange)}
@@ -9,12 +9,12 @@
 .h{font:700 14px -apple-system,'Segoe UI',Helvetica,Arial,sans-serif;fill:var(--muted)}
 .th{font:700 18px -apple-system,'Segoe UI',Helvetica,Arial,sans-serif;fill:var(--text)}
 .cap{font:italic 12px -apple-system,'Segoe UI',Helvetica,Arial,sans-serif;fill:var(--muted)}
-</style><rect width="1000" height="690" class="bg"/>
+</style><rect width="1000" height="750" class="bg"/>
 <text x="20" y="28" class="th">Lossless Handoff: which event calls which part, and which files it touches</text>
 <text x="20" y="56" class="h">Claude Code event</text><text x="300" y="56" class="h">Lossless Handoff part</text><text x="690" y="56" class="h">State folder files</text>
 <defs><marker id="a" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" class="ah"/></marker></defs>
 <rect x="20" y="66" width="220" height="52" rx="6" class="k-acc"/><text x="30" y="97" class="t">PostToolUse</text>
-<rect x="300" y="66" width="340" height="52" rx="6" class="k-n"/><text x="310" y="87" class="m">handoff-nudge.py</text><text x="310" y="105" class="s">note at 300k, 325k, 350k; final at 355k</text>
+<rect x="300" y="66" width="340" height="52" rx="6" class="k-n"/><text x="310" y="87" class="m">handoff-nudge.py</text><text x="310" y="105" class="s">nudge at 300k, 325k, 350k; final at 355k (400k window)</text>
 <rect x="700" y="66" width="280" height="52" rx="6" class="k-warn"/><text x="710" y="87" class="s">writes &lt;sid&gt;-agent.meta.json</text><text x="710" y="105" class="s">the model writes &lt;sid&gt;-agent.md</text>
 <line x1="242" y1="92" x2="298" y2="92" class="ar" marker-end="url(#a)"/><line x1="642" y1="92" x2="698" y2="92" class="ar" marker-end="url(#a)"/>
 <rect x="20" y="126" width="220" height="52" rx="6" class="k-acc"/><text x="30" y="157" class="t">PreCompact</text>
@@ -46,8 +46,12 @@
 <rect x="700" y="486" width="280" height="52" rx="6" class="k-warn"/><text x="710" y="507" class="s">writes reconcile.json, proof-report.md,</text><text x="710" y="525" class="s">claims-report.md</text>
 <line x1="242" y1="512" x2="298" y2="512" class="ar" marker-end="url(#a)"/><line x1="642" y1="512" x2="698" y2="512" class="ar" marker-end="url(#a)"/>
 <rect x="20" y="546" width="220" height="52" rx="6" class="k-acc"/><text x="30" y="577" class="t">The model, through Bash</text>
-<rect x="300" y="546" width="340" height="52" rx="6" class="k-n"/><text x="310" y="567" class="m">recall.py search, open, map, describe</text><text x="310" y="585" class="s">llm_map.py; recall subagent (haiku)</text>
-<rect x="700" y="546" width="280" height="52" rx="6" class="k-warn"/><text x="710" y="567" class="s">reads index, nodes.jsonl, decisions.md</text><text x="710" y="585" class="s">llm_map reads only its input file</text>
+<rect x="300" y="546" width="340" height="52" rx="6" class="k-n"/><text x="310" y="567" class="m">recall.py search, open, map, describe</text><text x="310" y="585" class="s">llm_map.py (label many items)</text>
+<rect x="700" y="546" width="280" height="52" rx="6" class="k-warn"/><text x="710" y="567" class="s">recall reads index, transcripts, nodes.jsonl</text><text x="710" y="585" class="s">llm_map reads only its input file</text>
 <line x1="242" y1="572" x2="298" y2="572" class="ar" marker-end="url(#a)"/><line x1="642" y1="572" x2="698" y2="572" class="ar" marker-end="url(#a)"/>
-<rect x="20" y="610" width="960" height="52" rx="6" class="k-or"/><text x="30" y="632" class="t">~/.claude/projects/&lt;slug&gt;/&lt;session&gt;.jsonl (chat transcripts)</text><text x="30" y="650" class="s">Claude Code writes these files. Lossless Handoff only reads them, and never writes to them.</text>
-<text x="20" y="684" class="cap">Illustration of hooks 1.14.1. The state folder is ~/.local/state/claude-handoffs (or $HANDOFF_STATE_DIR).</text></svg>
+<rect x="20" y="606" width="220" height="52" rx="6" class="k-acc"/><text x="30" y="637" class="t">The model, Agent tool</text>
+<rect x="300" y="606" width="340" height="52" rx="6" class="k-n"/><text x="310" y="627" class="m">recall subagent (agents/recall.md, haiku)</text><text x="310" y="645" class="s">runs recall.py; returns at most 15 quotes</text>
+<rect x="700" y="606" width="280" height="52" rx="6" class="k-warn"/><text x="710" y="627" class="s">same reads as recall.py</text><text x="710" y="645" class="s">writes nothing</text>
+<line x1="242" y1="632" x2="298" y2="632" class="ar" marker-end="url(#a)"/><line x1="642" y1="632" x2="698" y2="632" class="ar" marker-end="url(#a)"/>
+<rect x="20" y="670" width="960" height="52" rx="6" class="k-or"/><text x="30" y="692" class="t">~/.claude/projects/&lt;slug&gt;/&lt;session&gt;.jsonl (chat transcripts)</text><text x="30" y="710" class="s">Claude Code writes these files. Lossless Handoff only reads them, and never writes to them.</text>
+<text x="20" y="744" class="cap">Illustration of hooks 1.14.1. The state folder is ~/.local/state/claude-handoffs (or $HANDOFF_STATE_DIR).</text></svg>

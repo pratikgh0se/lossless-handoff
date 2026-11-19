@@ -23,8 +23,8 @@ When a subagent compacts, Claude Code fires the hooks with `agent_id` set, but w
 - A subagent event never reads or writes the handoff files of the main session. The main session never reads or writes the handoff files of a subagent.
 - A subagent run never merges the decisions list and never starts the indexer. The hooks still inject the decisions list rules into the subagent, as for the main agent.
 - If the subagent transcript is missing, the health row says `degraded` / `agent_transcript_missing` and the hooks write no handoff.
-- The optional compact plugin (a separate project) never nudges subagents.
-- The hooks ignore compaction summariser forks (`agent_type` empty).
+- The nudge hook (`handoff-nudge.py`) ignores subagent events (non-empty `agent_id`), so it never nudges a subagent.
+- Spec rule F46 (e): hook code that reacts to subagent events ignores events with an empty `agent_type` (compaction summariser forks).
 
 ## Headless runs
 

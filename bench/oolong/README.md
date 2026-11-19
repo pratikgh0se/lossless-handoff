@@ -2,8 +2,8 @@
 
 ## Purpose
 
-This harness answers one question. Does plain Claude Code still lose on large aggregation tasks?
-The answer decides if an `llm_map` tool is worth building. The rule is in `decision.json`.
+This harness answers two questions. Does plain Claude Code still lose on large aggregation tasks? Does the `llm_map` tool (arm C) help?
+The rule for the first question is in `decision.json`.
 The harness does not test the handoff hooks in a useful way below the compaction window. See "Arm C".
 
 ## What it runs
@@ -34,7 +34,7 @@ It replaces each `~/.claude/hooks/llm_map.py` in the file with the absolute path
 If the checkout has no `skills/llm-map/SKILL.md` or no `hooks/llm_map.py`, arm C stops before the first call with a clear message.
 
 Arm C: at lengths under the compaction window, no compaction occurs. In this harness the context is a file, so the context never fills the window. Then C equals A, except for the session-start text.
-The report prints the compaction count of arm C. If the count is 0, C tests only that text, and it tests that the hooks do no harm.
+The report counts compactions of the main session only. Subagents can compact. If the count is 0, C tests only the session-start text, and that the hooks do no harm.
 
 Arm B: the report prints the subagent use rate. At 0 percent, B equals A in practice.
 The report counts Agent tool calls (the Task tool in this version) for every arm. It flags any Workflow call (the count must be 0 in all arms).
