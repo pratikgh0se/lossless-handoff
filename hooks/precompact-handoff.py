@@ -2445,6 +2445,7 @@ def prove(days=7):
     have = {(str(p.get("receipt_ts")), str(p.get("sid")), str(p.get("agent_id") or "")): p for p in proofs}
     health = [r for r in _read_jsonl(HEALTH_FILE) if r.get("event") != "subagent_start"]  # F58.d
     new_rows = []
+    dsids = drift_sids()  # F63: a session with format drift never passes
     for rc in receipts:
         k = _rkey(rc)
         if k in have:
@@ -2459,6 +2460,9 @@ def prove(days=7):
                 v, why = "skip", f"check error {type(e).__name__}"
                 log_error(rc.get("key") or "unknown", e)
             checks[name], details[name] = v, why[:200]
+        if str(rc.get("sid"))[:8] in dsids and not rc.get("agent_id"):
+            for name in CHECKS:  # F63.c: the file records the failure, not a skip
+                checks[name], details[name] = "fail", "format_drift"
         row = {"ts": run_ts, "receipt_ts": rc.get("ts"), "sid": rc.get("sid"), "agent_id": rc.get("agent_id"),
                "boundary_ts": rc.get("boundary_ts"), "checks": checks, "details": details}
         new_rows.append(row)
@@ -2472,7 +2476,6 @@ def prove(days=7):
             log_error("unknown", e)
     tally = {c: [0, 0] for c in CHECKS}  # pass, fail
     fails, skips = [], {}
-    dsids = drift_sids()  # F63: a session with format drift never passes
     for rc in receipts:
         p = have.get(_rkey(rc))
         if not p:
@@ -2569,10 +2572,12 @@ def eval_claims(now):
             for r in proofs:
                 e = _iso_epoch(r.get("ts"))
                 v = (r.get("checks") or {}).get(name)
-                if e is None or e < now - win * 86400 or v not in ("pass", "fail"):
+                if e is None or e < now - win * 86400:
                     continue
                 if str(r.get("sid"))[:8] in dsids and not r.get("agent_id"):
-                    v, dhit = "fail", True  # F63: only a row inside the claim window can fail the claim
+                    v, dhit = "fail", True  # F63: any stored verdict of a drift session fails; only rows inside the claim window count
+                if v not in ("pass", "fail"):
+                    continue
                 q += 1
                 p += 1 if v == "pass" else 0
                 as_of_e = e if as_of_e is None or e > as_of_e else as_of_e

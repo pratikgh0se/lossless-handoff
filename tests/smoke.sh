@@ -1318,6 +1318,7 @@ def mk(case, sid, rows, receipts):
 mk("ok", "aaaaaaaa-1", [u, b, u], 1)
 mk("drift", "bbbbbbbb-2", [u, u], 2)
 mk("none", "cccccccc-3", [u, u], 0)
+mk("real", "eeeeeeee-5", [u, u], 1)  # the real drift case: receipt row, transcript without boundary
 PY
   rec() { HOME="$R/$1/home" HANDOFF_STATE_DIR="$R/$1/state" python3 "$ROOT/hooks/precompact-handoff.py" --reconcile >/dev/null; }
   chk() { HOME="$R/$1/home" HANDOFF_STATE_DIR="$R/$1/state" python3 "$ROOT/hooks/postcompact-inject.py" --check; }
@@ -1361,6 +1362,25 @@ PY
   grep -q "format_drift" "$R/drift/state/proof-report.md" || fail "F63: proof report lacks the format_drift reason"
   c="$(HOME="$R/drift/home" HANDOFF_STATE_DIR="$R/drift/state" python3 "$R/drift/hooks/precompact-handoff.py" --claims)"
   grep -q "| fail (format_drift) |" <<<"$c" || fail "F63: a proof:* claim did not fail with format_drift: $c"
+  # the real drift case, end to end: --reconcile --prove writes fail rows, then --claims shows fail (format_drift)
+  mkdir -p "$R/real/hooks"
+  python3 - "$R/real/hooks" <<'PY'
+import json, sys
+json.dump({"claims": [{"id": "C1", "text": "t", "source": "proof:delivered", "window_days": 30, "refresh_days": 30, "min_rate": 0.0}]},
+          open(sys.argv[1] + "/claims.json", "w"))
+PY
+  cp "$ROOT/hooks/precompact-handoff.py" "$R/real/hooks/"
+  HOME="$R/real/home" HANDOFF_STATE_DIR="$R/real/state" python3 "$R/real/hooks/precompact-handoff.py" --reconcile --prove >/dev/null
+  python3 - "$R/real/state/proofs.jsonl" <<'PY'
+import json, sys
+rows = [json.loads(x) for x in open(sys.argv[1]) if x.strip()]
+assert rows, rows
+for r in rows:
+    assert set(r["checks"].values()) == {"fail"} and len(r["checks"]) == 4, r
+    assert all("format_drift" in d for d in r["details"].values()), r
+PY
+  c="$(HOME="$R/real/home" HANDOFF_STATE_DIR="$R/real/state" python3 "$R/real/hooks/precompact-handoff.py" --claims)"
+  grep -q "| fail (format_drift) |" <<<"$c" || fail "F63: real drift case: proof claim not fail (format_drift): $c"
   ok "F63: boundaries present, no inject rows, and drift cases give the right reconcile.json; --check prints one warning line only on drift; claims fail with format_drift"
 )
 
