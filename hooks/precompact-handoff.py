@@ -1835,15 +1835,13 @@ def _count_boundaries_all(path, start_ms=None):
 
 def format_drift_scan(start_ms, canary_sids, base):
     """F63: sessions with >= 1 recorded post-compaction inject event (a main-session row in receipts.jsonl, written by
-    postcompact-inject.py when it emits handoff part 1) in the window (not newer than 10 minutes) and 0
+    postcompact-inject.py when it emits handoff part 1) in the window and 0
     compact_boundary records since the window start in the session's transcript. Returns a list of {sid, injects, boundaries}. A session whose transcript is gone is skipped."""
     inj = {}
     for r in _read_jsonl(os.path.join(HANDOFFS_DIR, "receipts.jsonl")):
         e = _iso_epoch(r.get("ts"))
         if e is None or e * 1000.0 < start_ms or r.get("agent_id"):
             continue
-        if time.time() - e < 600:
-            continue  # SessionStart runs before Claude Code flushes the boundary record (see F51)
         sid8 = str(r.get("sid") or "")[:8]
         if not sid8 or sid8 in canary_sids:
             continue

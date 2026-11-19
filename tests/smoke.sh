@@ -1313,23 +1313,21 @@ def mk(case, sid, rows, receipts):
     tp = os.path.join(pd, sid + ".jsonl")
     open(tp, "w").write("".join(json.dumps(x) + "\n" for x in rows))
     open(os.path.join(st, "receipts.jsonl"), "w").write("".join(json.dumps(
-        {"ts": old if receipts != 3 else now, "sid": sid[:8], "agent_id": None, "key": sid, "transcript": tp, "boundary_ts": now, "kind": "normal",
+        {"ts": now, "sid": sid[:8], "agent_id": None, "key": sid, "transcript": tp, "boundary_ts": now, "kind": "normal",
          "handoff_sha256": "x", "part1_sha256": "x", "part1_head": "x"}) + "\n" for _ in range(receipts)))
 mk("ok", "aaaaaaaa-1", [u, b, u], 1)
 mk("drift", "bbbbbbbb-2", [u, u], 2)
 mk("none", "cccccccc-3", [u, u], 0)
-mk("fresh", "dddddddd-4", [u, u], 3)  # receipts newer than 10 minutes are not judged
 PY
   rec() { HOME="$R/$1/home" HANDOFF_STATE_DIR="$R/$1/state" python3 "$ROOT/hooks/precompact-handoff.py" --reconcile >/dev/null; }
   chk() { HOME="$R/$1/home" HANDOFF_STATE_DIR="$R/$1/state" python3 "$ROOT/hooks/postcompact-inject.py" --check; }
-  rec ok; rec drift; rec none; rec fresh
+  rec ok; rec drift; rec none
   python3 - "$R" <<'PY'
 import json, sys
 r = sys.argv[1]
 j = lambda c: json.load(open("%s/%s/state/reconcile.json" % (r, c)))
 assert j("ok")["format_drift"] is False and j("ok")["format_drift_sessions"] == []
 assert j("none")["format_drift"] is False
-assert j("fresh")["format_drift"] is False, j("fresh")
 d = j("drift")
 assert d["format_drift"] is True and d["format_drift_sessions"] == [{"sid": "bbbbbbbb", "injects": 2, "boundaries": 0}], d
 assert isinstance(d["format_drift_reason"], str) and "\n" not in d["format_drift_reason"]
