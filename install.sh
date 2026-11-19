@@ -2,28 +2,43 @@
 # Lossless Handoff installer (formerly claude-handoff): copies the hooks and merges them into ~/.claude/settings.json.
 set -euo pipefail
 
-VERSION="0.12.2"
+VERSION="0.13.0"
 usage() {
   cat <<EOF
 Lossless Handoff $VERSION (formerly claude-handoff)
-Copies the hooks (three handoff hooks plus the recall command) into ~/.claude/hooks and merges them into ~/.claude/settings.json.
-Also sets up automatic recall indexing: an end-of-chat hook, an optional bge-m3 model pull, a nightly job (macOS) and a first index.
-Hooks 1.14.2 keep the chat store: handoff files live 365 days, and --keep-transcripts raises Claude Code's transcript retention.
-The PreCompact hook also gives Claude Code guidance for its own summary.
-A SubagentStart hook gives each new subagent the standing rules of the project.
-It also installs the recall subagent (~/.claude/agents/recall.md), unless a file of that name that is not ours is there.
-It also installs llm_map.py and its skill (~/.claude/skills/llm-map/SKILL.md), unless a skill file that is not ours is there.
+Default install (F64): the core only. It copies the hooks (nudge, PreCompact handoff, post-compaction inject,
+SessionStart check, SubagentStart rules, SessionEnd index) and the recall command into ~/.claude/hooks,
+merges them into ~/.claude/settings.json, installs the recall subagent (~/.claude/agents/recall.md, unless a
+file of that name that is not ours is there), keeps the decisions list, and starts a first recall index.
+Hooks 1.15.0 keep the chat store: handoff files live 365 days, and --keep-transcripts raises Claude Code's transcript retention.
+Hooks 1.15.0 also mask secrets in every file they write (see SECURITY.md).
+The default does NOT set CLAUDE_CODE_AUTO_COMPACT_WINDOW, pull a model, install nightly jobs, or install llm_map and its skill.
+Add them with the opt-in flags below. A rerun never removes, turns off or changes a part that is already installed
+(window value, meaning search, nightly jobs, llm-map): a --no-* flag only skips adding it. Use ./uninstall.sh to remove parts.
 
-Usage: ./install.sh [--dry-run] [--force] [--window N] [--no-window] [--yes] [--no-nightly] [--no-nudge] [--canary] [--managed-hooks] [--keep-transcripts[=DAYS]] [--version] [-h|--help]
+Usage: ./install.sh [--dry-run] [--force] [--window N] [--nightly] [--semantic [--yes]] [--llm-map] [--save-defaults] [--no-nudge] [--canary] [--managed-hooks] [--keep-transcripts[=DAYS]] [--version] [-h|--help]
 
-  --dry-run     show what would change, change nothing
-  --window N    set CLAUDE_CODE_AUTO_COMPACT_WINDOW to N tokens (default 400000;
-                left alone if already set)
-  --no-window   do not touch CLAUDE_CODE_AUTO_COMPACT_WINDOW
-  --yes         answer yes to the bge-m3 model pull (needs ollama on PATH). Without
-                it, an interactive run asks y/N and a non-interactive run skips it
-  --no-nightly  do not install the nightly jobs (macOS LaunchAgents: recall index 03:30,
-                reconcile and proof 04:15); on Linux the crontab lines are not printed
+  --dry-run     list exactly what the chosen options install (and which come from saved defaults), change nothing
+  --window N    opt-in: set CLAUDE_CODE_AUTO_COMPACT_WINDOW to N tokens (for example 400000);
+                left alone if already set
+  --nightly     opt-in: install the nightly jobs (macOS LaunchAgents: recall index 03:30,
+                reconcile and proof 04:15); on Linux the crontab lines are printed, not installed
+  --semantic    opt-in: meaning search on this machine only (nothing is sent to a remote service). If ollama is
+                on PATH, offer "ollama pull bge-m3" (an interactive run asks y/N; a non-interactive run skips the
+                pull unless --yes is given). If ollama is missing, print how to get it and continue keyword-only
+  --yes         with --semantic: answer yes to the model pull without asking
+  --llm-map     opt-in: install llm_map.py and its skill (~/.claude/skills/llm-map/SKILL.md),
+                unless a skill file that is not ours is there
+  --save-defaults
+                save the opt-in flags given in this run (--semantic, --nightly, --llm-map, --window N) to
+                ~/.config/lossless-handoff/install-defaults (key=value lines: semantic=1, nightly=1,
+                llm_map=1, window=N). Every later ./install.sh run reads that file and applies those
+                options as if you gave them. A flag on the command line wins over the file.
+                With --save-defaults, a --no-* flag removes that saved default. Delete the file, or run
+                ./uninstall.sh --purge, to drop all saved defaults
+  --no-semantic, --no-nightly, --no-llm-map, --no-window
+                turn one opt-in off for this run, also when a saved default turns it on. They only skip
+                adding the part; they never uninstall one that is there
   --no-nudge    do not install the context nudge (handoff-nudge.py). Use it if another tool already
                 nudges you before compaction. It also removes a nudge file and entry from an earlier install
   --canary      also install the opt-in nightly canary (a real headless Claude Code run past a
@@ -49,15 +64,21 @@ search still works (https://ollama.com/download). Ollama itself is never install
 EOF
 }
 
-DRY=0; FORCE=0; WINDOW=400000; SETWINDOW=1; YES=0; NONIGHTLY=0; MANAGED=0; CANARY=0; NONUDGE=0; KEEP=""
+DRY=0; FORCE=0; WINDOW=400000; SETWINDOW=0; YES=0; NIGHTLY=0; SEMANTIC=0; LLMMAP=0; OLDFLAG=0; SAVE=0; C_WIN=""; C_NIGHT=""; C_SEM=""; C_LM=""; MANAGED=0; CANARY=0; NONUDGE=0; KEEP=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --dry-run) DRY=1 ;;
-    --window) shift; WINDOW="${1:-}"; case "$WINDOW" in ''|*[!0-9]*) echo "--window needs a number" >&2; exit 2 ;; esac ;;
-    --no-window) SETWINDOW=0 ;;
+    --window) shift; WINDOW="${1:-}"; case "$WINDOW" in ''|*[!0-9]*) echo "--window needs a number" >&2; exit 2 ;; esac; SETWINDOW=1; C_WIN="$WINDOW" ;;
+    --no-window) SETWINDOW=0; C_WIN=off; OLDFLAG=1 ;;
     --force) FORCE=1 ;;
     --yes|-y) YES=1 ;;
-    --no-nightly) NONIGHTLY=1 ;;
+    --no-nightly) C_NIGHT=0; OLDFLAG=1 ;;
+    --nightly) C_NIGHT=1 ;;
+    --semantic) C_SEM=1 ;;
+    --no-semantic) C_SEM=0 ;;
+    --llm-map) C_LM=1 ;;
+    --no-llm-map) C_LM=0 ;;
+    --save-defaults) SAVE=1 ;;
     --no-nudge) NONUDGE=1 ;;
     --managed-hooks) MANAGED=1 ;;
     --canary) CANARY=1 ;;
@@ -73,6 +94,66 @@ while [ $# -gt 0 ]; do
   shift
 done
 command -v python3 >/dev/null || { echo "python3 is required" >&2; exit 1; }
+say() { if [ "$DRY" = 1 ]; then echo "[dry-run] $*"; else echo "$*"; fi; }
+# saved defaults: read key=value lines (never sourced); a command-line flag wins over the file
+DEFAULTS_FILE="$HOME/.config/lossless-handoff/install-defaults"
+D_WIN=""; D_NIGHT=""; D_SEM=""; D_LM=""
+if [ -f "$DEFAULTS_FILE" ]; then
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in
+      semantic=1) D_SEM=1 ;;
+      nightly=1) D_NIGHT=1 ;;
+      llm_map=1) D_LM=1 ;;
+      window=*) v="${line#window=}"; case "$v" in ''|*[!0-9]*) ;; *) D_WIN="$v" ;; esac ;;
+    esac
+  done < "$DEFAULTS_FILE"
+fi
+FROM_SAVED=""
+pick() { # $1 name, $2 cli value, $3 saved value -> sets P (the effective value)
+  if [ -n "$2" ]; then P="$2"; elif [ -n "$3" ]; then P="$3"; FROM_SAVED="$FROM_SAVED $1"; else P=""; fi
+}
+pick window "$C_WIN" "$D_WIN"; case "$P" in ''|off) SETWINDOW=0 ;; *) SETWINDOW=1; WINDOW="$P" ;; esac
+pick nightly "$C_NIGHT" "$D_NIGHT"; [ "$P" = 1 ] && NIGHTLY=1 || NIGHTLY=0
+pick semantic "$C_SEM" "$D_SEM"; [ "$P" = 1 ] && SEMANTIC=1 || SEMANTIC=0
+pick llm-map "$C_LM" "$D_LM"; [ "$P" = 1 ] && LLMMAP=1 || LLMMAP=0
+if [ -n "$FROM_SAVED" ]; then say "options from saved defaults ($DEFAULTS_FILE):$FROM_SAVED"; fi
+if [ "$SAVE" = 1 ]; then
+  if [ "$DRY" = 1 ]; then say "would save the opt-in flags of this run to $DEFAULTS_FILE"; else
+    HC_DF="$DEFAULTS_FILE" HC_CWIN="$C_WIN" HC_CN="$C_NIGHT" HC_CS="$C_SEM" HC_CL="$C_LM" python3 - <<'PY'
+import os
+p = os.environ["HC_DF"]
+cur = {}
+try:
+    for ln in open(p, encoding="utf-8").read().splitlines():
+        if "=" in ln:
+            k, v = ln.split("=", 1)
+            cur[k.strip()] = v.strip()
+except OSError:
+    pass
+def setk(k, v, on):
+    if v == "":
+        return
+    if v == on:
+        cur[k] = "1" if k != "window" else v
+    else:
+        cur.pop(k, None)
+setk("semantic", os.environ["HC_CS"], "1")
+setk("nightly", os.environ["HC_CN"], "1")
+setk("llm_map", os.environ["HC_CL"], "1")
+w = os.environ["HC_CWIN"]
+if w == "off":
+    cur.pop("window", None)
+elif w:
+    cur["window"] = w
+os.makedirs(os.path.dirname(p), exist_ok=True)
+open(p, "w", encoding="utf-8").write("".join("%s=%s\n" % (k, cur[k]) for k in sorted(cur)))
+PY
+    echo "saved defaults: $DEFAULTS_FILE"
+  fi
+fi
+if [ "$OLDFLAG" = 1 ] && [ -z "$D_WIN$D_NIGHT" ]; then
+  echo "note: --no-window and --no-nightly are no longer needed. The window and the nightly jobs are now off by default (use --window N or --nightly to add them)."
+fi
 
 SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HOOKS_DIR="$HOME/.claude/hooks"
@@ -433,7 +514,7 @@ if os.environ["HC_SETWINDOW"] == "1":
         window_set = os.environ["HC_WINDOW"]
         changes.append("set env.%s = %s" % (key, window_set))
 else:
-    changes.append("window left alone (--no-window)")
+    changes.append("window not set (opt-in: --window N)")
 
 for c in changes:
     print("%ssettings: %s" % (tag, c))
@@ -520,6 +601,7 @@ else
   if [ "$DRY" = 0 ]; then mkdir -p "$HOME/.claude/agents"; cp "$AGENT_SRC" "$AGENT_DST"; chmod 644 "$AGENT_DST"; fi
 fi
 
+if [ "$LLMMAP" = 1 ]; then
 # F60.d: llm_map.py (a standalone command; not in the manifest, no settings entry)
 LM_SRC="$SRC/hooks/llm_map.py"
 LM_DST="$HOOKS_DIR/llm_map.py"
@@ -546,6 +628,9 @@ elif [ -f "$SK_DST" ] && cmp -s "$SK_SRC" "$SK_DST"; then
 else
   say "install llm-map skill: $SK_DST"
   if [ "$DRY" = 0 ]; then mkdir -p "$HOME/.claude/skills/llm-map"; cp "$SK_SRC" "$SK_DST"; chmod 644 "$SK_DST"; fi
+fi
+else
+  say "llm-map: not selected (opt-in: --llm-map)"
 fi
 
 # --no-nudge: remove a nudge file left by an earlier install
@@ -593,7 +678,8 @@ fi
 if [ -d "$STATE_DIR" ]; then say "state dir exists: $STATE_DIR"; else
   say "create state dir: $STATE_DIR"; [ "$DRY" = 1 ] || mkdir -p "$STATE_DIR"; fi
 
-# 3. semantic search model (optional)
+# 3. semantic search model (opt-in: --semantic)
+if [ "$SEMANTIC" = 1 ]; then
 echo
 if command -v ollama >/dev/null 2>&1; then
   PULL=0
@@ -611,14 +697,16 @@ if command -v ollama >/dev/null 2>&1; then
     else ollama pull bge-m3 || echo "warning: ollama pull bge-m3 failed; keyword search still works, retry later" >&2; fi
   fi
 else
-  echo "Meaning search is optional. To enable it, install Ollama (https://ollama.com/download), then run: ollama pull bge-m3"
-  echo "Keyword search works without it."
+  echo "Meaning search is off: ollama is not on PATH. To enable it, install Ollama (https://ollama.com/download), then run ./install.sh --semantic. Recall works in keyword-only mode until then."
+fi
+else
+  say "meaning search: not selected (opt-in: --semantic)"
 fi
 
 # 4. nightly index job
 INDEX_CMD="python3 $HOOKS_DIR/recall.py index --all --max-seconds 3000"
-if [ "$NONIGHTLY" = 1 ]; then
-  say "nightly index job: skipped (--no-nightly)"
+if [ "$NIGHTLY" != 1 ]; then
+  say "nightly jobs: not selected (opt-in: --nightly)"
 elif [ "$(uname)" = "Darwin" ]; then
   say "install LaunchAgent $LABEL (daily 03:30): $PLIST"
   if [ "$DRY" = 0 ]; then
@@ -674,8 +762,8 @@ fi
 
 # 4b. nightly reconcile and proof job
 RECON_CMD="python3 $HOOKS_DIR/precompact-handoff.py --reconcile --prove --days 30"
-if [ "$NONIGHTLY" = 1 ]; then
-  say "nightly reconcile job: skipped (--no-nightly)"
+if [ "$NIGHTLY" != 1 ]; then
+  :
 elif [ "$(uname)" = "Darwin" ]; then
   say "install LaunchAgent $RLABEL (daily 04:15): $RPLIST"
   if [ "$DRY" = 0 ]; then
@@ -812,5 +900,6 @@ if [ "$DRY" = 1 ]; then echo "Dry run only: nothing was changed."; else
   echo "Chats are indexed automatically when they end. Search from a project folder:  python3 ~/.claude/hooks/recall.py search \"words\""
   echo
   echo "Verify after the first compaction: tail -n 3 $STATE_DIR/health.jsonl"
+  echo "Opt-in extras (not installed by default): --window N, --nightly, --semantic, --llm-map (add --save-defaults to keep them). Rerun with the flags you want."
   echo "Headless runs (claude -p, SDK) load these hooks too, except with --bare. To keep them under --setting-sources without user, run ./install.sh --managed-hooks."
 fi

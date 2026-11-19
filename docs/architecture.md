@@ -7,7 +7,8 @@ This page shows every part of Lossless Handoff, the Claude Code event that calls
 ## Summary
 
 - Five Claude Code events call the hooks: `PostToolUse`, `PreCompact`, `SessionStart`, `SubagentStart` and `SessionEnd`. `SessionStart` has three matchers: `compact`, `startup` and `resume`.
-- Two nightly jobs run outside Claude Code: the index job (03:30) and the reconcile-and-prove job (04:15).
+- The default install has the core only: the hooks, `recall.py`, the recall subagent and the decisions list. Four parts are opt-in flags: `--window N` (the compaction window value), `--nightly` (two jobs that run outside Claude Code: the index job at 03:30 and the reconcile-and-prove job at 04:15), `--semantic` (the local bge-m3 model for meaning search) and `--llm-map` (`llm_map.py` and its skill). `--save-defaults` keeps the chosen flags in `~/.config/lossless-handoff/install-defaults`. A rerun never removes an installed part.
+- One redaction step masks secrets before the hooks write handoff files, the decisions list and recall output. See [Redaction](#redaction).
 - Claude Code keeps the chat transcripts in `~/.claude/projects/`. Lossless Handoff only reads them. It never writes to them.
 - All other files go to the state folder, `~/.local/state/claude-handoffs/` (or `$HANDOFF_STATE_DIR`). See [ADR 0008](adr/0008-handoffs-directory-under-local-state.md).
 - No hook forces the model to search. Read [How Claude decides to use recall](#how-claude-decides-to-use-recall).
@@ -36,7 +37,7 @@ Notes:
 
 - The decisions update in `PreCompact` runs for a main session only. A subagent never merges the decisions list and never starts the indexer.
 - `llm_map.py` is not a hook. No Claude Code event calls it. It runs `claude -p` with no tools, no hooks and no saved session, so the handoff hooks never run for it.
-- The nightly jobs are macOS LaunchAgents. On Linux, `install.sh` prints the crontab lines.
+- The nightly jobs (opt-in with `--nightly`) are macOS LaunchAgents. On Linux, `install.sh` prints the crontab lines.
 
 ## Data flow around a compaction
 
@@ -63,6 +64,18 @@ Notes:
 5. In a new or resumed chat (`startup` and `resume`), the hooks inject the decisions list and run the install check.
 6. At 04:15, the reconcile job counts every `compact_boundary` against `health.jsonl` and proves each receipt. It also compares the recorded injects (main-session rows of `receipts.jsonl`) with the `compact_boundary` records of each session. If a session has injects and no boundary, it writes `format_drift: true`, `format_drift_sessions` and `format_drift_reason` to `reconcile.json`. `--prove` and the claims then show `fail` (reason `format_drift`) for the affected checks.
 7. At the next `startup` or `resume`, `--check` prints one separate `format drift` line while the newest `reconcile.json` has `format_drift: true`.
+
+## Redaction
+
+`redact()` in `hooks/recall.py` is the one redaction function. `hooks/precompact-handoff.py` loads it from `recall.py`. It replaces each secret with `[REDACTED:<kind>]` and leaves text without a secret unchanged.
+
+| Where the text goes | Who calls `redact()` |
+|---|---|
+| `<sid>-<timestamp>.md` and `<sid>-latest.md` (the deterministic part, the model handoff copy and the fresh summary) | `write_handoff_files` in `precompact-handoff.py` |
+| `decisions.md` and its timestamped backups | The decisions writers in `precompact-handoff.py` |
+| `recall.py` output and the meaning index | `recall.py` (search, open, user, describe, index) |
+
+The model writes `<sid>-agent.md` itself with the Write tool. No hook sees that write, so the original file is not masked. The hooks mask every copy of it. If `recall.py` cannot load, `precompact-handoff.py` uses a copy of the same patterns that it holds itself (the smoke test checks that both give the same output). See `SECURITY.md` for the kinds and the limits.
 
 ## How Claude decides to use recall
 
@@ -96,7 +109,7 @@ When recall and the decisions list disagree, the decisions list and the latest w
 
 ## Verified facts
 
-These numbers come from the code in this repository (hooks 1.14.2), not from a benchmark run.
+These numbers come from the code in this repository (hooks 1.15.0), not from a benchmark run.
 
 | Fact | Where it is in the code |
 |---|---|

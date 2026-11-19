@@ -1,14 +1,16 @@
 #!/usr/bin/env bash
 # Lossless Handoff uninstaller (formerly claude-handoff): removes exactly what install.sh added.
-# Usage: ./uninstall.sh [--dry-run]
+# Usage: ./uninstall.sh [--dry-run] [--purge]
+# The saved install defaults (~/.config/lossless-handoff/install-defaults) are kept unless you give --purge.
 # Handoff files, receipts and proofs, recall indexes and project ledgers in ~/.local/state/claude-handoffs are kept (delete that folder yourself if you want them gone).
 set -euo pipefail
 
-DRY=0
+DRY=0; PURGE=0
 for a in "$@"; do
   case "$a" in
     --dry-run) DRY=1 ;;
-    -h|--help) sed -n '2,4p' "$0"; exit 0 ;;
+    --purge) PURGE=1 ;;
+    -h|--help) sed -n '2,5p' "$0"; exit 0 ;;
     *) echo "unknown option: $a" >&2; exit 2 ;;
   esac
 done
@@ -211,6 +213,15 @@ if [ -e "$SK_DST" ]; then
   fi
 fi
 
+DEFAULTS_FILE="$HOME/.config/lossless-handoff/install-defaults"
+if [ "$PURGE" = 1 ]; then
+  if [ -e "$DEFAULTS_FILE" ]; then
+    say "remove saved install defaults: $DEFAULTS_FILE (--purge)"
+    if [ "$DRY" = 0 ]; then rm -f "$DEFAULTS_FILE"; rmdir "$(dirname "$DEFAULTS_FILE")" 2>/dev/null || true; fi
+  fi
+elif [ -e "$DEFAULTS_FILE" ]; then
+  echo "kept the saved install defaults $DEFAULTS_FILE (run ./uninstall.sh --purge, or delete it yourself, to drop them)"
+fi
 echo "kept $STATE_DIR (handoffs and health.jsonl); delete it yourself if you do not want them"
 echo "kept the recall indexes and logs under $STATE_DIR/recall/ (delete that folder yourself to drop them)"
 echo "kept the project decision ledgers under $STATE_DIR/projects/ (delete that folder yourself to forget them)"

@@ -12,7 +12,7 @@ if os.environ.get("HANDOFF_HOOK_CHILD"):  # spawned by our own summary call: nev
     sys.exit(0)
 
 _T0 = time.monotonic()
-HOOK_VERSION = "1.14.2"
+HOOK_VERSION = "1.15.0"
 HOME = os.path.expanduser("~")
 HANDOFFS_DIR = (os.environ.get("HANDOFF_STATE_DIR") or "").strip() or os.path.join(HOME, ".local", "state", "claude-handoffs")
 HEALTH_FILE = os.path.join(HANDOFFS_DIR, "health.jsonl")
@@ -965,9 +965,9 @@ def ledger_merge(sid, tp, root, led, timeout):
         if changes:
             if prev_text.strip():
                 ts = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-                write_atomic(os.path.join(ddir, f"decisions.{ts}.md"), prev_text)
+                write_atomic(os.path.join(ddir, f"decisions.{ts}.md"), redact(prev_text))
                 prune_backups(ddir)
-            write_atomic(lpath, ledger_text(root, res))
+            write_atomic(lpath, redact(ledger_text(root, res)))
         write_atomic(spath, json.dumps({"v": 1, "root": root, "updatedAt": int(time.time() * 1000), "lastSid": sid,
                                         "lastEntryTs": newest or last_ts}))
         _snap(led, "after", res)
@@ -1028,7 +1028,7 @@ def ledger_maintain(dirarg):
             print(f"kind=0 resolved=0 superseded=0 active_before=0 active_after=0")
             return
         ts = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-        write_atomic(os.path.join(ddir, f"decisions.{ts}.md"), prev_text)  # F39.6 backup first
+        write_atomic(os.path.join(ddir, f"decisions.{ts}.md"), redact(prev_text))  # F39.6 backup first
         prune_backups(ddir)
         out, err = run_claude("LEDGER:\n" + prev_text.rstrip("\n"), LEDGER_SYSTEM, MAINT_PROMPT, ledger_model(), MAINTAIN_TIMEOUT)
         if err or out is None:
@@ -1037,7 +1037,7 @@ def ledger_maintain(dirarg):
         stats = {}
         res, changes = apply_changes(prev, out, allow_new=False, kind_limit=None, stats=stats)
         if changes:
-            write_atomic(lpath, ledger_text(root, res))
+            write_atomic(lpath, redact(ledger_text(root, res)))
         print(f"kind={stats.get('kind', 0)} resolved={stats.get('resolved', 0)} superseded={stats.get('superseded', 0)} "
               f"active_before={before} active_after={ledger_counts(res)[0]}")
     finally:
@@ -1122,9 +1122,9 @@ def ledger_repair(dirarg):
                     fixed += 1
         if fixed:
             ts = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-            write_atomic(os.path.join(ddir, f"decisions.{ts}.md"), text)  # F39.6 backup first
+            write_atomic(os.path.join(ddir, f"decisions.{ts}.md"), redact(text))  # F39.6 backup first
             prune_backups(ddir)
-            write_atomic(lpath, "\n".join(lines))
+            write_atomic(lpath, redact("\n".join(lines)))
         print(f"repaired {fixed} of {total} cut lines")
     finally:
         try:
@@ -1512,8 +1512,91 @@ def write_pending(d, sid):
         "trigger": trig if trig in ("auto", "manual") else "unknown", "hook_version": HOOK_VERSION}))
 
 
+# F65 fallback: a copy of the redaction code of recall.py, used only when recall.py is not next to this hook
+# (the install check and the smoke test keep both copies equal). Normal runs use recall.py.
+_FB_SECRET_RES = [
+    ("aws", re.compile(r"(?:AKIA|ASIA)[0-9A-Z]{16}"), 0),
+    ("github", re.compile(r"gh[pousr]_[A-Za-z0-9]{20,}"), 0),
+    ("github", re.compile(r"github_pat_[A-Za-z0-9_]{20,}"), 0),
+    ("slack", re.compile(r"xox[abprs]-[A-Za-z0-9-]{10,}"), 0),
+    ("anthropic", re.compile(r"sk-ant-[A-Za-z0-9_-]{16,}"), 0),
+    ("openai", re.compile(r"sk-[A-Za-z0-9_-]{16,}"), 0),
+    ("google", re.compile(r"AIza[0-9A-Za-z_-]{35}"), 0),
+    ("jwt", re.compile(r"eyJ[A-Za-z0-9_-]*\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+"), 0),
+    ("pem", re.compile(r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----.*?-----END [A-Z0-9 ]*PRIVATE KEY-----", re.S), 0),
+    # key=value or key: value; the key name ends with a secret word; the key stays, the value goes
+    ("secret", re.compile(r"(?i)\b[\w.-]*(?:password|passwd|secret|token|api[_-]?key|apikey|access[_-]?key)"
+                          r"[\"']?\s*[:=]\s*[\"']?([^\s\"'`,;]+)"), 1),
+]
+_FB_MARK = "[redacted]"  # legacy mark of earlier versions; readers still treat it as redacted
+
+
+def _fb_mark_for(kind):
+    return "[REDACTED:%s]" % kind
+
+
+def _fb_secret_spans(text):
+    """-> merged [[start, end, kind], ...] of the secrets in text (end-exclusive)."""
+    spans = []
+    for kind, rx, grp in _FB_SECRET_RES:
+        for m in rx.finditer(text):
+            if grp and text.startswith(("[REDACTED", _FB_MARK), m.start(grp)):
+                continue  # already masked: keep the function idempotent
+            spans.append((m.start(grp), m.end(grp), kind))
+    spans.sort(key=lambda x: (x[0], -x[1]))
+    merged = []
+    for s, e, k in spans:
+        if merged and s < merged[-1][1]:
+            merged[-1][1] = max(merged[-1][1], e)
+        else:
+            merged.append([s, e, k])
+    return merged
+
+
+def _fb_redact(text):
+    """F65: mask secrets as [REDACTED:<kind>]. Text without secrets is returned unchanged."""
+    if not text:
+        return text
+    spans = _fb_secret_spans(text)
+    if not spans:
+        return text
+    out, pos = [], 0
+    for s, e, k in spans:
+        out.append(text[pos:s])
+        out.append(_fb_mark_for(k))
+        pos = e
+    out.append(text[pos:])
+    return "".join(out)
+
+
+
+
+_RECALL_MOD = []
+
+
+def redact(text):
+    """F65: mask secrets with the shared function in recall.py. A missing or stub recall.py (no redact(), an
+    error, or an exit at import) never costs a handoff: the copy above is used instead."""
+    if not _RECALL_MOD:
+        try:
+            _RECALL_MOD.append(_load_recall())
+        except BaseException as e:  # a stub that calls sys.exit(0) raises SystemExit at import
+            if isinstance(e, KeyboardInterrupt):
+                raise
+            _RECALL_MOD.append(None)
+    fn = getattr(_RECALL_MOD[0], "redact", None)
+    if not callable(fn):
+        return _fb_redact(text)
+    try:
+        out = fn(text)
+    except Exception:
+        return _fb_redact(text)
+    return out if isinstance(out, str) else _fb_redact(text)
+
+
 def write_handoff_files(sid, p, body):
-    """Write the dated handoff file and copy it to <sid>-latest.md, each atomically."""
+    """Write the dated handoff file and copy it to <sid>-latest.md, each atomically. F65: secrets are masked first."""
+    body = redact(body)
     write_atomic(p, body)
     write_atomic(os.path.join(HANDOFFS_DIR, f"{sid}-latest.md"), body)
 
@@ -2123,7 +2206,7 @@ def check_lossless(rc):
         return "skip", "no boundary"
     pool = [m for m in _plain_messages(tp)
             if m[1] is not None and m[1] < bms and len(m[3]) >= 30 and m[3] == m[3].strip()
-            and "<system-reminder" not in m[3] and not m[3].startswith("<") and "[redacted]" not in m[3]]
+            and "<system-reminder" not in m[3] and not m[3].startswith("<") and "[redacted]" not in m[3] and "[REDACTED:" not in m[3]]
     if len(pool) < 5:
         return "skip", "fewer than 5 messages"
     import random
@@ -2159,7 +2242,7 @@ def check_lossless(rc):
             body = "\n".join(lines[1:])
             body = body[:-1] if body.endswith("\n") else body
             if body != text:
-                if "[redacted]" in body:
+                if "[redacted]" in body or "[REDACTED:" in body:
                     continue  # recall hides secrets; that message cannot be compared byte for byte
                 return "fail", f"line {n}: recall printed different text ({len(body)} vs {len(text)} chars)"
             passes += 1

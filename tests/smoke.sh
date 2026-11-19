@@ -33,15 +33,15 @@ cp "$S" "$T/original.json"
 
 "$ROOT/install.sh" --no-nightly --dry-run >/dev/null
 cmp -s "$S" "$T/original.json" || fail "dry-run changed settings"
-"$ROOT/install.sh" --dry-run >"$T/dry-nightly.out"
+"$ROOT/install.sh" --nightly --dry-run >"$T/dry-nightly.out"
 grep -Eq "handoff-reconcile|--reconcile --prove --days 30" "$T/dry-nightly.out" || fail "dry-run does not mention the nightly reconcile job"
 [ ! -e "$HOME/Library/LaunchAgents" ] || fail "dry-run wrote a LaunchAgent"
 [ ! -e "$H/claims.json" ] || fail "dry-run installed files"
 ok "dry-run changes nothing"
 
-"$ROOT/install.sh" --no-nightly >"$T/install1.out"
+"$ROOT/install.sh" --no-nightly --window 400000 >"$T/install1.out"
 cp "$S" "$T/after1.json"
-"$ROOT/install.sh" --no-nightly >"$T/install2.out"
+"$ROOT/install.sh" --no-nightly --window 400000 >"$T/install2.out"
 cmp -s "$S" "$T/after1.json" || fail "second install changed settings"
 ls "$S".bak-* >/dev/null 2>&1 || fail "no settings backup"
 ok "install is idempotent"
@@ -74,7 +74,7 @@ python3 - "$H" <<'PY'
 import hashlib, json, sys
 h = sys.argv[1]
 m = json.load(open(h + "/.handoff-manifest.json"))
-assert m["version"] == "1.14.2" and m["installed_at"], m
+assert m["version"] == "1.15.0" and m["installed_at"], m
 assert sorted(m["files"]) == ["claims.json", "handoff-nudge.py", "postcompact-inject.py", "precompact-handoff.py", "recall.py"], m
 for n, want in m["files"].items():
     assert hashlib.sha256(open(h + "/" + n, "rb").read()).hexdigest() == want, n
@@ -83,8 +83,8 @@ assert mk["check_added"] is True and mk["manifest_written"] is True, mk
 PY
 ok "claims.json installed, manifest written (hashes match), marker records them"
 grep -q "building in the background" "$T/install1.out" || fail "install did not say the first index is building"
-grep -q "https://ollama.com/download" "$T/install1.out" || fail "install did not print the Ollama hint"
-grep -q "ollama.com/download" "$T/install1.out" && grep -q "skipped (--no-nightly)" "$T/install1.out" || fail "install did not report skipping the nightly job"
+grep -q -- "--semantic" "$T/install1.out" || fail "install did not print the opt-in hint"
+grep -q "nightly jobs: not selected" "$T/install1.out" || fail "install did not report skipping the nightly job"
 python3 - "$S" "$H" <<'PY'
 import json, sys
 d = json.load(open(sys.argv[1], encoding="utf-8")); h = sys.argv[2]
@@ -121,9 +121,9 @@ grep -q "indexed" <<<"$o" || fail "index --all: expected 'indexed': $o"
 ok "recall.py session-end is silent with {}, index --all exits 0"
 # --yes with a fake ollama pulls bge-m3
 mkdir -p "$T/fakebin"; printf '#!/bin/sh\necho "$@" >> "%s/ollama.calls"\n' "$T" > "$T/fakebin/ollama"; chmod +x "$T/fakebin/ollama"
-PATH="$T/fakebin:$PATH" "$ROOT/install.sh" --no-nightly --yes >/dev/null
+PATH="$T/fakebin:$PATH" "$ROOT/install.sh" --no-nightly --semantic --yes >/dev/null
 grep -qx "pull bge-m3" "$T/ollama.calls" || fail "--yes did not run ollama pull bge-m3"
-PATH="$T/fakebin:$PATH" "$ROOT/install.sh" --no-nightly >"$T/nontty.out" </dev/null
+PATH="$T/fakebin:$PATH" "$ROOT/install.sh" --no-nightly --semantic >"$T/nontty.out" </dev/null
 [ "$(wc -l < "$T/ollama.calls")" -eq 1 ] || fail "non-interactive run without --yes pulled the model"
 grep -q "ollama pull bge-m3" "$T/nontty.out" || fail "non-interactive run did not print the pull hint"
 ok "ollama: --yes pulls bge-m3, non-interactive skips with a hint"
@@ -866,16 +866,16 @@ PY
   [ "$r1" = 2 ] && [ "$r2" = 2 ] && [ -s "$T/f60.err" ] && [ ! -e "$T/f60-o4.jsonl" ] && [ ! -e "$T/f60-o5.jsonl" ] || fail "F60 278: usage errors ($r1 $r2)"
   # AC 280: install and uninstall
   SK="$HOME/.claude/skills/llm-map/SKILL.md"
-  "$ROOT/install.sh" --no-nightly --dry-run >/dev/null; [ ! -e "$SK" ] || fail "F60 280: dry-run wrote the skill"
-  "$ROOT/install.sh" --no-nightly >/dev/null
+  "$ROOT/install.sh" --no-nightly --llm-map --dry-run >/dev/null; [ ! -e "$SK" ] || fail "F60 280: dry-run wrote the skill"
+  "$ROOT/install.sh" --no-nightly --llm-map >/dev/null
   grep -qF "<!-- lossless-handoff:llm-map-skill -->" "$SK" && grep -q "^name: llm-map$" "$SK" && grep -q "llm_map.py" "$SK" \
     && [ -f "$HOME/.claude/hooks/llm_map.py" ] || fail "F60 280: install"
   printf 'mine\n' > "$SK"; cp "$SK" "$T/f60.mine"
-  o="$("$ROOT/install.sh" --no-nightly)"
+  o="$("$ROOT/install.sh" --no-nightly --llm-map)"
   # shellcheck disable=SC2088  # the literal ~ is the expected output text
   cmp -s "$SK" "$T/f60.mine" && grep -qF "~/.claude/skills/llm-map/SKILL.md exists and is not ours; left unchanged." <<<"$o" || fail "F60 280: foreign skill touched"
   "$ROOT/uninstall.sh" >/dev/null; [ -f "$SK" ] || fail "F60 280: uninstall removed a foreign skill"
-  rm "$SK"; "$ROOT/install.sh" --no-nightly >/dev/null
+  rm "$SK"; "$ROOT/install.sh" --no-nightly --llm-map >/dev/null
   "$ROOT/uninstall.sh" >/dev/null; [ ! -e "$SK" ] && [ ! -e "$HOME/.claude/hooks/llm_map.py" ] || fail "F60 280: uninstall left our files"
   # F61: AC 281 (default batch 100, 3 batches for 250 items) and AC 285 (progress on stderr)
   seq 1 250 | sed 's/^/item /' > "$T/f61-in.txt"
@@ -945,7 +945,7 @@ rows = {json.loads(x)["sid"]: json.loads(x) for x in open(sys.argv[1]) if x.stri
 a, b = rows["f56a"], rows["f56b"]
 assert a["excerpt_chars"] > 0 and a["excerpt_dropped"] == 0, a
 assert b["excerpt_dropped"] > 0 and 0 < b["excerpt_chars"] <= 120000, b
-assert a["hook_version"] == "1.14.2"
+assert a["hook_version"] == "1.15.0"
 PY
   p="$(python3 "$ROOT/hooks/precompact-handoff.py" --prove --days 1; echo "rc=$?")"
   grep -qE "^excerpt cut: 1 of 2 compactions, median dropped [0-9]+ chars$" <<<"$p" || fail "F56.b: prove line: $p"
@@ -1110,7 +1110,7 @@ PY
 import json, sys
 rows = [json.loads(x) for x in open(sys.argv[1]) if x.strip()]
 r = [x for x in rows if x.get("event") == "subagent_start"][-1]
-assert r["rules"] == 2 and r["chars"] > 0 and r["hook_version"] == "1.14.2" and r["agent_type"] == "general-purpose", r
+assert r["rules"] == 2 and r["chars"] > 0 and r["hook_version"] == "1.15.0" and r["agent_type"] == "general-purpose", r
 PY
   # AC 262: no handoff text, no agent notes
   printf '# Handoff\n- cwd: %s\nLATESTTOKEN\n' "$PROJ" > "$STF/s58-latest.md"; printf 'AGENTTOKEN\n' > "$STF/s58-agent.md"
@@ -1383,6 +1383,155 @@ PY
   grep -q "| fail (format_drift) |" <<<"$c" || fail "F63: real drift case: proof claim not fail (format_drift): $c"
   ok "F63: boundaries present, no inject rows, and drift cases give the right reconcile.json; --check prints one warning line only on drift; claims fail with format_drift"
 )
+
+
+# F64: minimal default install, opt-in flags, saved defaults, re-install keeps existing parts
+(
+  set -e
+  export HOME="$T/f64home"; mkdir -p "$HOME/.claude"; F="$HOME/.claude/hooks"; FS="$HOME/.claude/settings.json"; DF="$HOME/.config/lossless-handoff/install-defaults"
+  hp="$("$ROOT/install.sh" --help)"
+  for fl in --window --nightly --semantic --llm-map --save-defaults --no-semantic --no-llm-map install-defaults; do grep -q -- "$fl" <<<"$hp" || fail "F64: --help lacks $fl"; done
+  o="$("$ROOT/install.sh" --dry-run)"
+  grep -q "LaunchAgent" <<<"$o" && fail "F64: default dry-run lists a nightly job"
+  grep -q "llm_map.py\|llm-map skill\|bge-m3" <<<"$o" && fail "F64: default dry-run lists an opt-in part"
+  grep -q "settings: window not set" <<<"$o" || fail "F64: default dry-run does not say the window is off"
+  [ ! -e "$HOME/.claude/hooks" ] || fail "F64: dry-run wrote files"
+  "$ROOT/install.sh" >"$T/f64-1.out"
+  [ -f "$F/recall.py" ] && [ -f "$F/precompact-handoff.py" ] && [ -f "$F/postcompact-inject.py" ] && [ -f "$F/handoff-nudge.py" ] && [ -f "$HOME/.claude/agents/recall.md" ] || fail "F64: core missing"
+  [ ! -e "$F/llm_map.py" ] && [ ! -e "$HOME/.claude/skills/llm-map/SKILL.md" ] && [ ! -e "$HOME/Library/LaunchAgents" ] && [ ! -e "$DF" ] || fail "F64: default installed an opt-in part"
+  python3 - "$FS" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1]))
+assert "CLAUDE_CODE_AUTO_COMPACT_WINDOW" not in d.get("env", {}), d
+for ev in ("PreCompact", "PostToolUse", "SessionStart", "SessionEnd", "SubagentStart"):
+    assert ev in d["hooks"], ev
+PY
+  # opt-in flags
+  "$ROOT/install.sh" --window 250000 >/dev/null
+  python3 -c "import json,sys; assert json.load(open(sys.argv[1]))['env']['CLAUDE_CODE_AUTO_COMPACT_WINDOW']=='250000'" "$FS" || fail "F64: --window"
+  "$ROOT/install.sh" --llm-map >/dev/null
+  [ -f "$F/llm_map.py" ] && [ -f "$HOME/.claude/skills/llm-map/SKILL.md" ] || fail "F64: --llm-map"
+  "$ROOT/install.sh" --nightly >/dev/null
+  [ "$(uname)" != Darwin ] || { [ -f "$HOME/Library/LaunchAgents/com.lossless-handoff.recall-index.plist" ] && [ -f "$HOME/Library/LaunchAgents/com.lossless-handoff.handoff-reconcile.plist" ] || fail "F64: --nightly"; }
+  # re-install without flags keeps window, llm-map, nightly jobs; --no-* flags do not uninstall
+  "$ROOT/install.sh" --window 111111 >/dev/null
+  "$ROOT/install.sh" --no-llm-map --no-nightly --no-window >/dev/null
+  python3 -c "import json,sys; assert json.load(open(sys.argv[1]))['env']['CLAUDE_CODE_AUTO_COMPACT_WINDOW']=='250000'" "$FS" || fail "F64: re-install changed the window"
+  [ -f "$F/llm_map.py" ] && [ -f "$HOME/.claude/skills/llm-map/SKILL.md" ] || fail "F64: re-install removed llm-map"
+  [ "$(uname)" != Darwin ] || [ -f "$HOME/Library/LaunchAgents/com.lossless-handoff.recall-index.plist" ] || fail "F64: re-install removed nightly jobs"
+  # old flags: accepted, one note
+  o="$("$ROOT/install.sh" --no-window --no-nightly --dry-run)"
+  [ "$(grep -c "no longer needed" <<<"$o")" = 1 ] || fail "F64: old flags note"
+  "$ROOT/uninstall.sh" >/dev/null
+  [ ! -e "$F/llm_map.py" ] && [ ! -e "$HOME/Library/LaunchAgents/com.lossless-handoff.recall-index.plist" ] || fail "F64: uninstall left opt-in parts"
+  # --semantic with a stub ollama (the stub only records the call; no real pull)
+  mkdir -p "$T/f64bin"; printf '#!/bin/sh\necho "$@" >> "%s/f64-ollama.calls"\n' "$T" > "$T/f64bin/ollama"; chmod +x "$T/f64bin/ollama"
+  PATH="$T/f64bin:$PATH" "$ROOT/install.sh" >/dev/null
+  [ ! -e "$T/f64-ollama.calls" ] || fail "F64: default pulled a model"
+  o="$(PATH="$T/f64bin:$PATH" "$ROOT/install.sh" --semantic --dry-run)"
+  grep -q "would ask whether to run: ollama pull bge-m3" <<<"$o" || fail "F64: --semantic does not offer the pull"
+  o="$("$ROOT/install.sh" --semantic </dev/null)"
+  grep -q "keyword-only" <<<"$o" && grep -q "ollama.com/download" <<<"$o" || fail "F64: --semantic without ollama: no note"
+  PATH="$T/f64bin:$PATH" "$ROOT/install.sh" --semantic --yes >/dev/null
+  grep -qx "pull bge-m3" "$T/f64-ollama.calls" || fail "F64: --semantic --yes did not pull"
+  # saved defaults
+  "$ROOT/install.sh" --dry-run --save-defaults --semantic --window 300000 >/dev/null
+  [ ! -e "$DF" ] || fail "F64: dry-run saved defaults"
+  "$ROOT/install.sh" --save-defaults --semantic --llm-map --window 300000 >/dev/null
+  grep -qx "semantic=1" "$DF" && grep -qx "llm_map=1" "$DF" && grep -qx "window=300000" "$DF" && ! grep -q nightly "$DF" || fail "F64: saved defaults file: $(cat "$DF")"
+  "$ROOT/uninstall.sh" >/dev/null; [ -f "$DF" ] || fail "F64: uninstall removed the defaults file"
+  rm -f "$T/f64-ollama.calls"
+  o="$(PATH="$T/f64bin:$PATH" "$ROOT/install.sh" --dry-run)"
+  grep -q "options from saved defaults.*semantic" <<<"$o" && grep -q "would ask whether to run: ollama pull bge-m3" <<<"$o" && grep -q "llm_map.py" <<<"$o" || fail "F64: saved defaults not applied in dry-run"
+  o="$(PATH="$T/f64bin:$PATH" "$ROOT/install.sh" --no-semantic --dry-run)"
+  grep -q "bge-m3" <<<"$o" && fail "F64: --no-semantic did not override the saved default"
+  PATH="$T/f64bin:$PATH" "$ROOT/install.sh" --yes >/dev/null
+  grep -qx "pull bge-m3" "$T/f64-ollama.calls" || fail "F64: saved semantic default did not pull"
+  python3 -c "import json,sys; assert json.load(open(sys.argv[1]))['env']['CLAUDE_CODE_AUTO_COMPACT_WINDOW']=='300000'" "$FS" || fail "F64: saved window not applied"
+  "$ROOT/uninstall.sh" --purge >/dev/null; [ ! -e "$DF" ] || fail "F64: --purge kept the defaults file"
+)
+ok "F64: minimal default install, opt-in flags, saved defaults, re-install keeps parts"
+
+
+# F65: one redaction function; handoff files, decisions list and recall output mask secrets
+(
+  set -e
+  python3 - "$ROOT" "$T" <<'PY'
+import importlib.util, os, sys
+root, t = sys.argv[1:3]
+def load(name, path):
+    spec = importlib.util.spec_from_file_location(name, path); m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m); return m
+rc = load("rc", root + "/hooks/recall.py")
+samples = [
+    ("aws", "AKIA" + "ABCDEFGHIJKLMNOP"), ("aws", "ASIA" + "ABCDEFGHIJKLMNOP"),
+    ("github", "ghp_" + "a" * 36), ("github", "gho_" + "b" * 36), ("github", "ghu_" + "c" * 36),
+    ("github", "ghs_" + "d" * 36), ("github", "ghr_" + "e" * 36), ("github", "github_pat_" + "f" * 40),
+    ("slack", "xoxb-" + "1234567890-abcdef"), ("slack", "xoxs-" + "1234567890-abcdef"),
+    ("anthropic", "sk-ant-" + "api03-abcdefghijklmnop"), ("openai", "sk-" + "proj1234567890abcdefgh"),
+    ("google", "AIza" + "S" * 35),
+    ("jwt", "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0In0.c2lnbmF0dXJl"),
+    ("pem", "-----BEGIN RSA PRIVATE KEY-----\nMIIabc\ndef\n-----END RSA PRIVATE KEY-----"),
+]
+for kind, v in samples:
+    out = rc.redact("before %s after" % v)
+    assert v not in out and "[REDACTED:%s]" % kind in out and out.startswith("before ") and out.endswith(" after"), (kind, out)
+for line, secret in [("password=hunter2xx", "hunter2xx"), ("API_KEY: abcd1234", "abcd1234"), ('{"client_secret": "s3cr3tvalue"}', "s3cr3tvalue"),
+                     ("access_key = zzzz9999", "zzzz9999"), ("my_token=tok123456", "tok123456"), ("passwd: pw99887", "pw99887"), ("apikey=k1k2k3k4", "k1k2k3k4")]:
+    out = rc.redact(line)
+    assert secret not in out and "[REDACTED:" in out, (line, out)
+assert rc.redact("password=hunter2xx").startswith("password=")
+plain = "Plain text: we chose sqlite. tokens: 5000 and a path /tmp/x.py, the AKIA prefix idea.\nline two é"
+assert rc.redact(plain) == plain
+once = rc.redact("token=abc12345 ghp_" + "a" * 30)
+assert rc.redact(once) == once
+pc = load("pc", root + "/hooks/precompact-handoff.py")
+d = os.path.join(t, "f65"); os.makedirs(d)
+pc.HANDOFFS_DIR = d
+body = "# Handoff\nkey ghp_" + "a" * 36 + "\npassword=hunter2xx\n" + samples[-1][1] + "\n"
+pc.write_handoff_files("sid1", os.path.join(d, "sid1-x.md"), body)
+for f in ("sid1-x.md", "sid1-latest.md"):
+    got = open(os.path.join(d, f)).read()
+    assert "ghp_" + "a" * 36 not in got and "hunter2xx" not in got and "MIIabc" not in got and "[REDACTED:github]" in got and "# Handoff" in got, got
+pc.write_handoff_files("sid2", os.path.join(d, "sid2-x.md"), plain)
+assert open(os.path.join(d, "sid2-latest.md")).read() == plain
+led = pc.redact(pc.ledger_text("/r", {1: {"line": "- D1 [rule] use token=abcd1234 | why: x"}}))
+assert "abcd1234" not in led and "[REDACTED:secret]" in led, led
+snip = rc.redacted_snippet("deploy with key ghp_" + "a" * 36 + " now", 16, 30)
+assert "ghp_" + "a" * 36 not in snip and "[REDACTED:github]" in snip, snip
+fbtext = "\n".join("x %s y" % v for _, v in samples) + "\npassword=hunter2xx\n" + plain
+assert pc._fb_redact(fbtext) == rc.redact(fbtext) != fbtext
+assert pc._fb_redact(plain) == plain
+print("F65 ok")
+PY
+)
+ok "F65: every secret kind masked in handoff files, decisions list and recall output; plain text unchanged"
+
+# F65: a missing or stub recall.py never costs a handoff; the built-in copy masks the secrets
+(
+  set -e
+  SB="$T/f65stub"; mkdir -p "$SB"
+  for case in nofile exit0 noredact; do
+    D="$SB/$case"; mkdir -p "$D/hooks" "$D/home" "$D/state"
+    cp "$ROOT/hooks/precompact-handoff.py" "$ROOT/hooks/claims.json" "$D/hooks/"
+    case "$case" in
+      exit0) printf 'import sys; sys.exit(0)\n' > "$D/hooks/recall.py" ;;
+      noredact) printf 'X = 1\n' > "$D/hooks/recall.py" ;;
+    esac
+    python3 - "$D/tr.jsonl" <<'PY'
+import json, sys
+rows = [{"type": "user", "timestamp": "2026-11-19T10:00:00Z", "message": {"role": "user", "content": "deploy now with key ghp_" + "a" * 36 + " and password=hunter2xx please"}},
+        {"type": "assistant", "timestamp": "2026-11-19T10:00:05Z", "message": {"role": "assistant", "content": [{"type": "text", "text": "ok"}]}}]
+open(sys.argv[1], "w").write("".join(json.dumps(r) + "\n" for r in rows))
+PY
+    printf '{"session_id":"stubsid","transcript_path":"%s","trigger":"auto","cwd":"%s"}' "$D/tr.jsonl" "$D" \
+      | HOME="$D/home" HANDOFF_STATE_DIR="$D/state" HANDOFF_SUMMARY=0 HANDOFF_HAIKU_FALLBACK=0 HANDOFF_LEDGER=0 python3 "$D/hooks/precompact-handoff.py" >/dev/null 2>&1 || true
+    [ -s "$D/state/stubsid-latest.md" ] || fail "F65: no handoff with recall.py case $case"
+    ls "$D"/state/stubsid-2*.md >/dev/null 2>&1 || fail "F65: no dated handoff with recall.py case $case"
+    ! grep -q "ghp_aaaa\|hunter2xx" "$D"/state/stubsid-*.md || fail "F65: secret in a handoff with recall.py case $case"
+    grep -q "REDACTED" "$D/state/stubsid-latest.md" || fail "F65: nothing masked with recall.py case $case"
+  done
+)
+ok "F65: no recall.py, a stub that exits at import, and a stub without redact(): the handoff is still written and masked"
 
 "$ROOT/uninstall.sh" >"$T/un.out"
 python3 - "$S" "$T/original.json" <<'PY'

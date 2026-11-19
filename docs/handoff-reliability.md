@@ -88,6 +88,7 @@ These versions add parts to the system. [architecture.md](architecture.md) shows
 | 1.13.1 | Search finds the work of subagents by default (`--no-subagents` leaves it out). In a plain pattern, a space, `-` and `_` match each other. A hit from a tool call shows `-> result <id>`. | README, [Recall commands](../README.md#recall-commands) |
 | 1.14.0 and 1.14.1 | `llm_map.py` and its skill: one exact answer for each item of a large list, with `--labels`, `--batch 100`, `--jobs 8` and a cost cap. | README, [llm_map](../README.md#llm_map-label-many-items-with-a-small-model) |
 | 1.14.2 | The nudge learns its window from past compactions (else 200,000) when `CLAUDE_CODE_AUTO_COMPACT_WINDOW` is not set, and health rows hold `window` and `window_source`. Reconcile sets `format_drift` when a session has injects and no `compact_boundary` record. `--prove`, the claims and `--check` show it. | README, [Limitations](../README.md#limitations) |
+| 1.15.0 | One redaction function masks secrets as `[REDACTED:<kind>]` in handoff files, the decisions list and recall output. The default install is the core only (release 0.13.0). | README, [Install](../README.md#install), SECURITY.md |
 
 ## State files
 
