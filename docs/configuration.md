@@ -16,6 +16,7 @@ Every setting and every file that the hooks write. This page is part of the [doc
 | `HANDOFF_HAIKU_FALLBACK=0` | Legacy switch from 0.1.x; still honoured and also disables the fresh summary. |
 | `RECALL_EMBED_URL`, `RECALL_EMBED_MODEL`, `RECALL_EMBED_BACKEND`, `RECALL_EMBED_KEY` | Meaning search backend. Defaults: Ollama at `http://localhost:11434`, model `bge-m3`. Backend `openai` works with any `/v1/embeddings` server; the key is an optional Bearer token. |
 | `HANDOFF_RETENTION_DAYS` | Days to keep handoff `*.md` files. Default 365. `0` keeps them forever. A value that is not a whole number counts as 365. The `*-degraded.json`, `*-last-health.json` and `*-pending.json` files always use 14 days. |
+| `HANDOFF_AUTO_RECALL=0` | Switch off auto-recall at run time (see [Auto-recall](recall.md#auto-recall)). The hook then prints nothing and exits 0. It has no effect when auto-recall is not installed. |
 | `HANDOFF_SUBAGENT_RULES=0` | Do not give project rules to a new subagent. The `SubagentStart` hook then prints nothing. |
 | `HANDOFF_COMPACT_STEER=0` | Do not print the guidance for Claude Code's own compaction summary. The hook prints it by default. The guidance is added to any text that you type after `/compact`. A later benchmark measures the effect on summary quality. |
 | `LOSSLESS_HANDOFF_MANAGED_SETTINGS` | Test only. Path of the managed settings file that `install.sh`, `uninstall.sh` and `postcompact-inject.py --check` read instead of `/Library/Application Support/ClaudeCode/managed-settings.json`. The older name `HANDOFF_MANAGED_SETTINGS_PATH` still works. The tools never create the real file. |
@@ -31,6 +32,7 @@ Every setting and every file that the hooks write. This page is part of the [doc
 | `<sid>-agent.md` | The model's own handoff (written by the model). |
 | `<sid>-agent.meta.json` | Nudge state and timestamps (numbers only, no text). |
 | `recall-index.json`, `recall/` | Recall caches: which transcripts belong to which project, and the meaning index (`<project>.sqlite`, `index.log`). Safe to delete. |
+| `auto-recall.jsonl` | Only with `--auto-recall`. One JSON line for each prompt that refers to the past: `ts`, `session_id`, `fired`, `hits`, `ms`, `timed_out`. It holds no prompt text and no quotes. |
 | `health.jsonl` | One JSON line for each compaction: time, trigger, agent file fresh/stale/absent, fallback result, decisions update result (`ok`, `unchanged`, `failed`, `locked`, `disabled`) and counts, duration, size, status `ok` / `reduced` / `degraded`. No message text or paths. It rotates at 5,000 lines. |
 | `<sid>-last-health.json`, `<sid>-degraded.json` | Per-session status and degraded reasons. |
 | `<sid>-pending.json` | Marker while PreCompact runs. The health line removes it. |

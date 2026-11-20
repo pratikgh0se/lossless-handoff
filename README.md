@@ -6,7 +6,7 @@
 
 This documentation uses ASD-STE100 Simplified Technical English.
 
-Current versions: product 0.14.0 (`install.sh`), hooks 1.16.0 (`HOOK_VERSION` in `hooks/precompact-handoff.py` and `hooks/postcompact-inject.py`).
+Current versions: product 0.15.0 (`install.sh`), hooks 1.17.0 (`HOOK_VERSION` in `hooks/precompact-handoff.py`, `hooks/postcompact-inject.py` and `hooks/auto-recall.py`).
 
 [![CI](https://github.com/pratikgh0se/lossless-handoff/actions/workflows/ci.yml/badge.svg)](https://github.com/pratikgh0se/lossless-handoff/actions/workflows/ci.yml) [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE) [![Release](https://img.shields.io/github/v/release/pratikgh0se/lossless-handoff)](https://github.com/pratikgh0se/lossless-handoff/releases/latest)
 
@@ -34,6 +34,7 @@ You need `python3` and `bash` on macOS or Linux, and Claude Code. Windows is not
 | `--window N` | Sets `CLAUDE_CODE_AUTO_COMPACT_WINDOW` to N tokens (for example 400000), only when no value is set. |
 | `--nightly` | Two nightly jobs: the index (03:30) and the reconcile-and-prove run (04:15). They are macOS LaunchAgents. On Linux the installer prints the cron lines. |
 | `--semantic` | Meaning search on your machine only. If `ollama` is on your PATH, the installer offers `ollama pull bge-m3` (`--yes` pulls without a question). |
+| `--auto-recall` | A `UserPromptSubmit` hook. When your prompt refers to the past ("what did we decide earlier"), it searches the earlier chats of the project and adds the top 3 exact quotes to the context. It runs for at most 2 seconds. |
 | `--save-defaults` | Saves the opt-in flags of that run to `~/.config/lossless-handoff/install-defaults`. Every later `./install.sh` run applies them. |
 
 Run `./install.sh --window 400000 --nightly --semantic` to get everything. All flags, the saved defaults file and the upgrade from 0.12.x are in [docs/install.md](docs/install.md). `llm_map` (label each item of a big list with a small model) is now a separate project: [pratikgh0se/llm-map](https://github.com/pratikgh0se/llm-map). See [docs/llm-map.md](docs/llm-map.md).
@@ -64,6 +65,7 @@ To check the install without a model call, run `python3 ~/.claude/hooks/postcomp
 - **Decisions list.** One plain-text list for each project. It holds what you decided or approved, and why. It survives all compactions. See [docs/decisions-list.md](docs/decisions-list.md).
 - **Recall.** `recall.py` finds the exact words of earlier chats with word search and meaning search merged. See [docs/recall.md](docs/recall.md).
 - **No silent misses.** A hook cannot force Claude Code to run it. So the hooks write a handoff early, rebuild it after the fact if it is still missing, and, with `--nightly`, count the misses every night. See [docs/hooks-in-detail.md](docs/hooks-in-detail.md#when-a-compaction-is-missed).
+- **Auto-recall** (opt-in, `--auto-recall`). When your prompt refers to the past, a hook runs the recall search for the model and adds the top 3 exact quotes. See [docs/recall.md](docs/recall.md#auto-recall).
 - **Subagents** get their own handoff and, at start, the rules of the project.
 - **The hook always exits 0** and never blocks compaction. If anything fails, it still writes a minimal handoff.
 

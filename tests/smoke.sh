@@ -75,7 +75,7 @@ python3 - "$H" <<'PY'
 import hashlib, json, sys
 h = sys.argv[1]
 m = json.load(open(h + "/.handoff-manifest.json"))
-assert m["version"] == "1.16.0" and m["installed_at"], m
+assert m["version"] == "1.17.0" and m["installed_at"], m
 pkg = ["lossless_handoff/%s.py" % n for n in "__init__ transcript summary ledger handoff runtime redaction pipeline reconcile prove claims".split()]
 assert sorted(m["files"]) == sorted(["claims.json", "handoff-nudge.py", "postcompact-inject.py", "precompact-handoff.py", "recall.py"] + pkg), m
 for n, want in m["files"].items():
@@ -857,8 +857,8 @@ PY
   [ ! -e "$F/precompact-handoff.py" ] || fail "F66.a: uninstall did not finish its other work"
   rm "$F/llm_map.py" "$SK"; rmdir "$(dirname "$SK")"; o="$("$ROOT/uninstall.sh")"; ! grep -q "llm-map: kept" <<<"$o" || fail "F66.a: kept line without llm-map files"
   # F66.d versions
-  [ "$("$ROOT/install.sh" --version)" = "Lossless Handoff 0.14.0" ] || fail "F66.d: product version"
-  [ "$(grep -c '^HOOK_VERSION = "1.16.0"$' "$ROOT/hooks/precompact-handoff.py" "$ROOT/hooks/postcompact-inject.py" | grep -c ':1$')" = 2 ] || fail "F66.d: HOOK_VERSION"
+  [ "$("$ROOT/install.sh" --version)" = "Lossless Handoff 0.15.0" ] || fail "F66.d: product version"
+  [ "$(grep -c '^HOOK_VERSION = "1.17.0"$' "$ROOT/hooks/precompact-handoff.py" "$ROOT/hooks/postcompact-inject.py" | grep -c ':1$')" = 2 ] || fail "F66.d: HOOK_VERSION"
   # F66.c: README holds no claim markers; evidence page does; claims-lint default path
   ! grep -qE '\[C[1-8]\]' "$ROOT/README.md" && ! grep -qiE '^#+ .*proof|\*\*proof' "$ROOT/README.md" || fail "F66.c: README holds Proof or claim markers"
   grep -qE '\[C1\]' "$ROOT/docs/evidence.md" || fail "F66.c: docs/evidence.md has no markers"
@@ -905,7 +905,7 @@ rows = {json.loads(x)["sid"]: json.loads(x) for x in open(sys.argv[1]) if x.stri
 a, b = rows["f56a"], rows["f56b"]
 assert a["excerpt_chars"] > 0 and a["excerpt_dropped"] == 0, a
 assert b["excerpt_dropped"] > 0 and 0 < b["excerpt_chars"] <= 120000, b
-assert a["hook_version"] == "1.16.0"
+assert a["hook_version"] == "1.17.0"
 PY
   p="$(python3 "$ROOT/hooks/precompact-handoff.py" --prove --days 1; echo "rc=$?")"
   grep -qE "^excerpt cut: 1 of 2 compactions, median dropped [0-9]+ chars$" <<<"$p" || fail "F56.b: prove line: $p"
@@ -1071,7 +1071,7 @@ PY
 import json, sys
 rows = [json.loads(x) for x in open(sys.argv[1]) if x.strip()]
 r = [x for x in rows if x.get("event") == "subagent_start"][-1]
-assert r["rules"] == 2 and r["chars"] > 0 and r["hook_version"] == "1.16.0" and r["agent_type"] == "general-purpose", r
+assert r["rules"] == 2 and r["chars"] > 0 and r["hook_version"] == "1.17.0" and r["agent_type"] == "general-purpose", r
 PY
   # AC 262: no handoff text, no agent notes
   printf '# Handoff\n- cwd: %s\nLATESTTOKEN\n' "$PROJ" > "$STF/s58-latest.md"; printf 'AGENTTOKEN\n' > "$STF/s58-agent.md"
@@ -1680,6 +1680,164 @@ PY
   done
 )
 ok "F65: no recall.py, a stub that exits at import, and a stub without redact(): the handoff is still written and masked"
+
+# F67: auto-recall hook (opt-in): trigger, search, output, redaction, off switch, time budget, health log
+(
+  set -e
+  D="$T/f67"; mkdir -p "$D"; export HOME="$D/home"; W="$D/work"; mkdir -p "$HOME/.claude" "$W"
+  export HANDOFF_STATE_DIR="$D/state"; HK="$ROOT/hooks/auto-recall.py"; AL="$HANDOFF_STATE_DIR/auto-recall.jsonl"
+  python3 - "$HOME" "$W" <<'PY'
+import json, os, re, sys
+home, w = sys.argv[1:3]
+real = os.path.realpath(w)
+pd = os.path.join(home, ".claude", "projects", re.sub(r"[^A-Za-z0-9]", "-", real))
+os.makedirs(pd)
+def rec(t, ts, text, n):
+    return {"type": t, "timestamp": ts, "cwd": real, "sessionId": "f67sess", "uuid": "u%d" % n,
+            "message": {"role": t, "content": text if t == "user" else [{"type": "text", "text": text}]}}
+rows = [rec("user", "2026-11-19T10:00:00Z", "Our staging database rotation policy is every ninety days for all credentials", 1),
+        rec("assistant", "2026-11-19T10:00:05Z", "Noted: the staging database rotation policy is every ninety days.", 2),
+        rec("user", "2026-11-19T10:01:00Z", "The deploy pipeline token is ghp_abcdefghijklmnopqrstuvwxyz0123456789 for the staging pipeline", 3),
+        rec("user", "2026-11-19T10:02:00Z", "We picked the purple elephant migration strategy for the warehouse", 4)]
+open(os.path.join(pd, "f67sess.jsonl"), "w").write("".join(json.dumps(r) + "\n" for r in rows))
+PY
+  ar() { python3 -c 'import json,sys; print(json.dumps({"prompt":sys.argv[1],"cwd":sys.argv[2],"session_id":"f67cur","transcript_path":""}))' "$1" "$W" | python3 "$HK"; }
+  HDR="Lossless Handoff auto-recall: earlier messages that match your words. Verify them before you rely on them."
+  FTR="Open one in full: python3 ~/.claude/hooks/recall.py open <id>"
+  # cue: output has the exact header, one line per hit, the exact footer
+  o="$(ar "What did we decide earlier about the staging database rotation policy?")"
+  [ "$(head -n 1 <<<"$o")" = "$HDR" ] && [ "$(tail -n 1 <<<"$o")" = "$FTR" ] || fail "F67.c: header or footer wrong: $o"
+  [ "$(grep -c '^- ' <<<"$o")" -ge 1 ] && [ "$(grep -c '^- ' <<<"$o")" -le 3 ] || fail "F67.c: hit lines: $o"
+  grep -Eq '^- f67sess?[^ ]*:[0-9]+ 2026-11-19 10:0[0-9] (user|assistant): ' <<<"$o" || fail "F67.c: hit line format: $o"
+  grep -q "ninety days" <<<"$o" || fail "F67.c: hit text missing: $o"
+  [ "$(awk 'length($0) > 400' <<<"$o" | wc -l | tr -d ' ')" = 0 ] || fail "F67.c: a hit line is too long"
+  # no cue: no output
+  [ -z "$(ar "Please rotate the staging database credentials now")" ] || fail "F67.b: output without a cue"
+  # slash command: no output even with a cue
+  [ -z "$(ar "/review what did we decide earlier about the staging database rotation policy")" ] || fail "F67.b: slash prompt fired"
+  # quoted phrase of 3 or more words fires without a cue phrase; 2 words does not
+  o="$(ar 'Find "purple elephant migration" in the notes')"
+  grep -q "purple elephant migration" <<<"$o" || fail "F67.b/c: quoted phrase: $o"
+  [ -z "$(ar 'Find "purple elephant" in the notes')" ] || fail "F67.b: a 2-word quote fired"
+  # fewer than 2 words of 4+ characters after the cues are removed: no output
+  [ -z "$(ar "what did I say earlier about the zebra")" ] || fail "F67.c: fewer than 2 words fired"
+  # no hits: no output
+  [ -z "$(ar "what did we decide earlier about quantum unicorn telemetry")" ] || fail "F67.c: no hits gave output"
+  # the current prompt is not a hit
+  python3 - "$HOME" <<'PY'
+import glob, json, os, sys
+p = glob.glob(os.path.join(sys.argv[1], ".claude", "projects", "*", "f67sess.jsonl"))[0]
+r = {"type": "user", "timestamp": "2026-11-20T09:00:00Z", "cwd": os.path.realpath(os.path.dirname(p) and json.loads(open(p).readline())["cwd"]), "sessionId": "f67sess", "uuid": "u9",
+     "message": {"role": "user", "content": "did we ever choose the tangerine hovercraft mechanism"}}
+open(p, "a").write(json.dumps(r) + "\n")
+PY
+  [ -z "$(ar "did we ever choose the tangerine hovercraft mechanism")" ] || fail "F67.c: the current prompt was a hit"
+  # redaction: the secret never reaches the output
+  o="$(ar "what did we decide earlier about the deploy pipeline token staging")"
+  grep -q "REDACTED" <<<"$o" && ! grep -q "ghp_abcdefghijkl" <<<"$o" || fail "F67.c: secret not masked: $o"
+  # off switch
+  [ -z "$(HANDOFF_AUTO_RECALL=0 bash -c "$(declare -f ar); W='$W' HK='$HK' ar 'What did we decide earlier about the staging database rotation policy?'")" ] || fail "F67.a: HANDOFF_AUTO_RECALL=0 printed output"
+  # a bad input never fails
+  r=0; echo "not json" | python3 "$HK" >/dev/null || r=$?; [ "$r" = 0 ] || fail "F67.c: bad stdin gave exit $r"
+  r=0; echo '{"prompt":"what did we decide earlier about staging","cwd":"/no/such/dir"}' | python3 "$HK" >"$D/bad.out" || r=$?; [ "$r" = 0 ] && [ ! -s "$D/bad.out" ] || fail "F67.c: bad cwd"
+  # health log: one line per run that passed the trigger; no prompt text, no snippets
+  [ -s "$AL" ] || fail "F67.d: no health log"
+  python3 - "$AL" <<'PY'
+import json, sys
+raw = open(sys.argv[1]).read()
+rows = [json.loads(l) for l in raw.splitlines()]
+assert rows and all(set(r) == {"ts", "session_id", "fired", "hits", "ms", "timed_out"} for r in rows), rows
+assert all(r["fired"] is True and isinstance(r["hits"], int) and isinstance(r["ms"], int) and r["timed_out"] is False for r in rows), rows
+assert any(r["hits"] >= 1 for r in rows) and any(r["hits"] == 0 for r in rows), rows
+for bad in ("ninety", "staging", "ghp_", "tangerine", "purple"):
+    assert bad not in raw, bad
+PY
+  n0="$(wc -l < "$AL")"; ar "Please rotate the staging database credentials now" >/dev/null; ar "/x what did we decide earlier" >/dev/null
+  [ "$(wc -l < "$AL")" = "$n0" ] || fail "F67.d: a run that did not pass the trigger was logged"
+  # a missing recall.py: no output, exit 0
+  mkdir -p "$D/solo"; cp "$HK" "$D/solo/auto-recall.py"
+  r=0; o="$(python3 -c 'import json; print(json.dumps({"prompt":"what did we decide earlier about the staging database rotation policy","cwd":"'"$W"'"}))' | HOME="$D/nohome" python3 "$D/solo/auto-recall.py")" || r=$?
+  [ "$r" = 0 ] && [ -z "$o" ] || fail "F67.c: missing recall.py gave output or failure"
+  # a stub recall.py without the search functions: no output, exit 0
+  mkdir -p "$D/stubhome/.claude/hooks"; printf 'def redact(t, kv=True):\n    return t\n' > "$D/stubhome/.claude/hooks/recall.py"
+  r=0; o="$(python3 -c 'import json; print(json.dumps({"prompt":"what did we decide earlier about the staging database rotation policy","cwd":"'"$W"'"}))' | HOME="$D/stubhome" python3 "$HK")" || r=$?
+  [ "$r" = 0 ] && [ -z "$o" ] || fail "F67.c: stub recall.py gave output or failure"
+  # timeout path: a search that never ends gives no output, exit 0, in about 2 seconds, and a timed_out row
+  mkdir -p "$D/slowhome/.claude/hooks"
+  cat > "$D/slowhome/.claude/hooks/recall.py" <<'PY'
+import time
+PROJECTS_DIR = "/nonexistent"
+def redact(t, kv=True): return t
+def project_root(c): return c
+def in_scope_transcripts(r, s): return [object()]
+def keyword_hits(*a): time.sleep(30)
+def meaning_hits(*a): return [], None, "off"
+def rrf_merge(a, b): return a
+def fill_meaning_snippets(*a): pass
+def fmt_ts(t): return t
+def index_paths(r): return ("", "/nonexistent", "")
+PY
+  t0=$(date +%s)
+  r=0; o="$(python3 -c 'import json; print(json.dumps({"prompt":"what did we decide earlier about the staging database rotation policy","cwd":"'"$W"'"}))' | HOME="$D/slowhome" python3 "$HK")" || r=$?
+  t1=$(date +%s)
+  [ "$r" = 0 ] && [ -z "$o" ] && [ $((t1 - t0)) -le 4 ] || fail "F67.c: timeout path: exit $r, output '$o', $((t1 - t0)) s"
+  tail -n 1 "$AL" | python3 -c 'import json,sys; r=json.loads(sys.stdin.read()); assert r["timed_out"] is True and r["hits"] == 0 and 1500 <= r["ms"] <= 2500, r' || fail "F67.d: timeout row"
+  ok "F67: cue, no cue, slash, quote, short query, no hits, current prompt, redaction, off switch, stub, timeout, health log"
+)
+# F67.a/e: install, uninstall, dry-run, saved defaults, upgrade message, versions
+(
+  set -e
+  export HOME="$T/f67inst"; mkdir -p "$HOME/.claude"; F="$HOME/.claude/hooks"; FS="$HOME/.claude/settings.json"; DF="$HOME/.config/lossless-handoff/install-defaults"
+  CMD="python3 $F/auto-recall.py"
+  echo '{"model": "opus"}' > "$FS"
+  grep -q -- "--auto-recall" <<<"$("$ROOT/install.sh" --help)" || fail "F67.a: --help lacks --auto-recall"
+  [ "$(grep -c '^HOOK_VERSION = "1.17.0"$' "$ROOT/hooks/auto-recall.py")" = 1 ] || fail "F67.e: auto-recall HOOK_VERSION"
+  # default install: not installed, not registered
+  "$ROOT/install.sh" >/dev/null
+  [ ! -e "$F/auto-recall.py" ] && ! grep -q "auto-recall" "$FS" && ! grep -q "auto-recall" "$F/.handoff-manifest.json" || fail "F67.a: default install holds auto-recall"
+  ! grep -q "auto-recall" <<<"$("$ROOT/install.sh" --dry-run)" || fail "F67.a: default dry-run mentions auto-recall"
+  # dry-run with the flag lists it and changes nothing
+  cp "$FS" "$T/f67-before.json"
+  o="$("$ROOT/install.sh" --auto-recall --dry-run)"
+  grep -q "install hook: .*/auto-recall.py" <<<"$o" && grep -q "add UserPromptSubmit auto-recall hook" <<<"$o" || fail "F67.a: dry-run does not list auto-recall: $o"
+  [ ! -e "$F/auto-recall.py" ] && cmp -s "$FS" "$T/f67-before.json" || fail "F67.a: dry-run changed something"
+  # install with the flag
+  "$ROOT/install.sh" --auto-recall >"$T/f67-i.out"
+  [ -x "$F/auto-recall.py" ] && grep -q '"auto-recall.py"' "$F/.handoff-manifest.json" || fail "F67.a: file or manifest entry missing"
+  ls "$FS".bak-* >/dev/null 2>&1 && [ -n "$(grep -L auto-recall "$FS".bak-*)" ] || fail "F67.a: no settings backup from before auto-recall"
+  python3 - "$FS" "$CMD" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1])); cmd = sys.argv[2]
+g = d["hooks"]["UserPromptSubmit"]
+assert [h for x in g for h in x["hooks"] if h["command"] == cmd] == [{"type": "command", "command": cmd, "timeout": 5}], g
+assert d["model"] == "opus"
+PY
+  # a rerun without the flag keeps it and says so; a rerun with --no-auto-recall also keeps it
+  cp "$FS" "$T/f67-s1.json"
+  o="$("$ROOT/install.sh")"; grep -qx "auto-recall: already installed, kept" <<<"$o" || fail "F67.a: upgrade message: $o"
+  o="$("$ROOT/install.sh" --no-auto-recall)"; grep -qx "auto-recall: already installed, kept" <<<"$o" || fail "F67.a: --no-auto-recall upgrade message: $o"
+  [ -x "$F/auto-recall.py" ] && grep -q "$CMD" "$FS" || fail "F67.a: a rerun removed auto-recall"
+  "$ROOT/install.sh" --auto-recall >/dev/null
+  [ "$(grep -c "$CMD" "$FS")" = 1 ] || fail "F67.a: a second --auto-recall registered it twice"
+  # uninstall: dry-run lists, real run removes the file and the entry, other settings stay
+  o="$("$ROOT/uninstall.sh" --dry-run)"; grep -q "auto-recall.py" <<<"$o" || fail "F67.a: uninstall dry-run does not list auto-recall"
+  [ -e "$F/auto-recall.py" ] || fail "F67.a: uninstall dry-run removed the file"
+  "$ROOT/uninstall.sh" >/dev/null
+  [ ! -e "$F/auto-recall.py" ] && ! grep -q "auto-recall" "$FS" || fail "F67.a: uninstall left auto-recall"
+  python3 -c "import json,sys; d=json.load(open(sys.argv[1])); assert d == {'model': 'opus'}, d" "$FS" || fail "F67.a: uninstall did not restore settings"
+  # saved defaults
+  "$ROOT/install.sh" --save-defaults --auto-recall >/dev/null
+  grep -qx "auto_recall=1" "$DF" && [ -x "$F/auto-recall.py" ] || fail "F67.a: --save-defaults --auto-recall"
+  "$ROOT/uninstall.sh" >/dev/null
+  o="$("$ROOT/install.sh" --dry-run)"; grep -q "saved defaults.*auto_recall" <<<"$o" && grep -q "auto-recall.py" <<<"$o" || fail "F67.a: saved default not applied: $o"
+  "$ROOT/install.sh" >/dev/null; [ -x "$F/auto-recall.py" ] && grep -q "$CMD" "$FS" || fail "F67.a: saved default did not install it"
+  "$ROOT/uninstall.sh" >/dev/null
+  "$ROOT/install.sh" --no-auto-recall >/dev/null
+  [ ! -e "$F/auto-recall.py" ] && ! grep -q "auto-recall" "$FS" && grep -qx "auto_recall=1" "$DF" || fail "F67.a: --no-auto-recall did not skip it, or touched the saved default"
+  "$ROOT/install.sh" --save-defaults --no-auto-recall >/dev/null
+  ! grep -q "auto_recall" "$DF" && [ ! -e "$F/auto-recall.py" ] || fail "F67.a: --save-defaults --no-auto-recall"
+  ok "F67: install, default off, dry-run, backup, upgrade message, uninstall, saved defaults"
+)
 
 "$ROOT/uninstall.sh" >"$T/un.out"
 python3 - "$S" "$T/original.json" <<'PY'

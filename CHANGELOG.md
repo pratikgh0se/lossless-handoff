@@ -2,6 +2,26 @@
 
 Lossless Handoff, formerly claude-handoff.
 
+## [0.15.0] - 2026-11-20
+
+Auto-recall: an opt-in hook that searches the earlier chats when your prompt refers to the past (hooks 1.17.0). New F67 in `docs/spec.md`.
+
+### Upgrade notes
+
+- The default install is the same as before. Auto-recall is off. Add it with `./install.sh --auto-recall` (or save it with `--save-defaults --auto-recall`).
+- `--no-auto-recall` skips it for one run. A rerun never removes an installed auto-recall. The installer prints `auto-recall: already installed, kept`.
+- `./uninstall.sh` removes `auto-recall.py` and its `UserPromptSubmit` entry in `settings.json`. It keeps `auto-recall.jsonl`.
+- Restart open Claude Code sessions after the install. Hooks load when a session starts.
+
+### Changes
+
+- New hook `hooks/auto-recall.py` (`UserPromptSubmit`, timeout 5). It acts only when the prompt does not start with `/` and refers to the past (16 phrases, or a double-quoted phrase of 3 or more words). It searches the transcripts of the project with the code of `recall.py` (word, plus meaning when the index exists), and prints the top 3 hits (300 characters each, secrets masked) with the exact first and last line in F67.c.
+- Time budget 2.0 seconds for the whole hook. On a timeout, no hits, fewer than 2 query words, a missing `recall.py` or any error: no output and exit 0.
+- `HANDOFF_AUTO_RECALL=0` switches it off at run time.
+- Each run that passes the trigger appends one line to `~/.local/state/claude-handoffs/auto-recall.jsonl` (`ts`, `session_id`, `fired`, `hits`, `ms`, `timed_out`). The line holds no prompt text and no quotes.
+- Docs: README, `docs/install.md`, `docs/configuration.md`, `docs/recall.md` (how it decides and its limits), `docs/architecture.md` and its diagram, `SECURITY.md`.
+- `HOOK_VERSION` is `1.17.0`; the product version is `0.15.0`.
+
 ## [0.14.0] - 2026-11-20
 
 llm_map moves to its own project, subagents get a rules preamble, and the evidence wording is honest (hooks 1.16.0). New F66 in `docs/spec.md`. F60 and F61 are retired there ("moved to the llm-map project"; the numbers stay reserved).
