@@ -184,7 +184,20 @@ if [ -e "$HOOKS_DIR/handoff-canary" ] || [ -e "$HOOKS_DIR/handoff-canary.sh" ]; 
   fi
 fi
 
-for f in precompact-handoff.py postcompact-inject.py handoff-nudge.py recall.py llm_map.py claims.json .handoff-manifest.json .claude-handoff-install.json; do
+# F66.a: llm_map.py (from an older install) is removed only when the install manifest lists it
+if [ -e "$HOOKS_DIR/llm_map.py" ] && python3 - "$HOOKS_DIR" <<'PY'
+import json, os, sys
+try:
+    sys.exit(0 if "llm_map.py" in (json.load(open(os.path.join(sys.argv[1], ".handoff-manifest.json"))).get("files") or {}) else 1)
+except Exception:
+    sys.exit(1)
+PY
+then
+  say "remove $HOOKS_DIR/llm_map.py (listed in the manifest)"
+  [ "$DRY" = 1 ] || rm "$HOOKS_DIR/llm_map.py"
+fi
+
+for f in precompact-handoff.py postcompact-inject.py handoff-nudge.py recall.py claims.json .handoff-manifest.json .claude-handoff-install.json; do
   if [ -e "$HOOKS_DIR/$f" ]; then
     say "remove $HOOKS_DIR/$f"
     [ "$DRY" = 1 ] || rm "$HOOKS_DIR/$f"
@@ -227,7 +240,7 @@ if [ -e "$AGENT_DST" ]; then
   fi
 fi
 
-# F60.c: remove the llm-map skill only when it holds our marker line
+# F66.a: remove the llm-map skill of an older install only when it holds our marker line
 SK_DST="$HOME/.claude/skills/llm-map/SKILL.md"
 if [ -e "$SK_DST" ]; then
   if grep -qF "<!-- lossless-handoff:llm-map-skill -->" "$SK_DST" 2>/dev/null; then

@@ -14,7 +14,7 @@ Questions and answers. This page is part of the [docs index](README.md).
 
 **Does it work with my existing hooks?** Yes. The install merges into your existing `hooks` groups and never removes or reorders yours. Uninstall removes only its own commands.
 
-**Where must I set `CLAUDE_CODE_AUTO_COMPACT_WINDOW`?** Set it in your user `~/.claude/settings.json` under `env` (the install does this), or export it in the shell that starts Claude Code. A live test showed that `env` in the `.claude/settings.json` of a project did not override it.
+**Where must I set `CLAUDE_CODE_AUTO_COMPACT_WINDOW`?** Set it in your user `~/.claude/settings.json` under `env` (`./install.sh --window N` does this, only when no value is set), or export it in the shell that starts Claude Code. A live test showed that `env` in the `.claude/settings.json` of a project did not override it.
 
 **What window size should I use?** Use a size that comfortably exceeds your baseline context. With a very small window (180,000 tokens or less), the final threshold (window minus 45,000) is at or below the first reminder threshold. The nudge then sends only the final nudge, at the first threshold that the context reaches, and the PreCompact hook covers the rest. The savings come from long sessions on 1M-context models. If your sessions rarely pass 300k tokens, the window never triggers and you mainly get the handoff. Nobody measured whether a shorter context also improves answer quality. See [ADR 0001](adr/0001-compact-window-400k-with-handoff.md).
 

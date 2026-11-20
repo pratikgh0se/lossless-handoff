@@ -54,4 +54,4 @@
 <rect x="700" y="606" width="280" height="52" rx="6" class="k-warn"/><text x="710" y="627" class="s">same reads as recall.py</text><text x="710" y="645" class="s">writes nothing</text>
 <line x1="242" y1="632" x2="298" y2="632" class="ar" marker-end="url(#a)"/><line x1="642" y1="632" x2="698" y2="632" class="ar" marker-end="url(#a)"/>
 <rect x="20" y="670" width="960" height="52" rx="6" class="k-or"/><text x="30" y="692" class="t">~/.claude/projects/&lt;slug&gt;/&lt;session&gt;.jsonl (chat transcripts)</text><text x="30" y="710" class="s">Claude Code writes these files. Lossless Handoff only reads them, and never writes to them.</text>
-<text x="20" y="744" class="cap">Illustration of hooks 1.15.0. The state folder is ~/.local/state/claude-handoffs (or $HANDOFF_STATE_DIR).</text></svg>
+<text x="20" y="744" class="cap">Illustration of hooks 1.16.0. The state folder is ~/.local/state/claude-handoffs (or $HANDOFF_STATE_DIR).</text></svg>

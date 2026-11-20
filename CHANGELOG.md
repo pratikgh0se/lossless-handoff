@@ -2,9 +2,29 @@
 
 Lossless Handoff, formerly claude-handoff.
 
-## [Unreleased]
+## [0.14.0] - 2026-11-20
 
-The PreCompact hook is split into files. No behaviour change: same flags, same output, same files, same exit codes. `HOOK_VERSION` stays 1.15.0.
+llm_map moves to its own project, subagents get a rules preamble, and the evidence wording is honest (hooks 1.16.0). New F66 in `docs/spec.md`. F60 and F61 are retired there ("moved to the llm-map project"; the numbers stay reserved).
+
+### Upgrade notes
+
+- llm_map moved to https://github.com/pratikgh0se/llm-map. This repository no longer ships `hooks/llm_map.py` or the llm-map skill, and `install.sh` no longer installs them.
+- An existing install keeps its `llm_map.py` and skill. The installer does not change or remove them, and prints `llm-map: already installed, kept (now maintained at https://github.com/pratikgh0se/llm-map; this installer no longer updates it)`. `./uninstall.sh` removes `llm_map.py` only if the install manifest lists it, and the skill only if it holds the marker line.
+- To get llm-map (or its updates), clone the new repository and run its `./install.sh` (same install paths; it has `--dry-run` and `--uninstall`). See [docs/llm-map.md](docs/llm-map.md).
+- `--llm-map` and `--no-llm-map` are still accepted. Each prints one line (`llm-map is now a separate project: https://github.com/pratikgh0se/llm-map`) and changes nothing else. A saved `llm_map=1` line is ignored and prints the same line. `--save-defaults` never writes it and removes an old one.
+
+### Changes
+
+- Subagent rules (F66.b): when the standing rules are injected at `SubagentStart`, the block starts with `These are the user's standing rules for the main session of this project. Apply only the rules that fit your task. Your task brief comes first.` The main-session injection does not get this line.
+- Evidence wording (F66.c): the README no longer has a "Proof" heading or the `[C1]` to `[C8]` markers. It says that no scored benchmark result is published yet and that some live checks currently fail. The markers moved to `docs/evidence.md`. `--claims-lint` with no file now lints `docs/evidence.md`. It still accepts a path. `tests/local-proof.sh` lints `docs/evidence.md`.
+- Benchmark: OOLONG arm C is now Lossless Handoff alone (hooks and recall agent). The new option `--llm-map-path <dir>` adds llm_map from a checkout of the llm-map project, so the old setup stays reproducible. The 2026-11-18 pilot used arm C with llm_map.
+- Docs: `docs/architecture.md` and `docs/faq.md` no longer give a stale version or say that the install sets the window (only `--window N` does). One term, "decisions list", in the README and the docs; `docs/decisions-list.md` says that "ledger" in code and option names means the decisions list. `SECURITY.md` and `docs/install.md` are updated.
+- The parts of the PreCompact hook are called "files" in the docs. (The squash title of #27, "Split the PreCompact hook into modules", used the word "modules".)
+- `HOOK_VERSION` is `1.16.0`; the product version is `0.14.0`.
+
+### Also in this release: the PreCompact hook split (#27)
+
+The PreCompact hook is split into files. No behaviour change: same flags, same output, same files, same exit codes. `behaviour did not change in that part of the work.
 
 - `hooks/precompact-handoff.py` is now a thin entry file (version, command line switch). Its code moved to ten part files in `hooks/lossless_handoff/`: transcript, summary, ledger, handoff, runtime, redaction, pipeline, reconcile, prove, claims. No file has more than 561 lines.
 - The files run in the namespace of the entry file, so every old top-level name (`redact`, `parse`, `build`, `redact_tree`, `eval_claims`, `format_drift_scan` and the rest) is still importable from `precompact-handoff.py`.

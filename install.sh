@@ -2,7 +2,7 @@
 # Lossless Handoff installer (formerly claude-handoff): copies the hooks and merges them into ~/.claude/settings.json.
 set -euo pipefail
 
-VERSION="0.13.0"
+VERSION="0.14.0"
 usage() {
   cat <<EOF
 Lossless Handoff $VERSION (formerly claude-handoff)
@@ -10,13 +10,13 @@ Default install (F64): the core only. It copies the hooks (nudge, PreCompact han
 SessionStart check, SubagentStart rules, SessionEnd index) and the recall command into ~/.claude/hooks,
 merges them into ~/.claude/settings.json, installs the recall subagent (~/.claude/agents/recall.md, unless a
 file of that name that is not ours is there), keeps the decisions list, and starts a first recall index.
-Hooks 1.15.0 keep the chat store: handoff files live 365 days, and --keep-transcripts raises Claude Code's transcript retention.
-Hooks 1.15.0 also mask secrets in every file they write (see SECURITY.md).
-The default does NOT set CLAUDE_CODE_AUTO_COMPACT_WINDOW, pull a model, install nightly jobs, or install llm_map and its skill.
+Hooks 1.16.0 keep the chat store: handoff files live 365 days, and --keep-transcripts raises Claude Code's transcript retention.
+Hooks 1.16.0 also mask secrets in every file they write (see SECURITY.md).
+The default does NOT set CLAUDE_CODE_AUTO_COMPACT_WINDOW, pull a model, or install nightly jobs.
 Add them with the opt-in flags below. A rerun never removes, turns off or changes a part that is already installed
-(window value, meaning search, nightly jobs, llm-map): a --no-* flag only skips adding it. Use ./uninstall.sh to remove parts.
+(window value, meaning search, nightly jobs): a --no-* flag only skips adding it. Use ./uninstall.sh to remove parts.
 
-Usage: ./install.sh [--dry-run] [--force] [--window N] [--nightly] [--semantic [--yes]] [--llm-map] [--save-defaults] [--no-nudge] [--canary] [--managed-hooks] [--keep-transcripts[=DAYS]] [--version] [-h|--help]
+Usage: ./install.sh [--dry-run] [--force] [--window N] [--nightly] [--semantic [--yes]] [--save-defaults] [--no-nudge] [--canary] [--managed-hooks] [--keep-transcripts[=DAYS]] [--version] [-h|--help]
 
   --dry-run     list exactly what the chosen options install (and which come from saved defaults), change nothing
   --window N    opt-in: set CLAUDE_CODE_AUTO_COMPACT_WINDOW to N tokens (for example 400000);
@@ -27,16 +27,17 @@ Usage: ./install.sh [--dry-run] [--force] [--window N] [--nightly] [--semantic [
                 on PATH, offer "ollama pull bge-m3" (an interactive run asks y/N; a non-interactive run skips the
                 pull unless --yes is given). If ollama is missing, print how to get it and continue keyword-only
   --yes         with --semantic: answer yes to the model pull without asking
-  --llm-map     opt-in: install llm_map.py and its skill (~/.claude/skills/llm-map/SKILL.md),
-                unless a skill file that is not ours is there
+  --llm-map, --no-llm-map
+                no longer used. llm-map is now a separate project (https://github.com/pratikgh0se/llm-map).
+                The flags are accepted and print one line; they change nothing else
   --save-defaults
-                save the opt-in flags given in this run (--semantic, --nightly, --llm-map, --window N) to
+                save the opt-in flags given in this run (--semantic, --nightly, --window N) to
                 ~/.config/lossless-handoff/install-defaults (key=value lines: semantic=1, nightly=1,
-                llm_map=1, window=N). Every later ./install.sh run reads that file and applies those
+                window=N). Every later ./install.sh run reads that file and applies those
                 options as if you gave them. A flag on the command line wins over the file.
                 With --save-defaults, a --no-* flag removes that saved default. Delete the file, or run
                 ./uninstall.sh --purge, to drop all saved defaults
-  --no-semantic, --no-nightly, --no-llm-map, --no-window
+  --no-semantic, --no-nightly, --no-window
                 turn one opt-in off for this run, also when a saved default turns it on. They only skip
                 adding the part; they never uninstall one that is there
   --no-nudge    do not install the context nudge (handoff-nudge.py). Use it if another tool already
@@ -64,7 +65,7 @@ search still works (https://ollama.com/download). Ollama itself is never install
 EOF
 }
 
-DRY=0; FORCE=0; WINDOW=400000; SETWINDOW=0; YES=0; NIGHTLY=0; SEMANTIC=0; LLMMAP=0; OLDFLAG=0; SAVE=0; C_WIN=""; C_NIGHT=""; C_SEM=""; C_LM=""; MANAGED=0; CANARY=0; NONUDGE=0; KEEP=""
+DRY=0; FORCE=0; WINDOW=400000; SETWINDOW=0; YES=0; NIGHTLY=0; SEMANTIC=0; NOTE_LM=0; OLDFLAG=0; SAVE=0; C_WIN=""; C_NIGHT=""; C_SEM=""; MANAGED=0; CANARY=0; NONUDGE=0; KEEP=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --dry-run) DRY=1 ;;
@@ -78,8 +79,7 @@ while [ $# -gt 0 ]; do
     --nightly) C_NIGHT=1 ;;
     --semantic) C_SEM=1 ;;
     --no-semantic) C_SEM=0 ;;
-    --llm-map) C_LM=1 ;;
-    --no-llm-map) C_LM=0 ;;
+    --llm-map|--no-llm-map) NOTE_LM=1 ;;
     --save-defaults) SAVE=1 ;;
     --no-nudge) NONUDGE=1 ;;
     --managed-hooks) MANAGED=1 ;;
@@ -99,13 +99,13 @@ command -v python3 >/dev/null || { echo "python3 is required" >&2; exit 1; }
 say() { if [ "$DRY" = 1 ]; then echo "[dry-run] $*"; else echo "$*"; fi; }
 # saved defaults: read key=value lines (never sourced); a command-line flag wins over the file
 DEFAULTS_FILE="$HOME/.config/lossless-handoff/install-defaults"
-D_WIN=""; D_NIGHT=""; D_SEM=""; D_LM=""
+D_WIN=""; D_NIGHT=""; D_SEM=""
 if [ -f "$DEFAULTS_FILE" ]; then
   while IFS= read -r line || [ -n "$line" ]; do
     case "$line" in
       semantic=1) D_SEM=1 ;;
       nightly=1) D_NIGHT=1 ;;
-      llm_map=1) D_LM=1 ;;
+      llm_map=1) NOTE_LM=1 ;;
       window=*) v="${line#window=}"; case "$v" in ''|*[!0-9]*) ;; *) if [ "${#v}" -le 12 ] && [ "$((10#$v))" -gt 0 ]; then D_WIN="$v"; fi ;; esac ;;
     esac
   done < "$DEFAULTS_FILE"
@@ -117,11 +117,11 @@ pick() { # $1 name, $2 cli value, $3 saved value -> sets P (the effective value)
 pick window "$C_WIN" "$D_WIN"; case "$P" in ''|off) SETWINDOW=0 ;; *) SETWINDOW=1; WINDOW="$P" ;; esac
 pick nightly "$C_NIGHT" "$D_NIGHT"; [ "$P" = 1 ] && NIGHTLY=1 || NIGHTLY=0
 pick semantic "$C_SEM" "$D_SEM"; [ "$P" = 1 ] && SEMANTIC=1 || SEMANTIC=0
-pick llm-map "$C_LM" "$D_LM"; [ "$P" = 1 ] && LLMMAP=1 || LLMMAP=0
+if [ "$NOTE_LM" = 1 ]; then echo "llm-map is now a separate project: https://github.com/pratikgh0se/llm-map"; fi
 if [ -n "$FROM_SAVED" ]; then say "options from saved defaults ($DEFAULTS_FILE):$FROM_SAVED"; fi
 if [ "$SAVE" = 1 ]; then
   if [ "$DRY" = 1 ]; then say "would save the opt-in flags of this run to $DEFAULTS_FILE"; else
-    HC_DF="$DEFAULTS_FILE" HC_CWIN="$C_WIN" HC_CN="$C_NIGHT" HC_CS="$C_SEM" HC_CL="$C_LM" python3 - <<'PY'
+    HC_DF="$DEFAULTS_FILE" HC_CWIN="$C_WIN" HC_CN="$C_NIGHT" HC_CS="$C_SEM" python3 - <<'PY'
 import os
 p = os.environ["HC_DF"]
 cur = {}
@@ -141,7 +141,7 @@ def setk(k, v, on):
         cur.pop(k, None)
 setk("semantic", os.environ["HC_CS"], "1")
 setk("nightly", os.environ["HC_CN"], "1")
-setk("llm_map", os.environ["HC_CL"], "1")
+cur.pop("llm_map", None)
 w = os.environ["HC_CWIN"]
 if w == "off":
     cur.pop("window", None)
@@ -611,41 +611,10 @@ else
   if [ "$DRY" = 0 ]; then mkdir -p "$HOME/.claude/agents"; cp "$AGENT_SRC" "$AGENT_DST"; chmod 644 "$AGENT_DST"; fi
 fi
 
+# F66.a: llm-map is a separate project. An existing copy is never changed or removed (F64).
 LM_DST="$HOOKS_DIR/llm_map.py"; SK_DST="$HOME/.claude/skills/llm-map/SKILL.md"
-if [ "$LLMMAP" = 1 ]; then
-# F60.d: llm_map.py (a standalone command; not in the manifest, no settings entry)
-LM_SRC="$SRC/hooks/llm_map.py"
-LM_DST="$HOOKS_DIR/llm_map.py"
-if [ ! -f "$LM_SRC" ]; then
-  say "llm_map: skipped (hooks/llm_map.py is missing from this copy)"
-elif [ -f "$LM_DST" ] && cmp -s "$LM_SRC" "$LM_DST"; then
-  say "hook unchanged: $LM_DST"
-else
-  say "install hook: $LM_DST"
-  if [ "$DRY" = 0 ]; then mkdir -p "$HOOKS_DIR"; cp "$LM_SRC" "$LM_DST"; chmod 755 "$LM_DST"; fi
-fi
-
-# F60.c: the llm-map skill (user-level). It is ours only when the file holds the marker line.
-SK_SRC="$SRC/skills/llm-map/SKILL.md"
-SK_DST="$HOME/.claude/skills/llm-map/SKILL.md"
-SK_MARK="<!-- lossless-handoff:llm-map-skill -->"
-if [ ! -f "$SK_SRC" ]; then
-  say "llm-map skill: skipped (skills/llm-map/SKILL.md is missing from this copy)"
-elif [ -e "$SK_DST" ] && ! grep -qF "$SK_MARK" "$SK_DST" 2>/dev/null; then
-  # shellcheck disable=SC2088  # print the literal ~ path for the user
-  echo "~/.claude/skills/llm-map/SKILL.md exists and is not ours; left unchanged."
-elif [ -f "$SK_DST" ] && cmp -s "$SK_SRC" "$SK_DST"; then
-  say "llm-map skill unchanged: $SK_DST"
-else
-  say "install llm-map skill: $SK_DST"
-  if [ "$DRY" = 0 ]; then mkdir -p "$HOME/.claude/skills/llm-map"; cp "$SK_SRC" "$SK_DST"; chmod 644 "$SK_DST"; fi
-fi
-else
-  if [ -e "$LM_DST" ] || [ -e "$SK_DST" ]; then
-    say "llm-map: already installed, kept (an old copy is not updated without --llm-map)"
-  else
-    say "llm-map: not selected (opt-in: --llm-map)"
-  fi
+if [ -e "$LM_DST" ] || [ -e "$SK_DST" ]; then
+  say "llm-map: already installed, kept (now maintained at https://github.com/pratikgh0se/llm-map; this installer no longer updates it)"
 fi
 
 # --no-nudge: remove a nudge file left by an earlier install
@@ -919,6 +888,6 @@ if [ "$DRY" = 1 ]; then echo "Dry run only: nothing was changed."; else
   echo "Chats are indexed automatically when they end. Search from a project folder:  python3 ~/.claude/hooks/recall.py search \"words\""
   echo
   echo "Verify after the first compaction: tail -n 3 $STATE_DIR/health.jsonl"
-  echo "Opt-in extras (not installed by default): --window N, --nightly, --semantic, --llm-map (add --save-defaults to keep them). Rerun with the flags you want."
+  echo "Opt-in extras (not installed by default): --window N, --nightly, --semantic (add --save-defaults to keep them). Rerun with the flags you want."
   echo "Headless runs (claude -p, SDK) load these hooks too, except with --bare. To keep them under --setting-sources without user, run ./install.sh --managed-hooks."
 fi

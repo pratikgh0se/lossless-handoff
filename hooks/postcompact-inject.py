@@ -77,7 +77,7 @@ HARD_MAX = 9900    # each part's total output (warning + header + content + cont
 INLINE_MAX = 9700  # content target per part
 NAMES_MAX = 150    # the section-name list in a continuation line is cut to this many chars
 MAX_PARTS = 3      # F37.6
-HOOK_VERSION = "1.15.0"
+HOOK_VERSION = "1.16.0"
 _SID = ["unknown"]
 
 
@@ -435,6 +435,8 @@ def ledger_mode(lpart=1):
         emit(parts[lpart - 1])
 
 
+SUBAGENT_PREAMBLE = ("These are the user's standing rules for the main session of this project. Apply only the rules "
+                     "that fit your task. Your task brief comes first.")
 SUBAGENT_HEAD = ("Project rules for this repo (standing; from the Lossless Handoff decisions list; the user's latest "
                  "words win):")
 SUBAGENT_MAX = 4000
@@ -467,7 +469,7 @@ def subagent_context(path):
         return rl, 0
     more = (f"[more rules: python3 ~/.claude/hooks/recall.py search \"rule\" --role user, "
             f"or the decisions list at {path}]")
-    head = SUBAGENT_HEAD + "\n"
+    head = SUBAGENT_PREAMBLE + "\n" + SUBAGENT_HEAD + "\n"
     tail = ("\n" + rl) if rl else ""
     full = head + "\n".join(e["line"] for e in rules) + tail
     if len(full) <= SUBAGENT_MAX:

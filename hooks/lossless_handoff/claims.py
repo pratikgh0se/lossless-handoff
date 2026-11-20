@@ -111,8 +111,24 @@ def claims_print():
     sys.stdout.buffer.flush()
 
 
+def claims_default_doc():
+    """F66.c: docs/evidence.md of the current folder, else of the tree around this script (repo checkout). None if neither exists."""
+    here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    for base in (os.getcwd(), os.path.dirname(here), here):
+        q = os.path.join(base, "docs", "evidence.md")
+        if os.path.isfile(q):
+            return q
+    return None
+
+
 def claims_lint(path):
-    """F48.c: every [C<n>] in the file must exist and have status pass. Exit 1 on any problem."""
+    """F48.c: every [C<n>] in the file must exist and have status pass. Exit 1 on any problem.
+    F66.c: with no file argument it lints docs/evidence.md of the repo tree."""
+    if not path or path.startswith("--"):
+        path = claims_default_doc()
+        if not path:
+            _out("no docs/evidence.md found; give a file path")
+            raise SystemExit(1)
     try:
         text = open(path, encoding="utf-8", errors="replace").read()
     except Exception as e:

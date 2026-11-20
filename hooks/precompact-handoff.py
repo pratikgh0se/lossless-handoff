@@ -12,7 +12,7 @@ if os.environ.get("HANDOFF_HOOK_CHILD"):  # spawned by our own summary call: nev
     sys.exit(0)
 
 _T0 = time.monotonic()
-HOOK_VERSION = "1.15.0"
+HOOK_VERSION = "1.16.0"
 # The steer text stays in this file: the smoke test reads it from here.
 STEER_TEXT = """Lossless Handoff guidance for this summary:
 - Quote the user's own words for every decision, rule and correction, with the date if known.
@@ -68,7 +68,7 @@ try:
     elif "--claims-lint" in sys.argv[1:]:
         _a = sys.argv[1:]
         _i = _a.index("--claims-lint")
-        claims_lint(_a[_i + 1] if _i + 1 < len(_a) else "")
+        claims_lint(_a[_i + 1] if _i + 1 < len(_a) and not _a[_i + 1].startswith("--") else "")
     elif "--claims" in sys.argv[1:]:
         claims_print()
     elif "--ledger-repair" in sys.argv[1:]:

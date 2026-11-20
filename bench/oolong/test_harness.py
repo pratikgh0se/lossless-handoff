@@ -500,6 +500,34 @@ def test_run_sh_uses_own_run_id():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def test_arm_c_llm_map_is_optional():
+    """Arm C is Lossless Handoff alone. --llm-map-path adds llm_map: one sandbox exception, the skill, no skills-off flag."""
+    tmp = tempfile.mkdtemp(prefix="lhtest-lm-")
+    try:
+        cfg = make_cfg(tmp)
+        assert harness.llm_map_excluded(cfg, "C") == [] and harness.claude_flags("C") == ["--disable-slash-commands"]
+        assert harness.project_settings(cfg, "C", proj=tmp + "/p")["sandbox"]["filesystem"]["allowRead"] == [tmp + "/p"]
+        for hook_rel, skill_rel in (("llm_map.py", "skill/SKILL.md"), ("hooks/llm_map.py", "skills/llm-map/SKILL.md")):
+            lm = os.path.join(tmp, "lm-" + hook_rel.replace("/", "-"))
+            for rel, text in ((hook_rel, "# hook\n"), (skill_rel, "run python3 ~/.claude/hooks/llm_map.py now\n")):
+                os.makedirs(os.path.dirname(os.path.join(lm, rel)), exist_ok=True)
+                open(os.path.join(lm, rel), "w").write(text)
+            cfg2 = dict(cfg, llm_map_path=lm)
+            hook = os.path.join(lm, hook_rel)
+            assert harness.llm_map_excluded(cfg2, "C") == ["python3 %s *" % hook], harness.llm_map_excluded(cfg2, "C")
+            assert harness.llm_map_excluded(cfg2, "A") == [] and harness.claude_flags("C", True) == []
+            proj = os.path.join(tmp, "proj-" + os.path.basename(lm))
+            harness.install_llm_map_skill(lm, proj)
+            assert hook in open(os.path.join(proj, ".claude", "skills", "llm-map", "SKILL.md")).read()
+        try:
+            harness.require_llm_map(os.path.join(tmp, "nothing-here"))
+            raise AssertionError("a missing checkout was accepted")
+        except SystemExit as e:
+            assert "https://github.com/pratikgh0se/llm-map" in str(e), e
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def test_harness_prints_run_id_line():
     src = open(os.path.join(HERE, "harness.py"), encoding="utf-8").read()
     assert 'print("run_id: %s" % cfg["run_id"], flush=True)' in src

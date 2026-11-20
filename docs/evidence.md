@@ -28,7 +28,7 @@ Two benchmarks are in this repository. Both are code-graded: no model grades an 
 - Arms: A plain Claude Code (no hooks), B Lossless Handoff, Z no history (amnesia control), O no compaction (oracle control).
 - Code grades the answers. The report records a lookup trace per arm for type U probes.
 
-**OOLONG** ([bench/oolong/README.md](../bench/oolong/README.md)) tests two things on large aggregation tasks: the `llm_map` tool, and that the hooks do no harm. In this harness the context is a file. The report counts compactions of the main session only, and subagents can compact. If the count is 0, the hooks add only their session-start text to the main session. The test shows if plain Claude Code still loses on counting tasks, and if `llm_map` helps.
+**OOLONG** ([bench/oolong/README.md](../bench/oolong/README.md)) tests two things on large aggregation tasks: the `llm_map` tool (now the separate [llm-map](https://github.com/pratikgh0se/llm-map) project), and that the hooks do no harm. In this harness the context is a file. The report counts compactions of the main session only, and subagents can compact. If the count is 0, the hooks add only their session-start text to the main session. The test shows if plain Claude Code still loses on counting tasks, and if `llm_map` helps. Arm C is Lossless Handoff alone. The option `--llm-map-path` adds llm_map as an extra. The pilot of 2026-11-18 used arm C with llm_map.
 
 No scored results are published yet, except one 2-task pilot summary in `bench/oolong/evidence/`. That file is harness evidence only. Results come after the full evaluation: continuity at 30 compactions, and LoCoMo and OOLONG with forced compactions. LoCoMo is a published benchmark for memory over long conversations.
 
@@ -50,11 +50,11 @@ The report goes to `docs/proof/<date>-<sha>.md`. It starts with a one-line verdi
 | 4 Fresh clone | clone the pushed commit, install, `--check`, uninstall twice, all in a temporary HOME |
 | 5 Real end to end | 3 real headless Claude Code runs where a main agent and a subagent each compact; checked with `--prove` |
 | 6 Real stress | 3 sessions at the same time, a hook killed at its timeout, a missing PreCompact hook |
-| 7 Claims | `--claims-lint README.md`, for information only |
+| 7 Claims | `--claims-lint` (this page), for information only |
 
 Layers 5 and 6 use real model calls. They cost about $3 in total (measured $2.96). The run stops at $4. Use `--no-real` for a free run, `--real-only` for only layers 5 and 6, and `--tests-dir DIR` for an existing tests checkout. The run never changes your real `~/.claude`, your real state folder or your launchd jobs. The report shows a check of them before and after.
 
-## Proof it works
+## One-off measurements
 
 The author measured these results on 2026-11-13/14, on the author's own projects. They are measurements, not promises. Models wrote and graded all tests. The tests use one user's projects.
 
@@ -75,9 +75,9 @@ The author measured these results on 2026-11-13/14, on the author's own projects
 
 **Decisions list.** By age: 1 compaction 21 to 66, 2 compactions 10 to 56, 3 or more 8 to 44. Recent memory did not change (62.5).
 
-## Proof, not promises
+## Live checks (the proof run)
 
-The tables above are one-off measurements. From 1.10.0, the install also keeps its own evidence. Plain code checks it (no model, no cost). The install publishes only what that evidence supports.
+The tables above are one-off measurements. From 1.10.0, the install also keeps its own evidence. Plain code checks it (no model, no cost). These checks test the mechanism: a handoff exists, it is delivered and old messages come back. They do not measure answer quality.
 
 **Receipts.** Every handoff that `postcompact-inject.py` injects appends a line to `~/.local/state/claude-handoffs/receipts.jsonl`. The line holds the transcript, the boundary time, hashes and the first 300 characters. Receipts start with the first compaction after install, so earlier compactions have none.
 
@@ -101,12 +101,30 @@ The tables above are one-off measurements. From 1.10.0, the install also keeps i
 | `stale` | evidence older than its refresh time |
 | `no-data` | no evidence in the window (neither failing nor stale) |
 
-`precompact-handoff.py --claims` prints the table. The claims in this README carry the markers `[C1]` to `[C8]`, which match the register. C1 to C6 are live: the hooks compute them from your own transcripts and receipts. C7 (blind quiz) and C8 (cost) are dated one-off studies with a recorded date and a refresh time. They are not live rates. Before you publish a document that cites claims, run:
+`precompact-handoff.py --claims` prints the table. The claims on this page carry the markers `[C1]` to `[C8]`, which match the register (table at the end of this page). C1 to C6 are live: the hooks compute them from your own transcripts and receipts. C7 (blind quiz) and C8 (cost) are dated one-off studies with a recorded date and a refresh time. They are not live rates. With no file, the command lints `docs/evidence.md` of the repository tree. Before you publish a document that cites claims, run:
 
 ```
-python3 ~/.claude/hooks/precompact-handoff.py --claims-lint README.md
+python3 hooks/precompact-handoff.py --claims-lint   # from a clone: lints docs/evidence.md
+python3 ~/.claude/hooks/precompact-handoff.py --claims-lint path/to/file.md
 ```
 
 The command exits 1 unless every marker is known and `pass`. An unknown, `fail`, `stale` or `no-data` marker blocks publishing. On a machine with no receipts yet, C1 to C6 are `no-data`, so lint is for the author's own machine. On the author's machine (nightly run of 2026-11-18), lint reports C1 (10/11), C2 (196/200) and C6 (9/86) as `fail`. C1: one lossless check failed for a subagent receipt of 2026-11-18 (recall found no hit for one sampled message). C2: the 30-day window holds 4 misses (3 from a deliberate probe run, 1 on 2026-10-23). C6: of 77 misses, 26 are subagent compactions from before hooks 1.10.0, 2 are from the probe run, and 49 are from OOLONG benchmark units of 2026-11-18. Benchmark units use their own settings and state folder, so the installed hooks record no handoff for them. C2 and C6 stay `fail` until these dates leave the window (about 2026-12-18, if no new benchmark run adds misses). The author does not exclude these misses, because hiding real data would make the register worthless.
 
 **What the author's own data says.** In a 30-day reconcile on the author's machine (2026-11-17), 188 of 192 main compactions had a handoff [C2]. Of the 4 misses, 3 came from a deliberate probe run with user settings switched off. The other one was a hook that most likely stopped at its timeout on 2026-10-23. For subagents, 0 of 28 compactions had a handoff before this release. That gap is the bug that 1.10.0 fixes. A live subagent test after the fix gave right-agent 2/2 [C3], delivered 2/2 [C4], failed 0. A dated one-off blind quiz (2026-11-14, same sessions with and without the handoff) scored 98% with the handoff against 62% with Claude Code's compaction summary alone [C7]. This is one author, one machine, and small counts.
+
+## The claims register
+
+Each claim has one marker. The README holds no markers. This page holds all of them. Status and numbers are in the `--claims` table.
+
+| Marker | Claim | Kind |
+|---|---|---|
+| [C1] | Sampled messages from before a compaction are still retrievable word for word | live rate |
+| [C2] | Every interactive compaction gets a handoff | live rate |
+| [C3] | A subagent gets only its own context, never the main session's | live rate |
+| [C4] | The handoff reaches the model after compaction | live rate |
+| [C5] | Recorded project decisions are never lost by a decisions-list update | live rate |
+| [C6] | Subagent compactions are covered too | live rate |
+| [C7] | A blind quiz after compaction scored 98% with the handoff against 62% with the compaction summary alone | dated one-off (2026-11-14) |
+| [C8] | About 19% lower cost at a 400k window than at 1M | dated one-off (2026-10-20) |
+
+These results come from one machine and one heavy user. A quiz or a cost study is a hint, not a promise.

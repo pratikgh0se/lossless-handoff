@@ -1,13 +1,13 @@
 # Architecture
 
-This page shows every part of Lossless Handoff, the Claude Code event that calls each part, and the files each part reads and writes. It describes product 0.12.2 and hooks 1.14.2.
+This page shows every part of Lossless Handoff, the Claude Code event that calls each part, and the files each part reads and writes. It describes product 0.14.0 and hooks 1.16.0.
 
 ![Architecture of Lossless Handoff](architecture.svg)
 
 ## Summary
 
 - Five Claude Code events call the hooks: `PostToolUse`, `PreCompact`, `SessionStart`, `SubagentStart` and `SessionEnd`. `SessionStart` has three matchers: `compact`, `startup` and `resume`.
-- The default install has the core only: the hooks, `recall.py`, the recall subagent and the decisions list. Four parts are opt-in flags: `--window N` (the compaction window value), `--nightly` (two jobs that run outside Claude Code: the index job at 03:30 and the reconcile-and-prove job at 04:15), `--semantic` (the local bge-m3 model for meaning search) and `--llm-map` (`llm_map.py` and its skill). `--save-defaults` keeps the chosen flags in `~/.config/lossless-handoff/install-defaults`. A rerun never removes an installed part.
+- The default install has the core only: the hooks, `recall.py`, the recall subagent and the decisions list. Three parts are opt-in flags: `--window N` (the compaction window value), `--nightly` (two jobs that run outside Claude Code: the index job at 03:30 and the reconcile-and-prove job at 04:15), and `--semantic` (the local bge-m3 model for meaning search). `--save-defaults` keeps the chosen flags in `~/.config/lossless-handoff/install-defaults`. A rerun never removes an installed part.
 - One redaction step masks secrets before the hooks write handoff files, the decisions list and recall output. See [Redaction](#redaction).
 - Claude Code keeps the chat transcripts in `~/.claude/projects/`. Lossless Handoff only reads them. It never writes to them.
 - All other files go to the state folder, `~/.local/state/claude-handoffs/` (or `$HANDOFF_STATE_DIR`). See [ADR 0008](adr/0008-handoffs-directory-under-local-state.md).
@@ -30,13 +30,11 @@ This page shows every part of Lossless Handoff, the Claude Code event that calls
 | Decisions list | `projects/<project>-<hash>/decisions.md` | Updated by `PreCompact`. Injected by `SessionStart` and `SubagentStart`. | n/a | n/a |
 | Subagent handoffs | The same hooks, with `agent_id` set | `PreCompact` and `SessionStart` in a subagent | `<session>/subagents/agent-<agent_id>.jsonl` | `<sid>-a-<agent_id>*` files |
 | Recall subagent | `agents/recall.md` (installed to `~/.claude/agents/recall.md`) | None. The model starts it with the Agent tool. | It runs `recall.py` (tools `Bash` and `Read`, model `haiku`) | Nothing |
-| `llm_map` | `hooks/llm_map.py` and `skills/llm-map/SKILL.md` | None. The model runs it through Bash, as the skill describes. | The input file that you name | The output file that you name |
 | Canary (opt-in) | `tools/handoff-canary/` | launchd, 03:30, `--canary` install only | A temporary project | One `trigger: "canary"` row in `health.jsonl`, and `~/.local/state/handoff-canary/` |
 
 Notes:
 
 - The decisions update in `PreCompact` runs for a main session only. A subagent never merges the decisions list and never starts the indexer.
-- `llm_map.py` is not a hook. No Claude Code event calls it. It runs `claude -p` with no tools, no hooks and no saved session, so the handoff hooks never run for it.
 - The nightly jobs (opt-in with `--nightly`) are macOS LaunchAgents. On Linux, `install.sh` prints the crontab lines. A default install has no nightly reconcile, proof or format-drift alarm. Install with `--nightly`, or run `precompact-handoff.py --reconcile --prove` yourself.
 
 ## Data flow around a compaction
@@ -94,7 +92,7 @@ The model writes `<sid>-agent.md` itself with the Write tool. No hook sees that 
 | `prove.py` | The receipt checks and `--prove` |
 | `claims.py` | The claims register: `--claims`, `--claims-lint` |
 
-`lossless_handoff/__init__.py` runs each file in the namespace of the entry file, by path and in a fixed order (the order of the old single file). The parts share one namespace. They are not importable alone and they are not separate modules. So every function is still a name of `precompact-handoff.py`, and a caller that loads the entry file with `importlib` can still call it or set a global such as `HANDOFFS_DIR`. If the folder is missing or broken, the entry file prints one line on stderr and exits 0. The hook never breaks a session. `install.sh` installs the folder and lists its files in `.handoff-manifest.json`. `uninstall.sh` removes it.
+`lossless_handoff/__init__.py` runs each file in the namespace of the entry file, by path and in a fixed order (the order of the old single file). The parts share one namespace. They are not importable alone and they are not separate Python modules. So every function is still a name of `precompact-handoff.py`, and a caller that loads the entry file with `importlib` can still call it or set a global such as `HANDOFFS_DIR`. If the folder is missing or broken, the entry file prints one line on stderr and exits 0. The hook never breaks a session. `install.sh` installs the folder and lists its files in `.handoff-manifest.json`. `uninstall.sh` removes it.
 
 ## How Claude decides to use recall
 
@@ -128,7 +126,7 @@ When recall and the decisions list disagree, the decisions list and the latest w
 
 ## Verified facts
 
-These numbers come from the code in this repository (hooks 1.15.0), not from a benchmark run.
+These numbers come from the code in this repository (hooks 1.16.0), not from a benchmark run.
 
 | Fact | Where it is in the code |
 |---|---|
