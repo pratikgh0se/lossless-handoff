@@ -4,12 +4,12 @@
 
 `install.sh` and `uninstall.sh` read and write only these paths:
 
-- `~/.claude/hooks/`: the hook files (`precompact-handoff.py`, `postcompact-inject.py`, `handoff-nudge.py`, `recall.py`) `claims.json` and the folder `lossless_handoff/` (the code of the PreCompact hook, 11 `.py` files); an `llm_map.py` from an older install is kept on install, and removed on uninstall only if the manifest lists it. Also a backup folder `.claude-handoff-backup-<timestamp>/` for any file they replace, `.handoff-manifest.json` (file hashes for `--check`) and `.claude-handoff-install.json` (records what install added so uninstall removes exactly that).
+- `~/.claude/hooks/`: the hook files (`precompact-handoff.py`, `postcompact-inject.py`, `handoff-nudge.py`, `recall.py`) `claims.json` and the folder `lossless_handoff/` (the code of the PreCompact hook, 11 `.py` files); an `llm_map.py` from an older install is kept on install and kept on uninstall (the llm-map project owns it now). Also a backup folder `.claude-handoff-backup-<timestamp>/` for any file they replace, `.handoff-manifest.json` (file hashes for `--check`) and `.claude-handoff-install.json` (records what install added so uninstall removes exactly that).
 - `~/.claude/settings.json`: merged JSON (hooks, two `permissions.allow` entries, and `env.CLAUDE_CODE_AUTO_COMPACT_WINDOW` only with `--window N`), with a `settings.json.bak-<timestamp>` backup before each write. Invalid JSON is never overwritten.
 - `~/.local/state/claude-handoffs/`: created by install, written by the hooks, kept by uninstall. Project decision lists live in `projects/<project>-<hash>/` inside it (`decisions.md`, timestamped backups, `decisions.state.json`, `decisions.lock`); uninstall keeps them too.
 
 - `~/.local/state/claude-handoffs/projects/<project>-<hash>/nodes.jsonl` (with `nodes.state.json` and `nodes.lock`): summary nodes. Each line holds ids, the transcript path, line numbers, times, a token count and a handoff path. It holds no message text. The text of a summary is read from the transcript when you ask for it.
-- `~/.claude/skills/llm-map/SKILL.md`: the `llm_map` skill file of an older install (0.12.x and 0.13.x). Since 0.14.0 install never writes or changes it. Uninstall removes it only when it holds our marker line.
+- `~/.claude/skills/llm-map/SKILL.md`: the `llm_map` skill file of an older install (0.12.x and 0.13.x). Since 0.14.0 install never writes or changes it. Uninstall never removes it (the llm-map project owns it now).
 - `~/Library/LaunchAgents/com.lossless-handoff.recall-index.plist` and `com.lossless-handoff.handoff-reconcile.plist` (macOS, unless you pass `--no-nightly`), and `com.lossless-handoff.handoff-canary.plist` (only with `--canary`). Uninstall unloads and removes them.
 - `~/.claude/agents/recall.md`: the recall subagent file. Install writes it only when it is missing or holds our marker line. Uninstall removes it only when it holds the marker.
 

@@ -12,7 +12,7 @@ This repository no longer ships `hooks/llm_map.py` or the llm-map skill. `instal
 
 ## Upgrade notes
 
-- **You have llm-map from an older install.** Nothing breaks. The installer keeps `~/.claude/hooks/llm_map.py` and `~/.claude/skills/llm-map/SKILL.md`. It prints one line that says where they are maintained now. It does not update them. `./uninstall.sh` removes `llm_map.py` only if the install manifest lists it, and the skill only if it holds the marker line. Otherwise it keeps them. The llm-map project has its own uninstall.
+- **You have llm-map from an older install.** Nothing breaks. The installer keeps `~/.claude/hooks/llm_map.py` and `~/.claude/skills/llm-map/SKILL.md`. It prints one line that says where they are maintained now. It does not update them. `./uninstall.sh` never removes them: the llm-map project uses the same paths. It prints `llm-map: kept (remove it with ./install.sh --uninstall from https://github.com/pratikgh0se/llm-map)`.
 - **You want llm-map now.** Clone https://github.com/pratikgh0se/llm-map and run its `./install.sh` (use `--dry-run` first). It uses the same paths as before: `~/.claude/hooks/llm_map.py` and `~/.claude/skills/llm-map/SKILL.md`. It has its own `--uninstall`.
 - **You use `--llm-map` or `--no-llm-map`.** Both flags are still accepted. Each prints `llm-map is now a separate project: https://github.com/pratikgh0se/llm-map` and does nothing else. The exit code does not change.
 - **You have `llm_map=1` in `~/.config/lossless-handoff/install-defaults`.** The installer ignores the line and prints the same message. `--save-defaults` removes it from the file.

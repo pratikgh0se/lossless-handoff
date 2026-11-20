@@ -843,19 +843,19 @@ ok "F54: leaves, ids, append only, SessionStart line, subagent, map, describe, s
   [ "$(cat "$F/llm_map.py")" = "OLD LLM MAP" ] && [ "$(cat "$SK")" = "OLD SKILL" ] || fail "F66.a: install changed an existing llm-map"
   "$ROOT/install.sh" --llm-map >/dev/null
   [ "$(cat "$F/llm_map.py")" = "OLD LLM MAP" ] && [ "$(cat "$SK")" = "OLD SKILL" ] || fail "F66.a: --llm-map changed an existing llm-map"
-  # uninstall removes llm_map.py only when the manifest lists it, and the skill only with the marker line
+  # uninstall never removes llm_map.py or the llm-map skill (listed in the manifest or marked or not); one kept line
   "$ROOT/install.sh" >/dev/null
-  cp "$F/.handoff-manifest.json" "$T/f66-manifest.bak"
-  "$ROOT/uninstall.sh" >/dev/null; [ -e "$F/llm_map.py" ] || fail "F66.a: uninstall removed llm_map.py that the manifest does not list"
-  mkdir -p "$F"; cp "$T/f66-manifest.bak" "$F/.handoff-manifest.json"
   python3 - "$F/.handoff-manifest.json" <<'PY'
 import json, sys
 d = json.load(open(sys.argv[1])); d["files"]["llm_map.py"] = "x"; json.dump(d, open(sys.argv[1], "w"))
 PY
-  "$ROOT/uninstall.sh" >/dev/null; [ ! -e "$F/llm_map.py" ] || fail "F66.a: uninstall left llm_map.py that the manifest lists"
-  [ -f "$SK" ] || fail "F66.a: uninstall removed a foreign skill"
-  printf '<!-- lossless-handoff:llm-map-skill -->\nOLD\n' > "$SK"; "$ROOT/uninstall.sh" >/dev/null
-  [ ! -e "$SK" ] || fail "F66.a: uninstall left the marked skill"
+  printf '<!-- lossless-handoff:llm-map-skill -->\nOLD\n' > "$SK"
+  UL="llm-map: kept (remove it with ./install.sh --uninstall from https://github.com/pratikgh0se/llm-map)"
+  o="$("$ROOT/uninstall.sh")"
+  [ "$(grep -cxF "$UL" <<<"$o")" = 1 ] || fail "F66.a: uninstall kept line: $o"
+  [ "$(cat "$F/llm_map.py")" = "OLD LLM MAP" ] && [ -f "$SK" ] || fail "F66.a: uninstall removed llm_map.py or the skill"
+  [ ! -e "$F/precompact-handoff.py" ] || fail "F66.a: uninstall did not finish its other work"
+  rm "$F/llm_map.py" "$SK"; rmdir "$(dirname "$SK")"; o="$("$ROOT/uninstall.sh")"; ! grep -q "llm-map: kept" <<<"$o" || fail "F66.a: kept line without llm-map files"
   # F66.d versions
   [ "$("$ROOT/install.sh" --version)" = "Lossless Handoff 0.14.0" ] || fail "F66.d: product version"
   [ "$(grep -c '^HOOK_VERSION = "1.16.0"$' "$ROOT/hooks/precompact-handoff.py" "$ROOT/hooks/postcompact-inject.py" | grep -c ':1$')" = 2 ] || fail "F66.d: HOOK_VERSION"

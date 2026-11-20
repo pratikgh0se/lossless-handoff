@@ -9,7 +9,7 @@ llm_map moves to its own project, subagents get a rules preamble, and the eviden
 ### Upgrade notes
 
 - llm_map moved to https://github.com/pratikgh0se/llm-map. This repository no longer ships `hooks/llm_map.py` or the llm-map skill, and `install.sh` no longer installs them.
-- An existing install keeps its `llm_map.py` and skill. The installer does not change or remove them, and prints `llm-map: already installed, kept (now maintained at https://github.com/pratikgh0se/llm-map; this installer no longer updates it)`. `./uninstall.sh` removes `llm_map.py` only if the install manifest lists it, and the skill only if it holds the marker line.
+- An existing install keeps its `llm_map.py` and skill. The installer does not change or remove them, and prints `llm-map: already installed, kept (now maintained at https://github.com/pratikgh0se/llm-map; this installer no longer updates it)`. `./uninstall.sh` never removes them, because the llm-map project uses the same paths. If one exists, it prints `llm-map: kept (remove it with ./install.sh --uninstall from https://github.com/pratikgh0se/llm-map)`.
 - To get llm-map (or its updates), clone the new repository and run its `./install.sh` (same install paths; it has `--dry-run` and `--uninstall`). See [docs/llm-map.md](docs/llm-map.md).
 - `--llm-map` and `--no-llm-map` are still accepted. Each prints one line (`llm-map is now a separate project: https://github.com/pratikgh0se/llm-map`) and changes nothing else. A saved `llm_map=1` line is ignored and prints the same line. `--save-defaults` never writes it and removes an old one.
 
