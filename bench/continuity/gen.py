@@ -310,12 +310,14 @@ def filler_prompt(script, t, names):
     return (pre + "Read %s completely with the Read tool. Then reply only with the number of lines of each file, like `name=count`." % files)
 
 
-def probe_prompt(ptype, script, marker, ckpt=None, items=None):
+def probe_prompt(ptype, script, marker, ckpt=None, items=None, phrasing="cued", cue=False):
     """Neutral probe text. It holds the questions and a JSON form. It never holds an answer.
     items: the chosen items (oldest first). Default: all items of the type."""
+    if phrasing == "neutral":
+        return neutral_probe_prompt(ptype, script, marker, items)
     if items is None:
         items = script["fresh"][str(ckpt)] if ptype == "F" else script["items"][ptype]
-    head = "[%s] Answer from this session's history only. Do not guess.\n" % marker
+    head = "[%s] Answer from this session's history only. Do not guess.%s\n" % (marker, CUED_HEAD_TAIL if cue else "")
     if ptype == "C":
         body = "\n".join("%d. %s" % (x["id"], x["statement"]) for x in items)
         head += ("For each statement below, say if it conflicts with an earlier decision in this session. "
@@ -329,6 +331,90 @@ def probe_prompt(ptype, script, marker, ckpt=None, items=None):
         form = {"X": '{"answers":[{"id":1,"current":"...","replaced":["..."]}]}',
                 "E": '{"answers":[{"id":1,"proceed":true,"reason_code":"<exact error code text>"}]}'}.get(ptype, '{"answers":[{"id":1,"answer":"..."}]}')
     return head + body + "\nReply with JSON only, in this form: " + form
+
+
+# ---- position and phrasing (probe design 2, added with the lost-in-the-middle design; see README.md)
+# These helpers read a script. They never change a script, so every old seed gives the same script and the same old probe text.
+FILL_PER_EPOCH = 6                       # nominal filler turns after the plant turns of each epoch
+POSITIONS = ("start", "middle", "end")
+PHRASINGS = ("cued", "neutral")
+NEUTRAL_TYPES = ("R", "D", "X", "S", "E")  # C and M ask about the past by their nature, so they have a cued probe only
+PLANT_KIND = {"R": "stmt", "D": "stmt", "X": "stmt", "C": "stmt", "S": "S", "E": "E", "U": "U"}
+# Cue phrases of the auto-recall hook (contract F67.b). A neutral probe must hold none of them.
+CUE_PHRASES = ["what did i say", "what did we decide", "we decided", "i told you", "i said", "you said", "earlier",
+               "before", "last time", "previously", "remember", "as we discussed", "did we", "did i", "which one did",
+               "what was the"]
+CUED_HEAD_TAIL = " I told you these values earlier, so remember them."   # design 2 only: it makes a cued probe fire the hook
+QUOTED_PHRASE_RE = re.compile(r'"[^"\n]*"')
+
+
+def nominal_timeline(script, fill=FILL_PER_EPOCH):
+    """The nominal session timeline: for each epoch 0..max_epoch, its plant turns, then `fill` filler turns.
+    Returns ({event seq: turn index}, total turns). The no-compaction condition runs exactly this timeline.
+    A compaction run follows the same order of plant turns. Its filler length differs, so its tags stay nominal."""
+    idx, t = {}, 0
+    for e in range(script["max_epoch"] + 1):
+        for ev in script["events"]:
+            if ev["epoch"] == e:
+                idx[ev["seq"]] = t
+                t += 1
+        t += fill
+    return idx, t
+
+
+def position_of_turn(i, total):
+    """start, middle or end: the third of the timeline that turn index i is in."""
+    return POSITIONS[min(2, (3 * i) // total)]
+
+
+def position_of(script, ptype, item, fill=FILL_PER_EPOCH):
+    """Position tag of a planted fact (by the turn index of its plant turn). None for M and F (no single plant turn)."""
+    kind = PLANT_KIND.get(ptype)
+    if kind is None or "epoch" not in item:
+        return None
+    idx, total = nominal_timeline(script, fill)
+    for ev in script["events"]:
+        if ev["epoch"] == item["epoch"] and ev["kind"] == kind:
+            return position_of_turn(idx[ev["seq"]], total)
+    return None
+
+
+def neutral_question(ptype, item):
+    """A task that needs the fact. No reference to the past, no cue phrase."""
+    if ptype not in NEUTRAL_TYPES:
+        raise ValueError("no neutral phrasing for probe type " + str(ptype))
+    t = item["topic"]
+    if ptype == "R":
+        return "Write the tag that ends every commit message in the `%s` repository." % t
+    if ptype == "D":
+        return "Write the queue name to use for `%s`." % t
+    if ptype == "X":
+        return "Write the queue to use for `%s` now. Also list every other queue value for `%s` that is no longer valid." % (t, t)
+    if ptype == "S":
+        return "Write the exact %s for `%s`, as it must appear in the config." % (item["kind"], t)
+    if ptype == "E":
+        return ("I plan to use the `%s` approach for `%s`. Give the go or no-go in proceed. In reason_code, copy the exact "
+                "error code text that applies to this approach, character for character." % (item["name"], t))
+    raise ValueError("no neutral phrasing for probe type " + str(ptype))
+
+
+def neutral_probe_prompt(ptype, script, marker, items=None):
+    """Neutral probe text: the same JSON form and the same grader as the cued probe, a different question."""
+    if items is None:
+        items = script["items"][ptype]
+    head = "[%s] Do not guess. If you do not know a value, set the main field to null.\n" % marker
+    body = "\n".join("%d. %s" % (x["id"], neutral_question(ptype, x)) for x in items)
+    form = {"X": '{"answers":[{"id":1,"current":"...","replaced":["..."]}]}',
+            "E": '{"answers":[{"id":1,"proceed":true,"reason_code":"..."}]}'}.get(ptype, '{"answers":[{"id":1,"answer":"..."}]}')
+    return head + body + "\nReply with JSON only, in this form: " + form
+
+
+def has_cue(text):
+    """True if the text would fire the auto-recall hook: a cue phrase, or a double-quoted phrase of 3 or more words."""
+    low = text.lower()
+    if any(c in low for c in CUE_PHRASES):
+        return True
+    return any(len(q[1:-1].split()) >= 3 for q in QUOTED_PHRASE_RE.findall(text))
 
 
 def main():
