@@ -2,6 +2,9 @@
 # Continuity benchmark: the one command. See README.md.
 #   run.sh slice   [options]      small run: haiku, window 30000, dev seeds
 #   run.sh full    [options]      full run: sonnet, window 400000, report seeds
+#   run.sh litm-pilot [options]   lost-in-the-middle pilot: 2 dev seeds, arms A,B,R, both conditions, both phrasings (add --dry-run to only print the cost)
+#   run.sh litm-full  [options]   same design, 20 report seeds, arms A,B,R,Z,O
+#   run.sh estimate               print the pilot cost and the full cost of the lost-in-the-middle design (no model call)
 #   run.sh resume  <run-id> [--budget-usd X] [--jobs N]
 #   run.sh report  <run-id> [--publish] [--draws N]
 #   run.sh regrade <run-id|results-folder>   (grade the stored raw replies again, rebuild the report, no model call)
@@ -15,7 +18,7 @@ D="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cmd="${1:-}"
 [ $# -gt 0 ] && shift
 case "$cmd" in
-  slice|full)
+  slice|full|litm-pilot|litm-full)
     python3 "$D/runner.py" run "$cmd" "$@"
     rc=$?
     last="$(cat "$D/results/.last" 2>/dev/null)"
@@ -36,6 +39,7 @@ case "$cmd" in
     exit "$rc" ;;
   regrade) exec python3 "$D/regrade.py" "$@" ;;
   aa)      exec python3 "$D/report.py" aa "$@" ;;
+  estimate) exec python3 "$D/runner.py" estimate ;;
   selfcheck) exec python3 "$D/runner.py" selfcheck "$@" ;;
   report)  exec python3 "$D/report.py" "$@" ;;
   cleanup) exec python3 "$D/runner.py" cleanup "$@" ;;

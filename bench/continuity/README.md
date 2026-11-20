@@ -32,7 +32,8 @@ Options of `slice` and `full` (see `python3 bench/continuity/runner.py run slice
 | `--model` | model alias | slice haiku, full sonnet |
 | `--window` | `CLAUDE_CODE_AUTO_COMPACT_WINDOW` | slice 30000, full 400000 |
 | `--n` | compaction counts | slice 1,3,10; full 1,3,10,30 |
-| `--arms` | from A,B,Z,O | A,B,Z,O |
+| `--arms` | from A,B,Z,O,R (R needs `hooks/auto-recall.py` in `--lh-path`) | A,B,Z,O |
+| `--conditions`, `--phrasings`, `--nc-window`, `--dry-run` | see "Lost-in-the-middle design" below | compact, cued |
 | `--types` | from R,D,X,S,E,U,C,F | all |
 | `--seeds` | how many seeds to take from the list | slice 5, full 20 |
 | `--seed-file` | seed list | `seeds-dev.txt` (slice), `seeds-report.txt` (full) |
@@ -56,6 +57,63 @@ Smoke example (1 seed, arms A and B, N=1, 2 types):
 bench/continuity/run.sh slice --seeds 1 --arms A,B --n 1 --types R,X
 bench/continuity/run.sh cleanup
 ```
+
+## Lost-in-the-middle design (probe design 2, 2026-11-20)
+
+This design adds four things. It does not change the old arms, the old probe text or the old scores. `test_litm.py` checks this with hashes of old scripts and old probe text, and with a stored run (`fixtures/legacy-run/`) that must give the same report, byte for byte.
+
+### What is new
+
+- **Position.** Each planted fact has a `position` tag: `start`, `middle` or `end`. The tag is the third of the nominal session timeline that holds the plant turn of the fact (`gen.position_of`). The nominal timeline is, for each epoch 0 to 4: the plant turns, then 6 filler turns (50 turns in total). With the v5 plan, each of the types R, D, X, S, E and C has 4 facts: 2 at start, 1 in the middle and 1 at the end. Type M has no single plant turn, so it has no position. The tag is computed from the script. It is not stored in the script, so no old script changes.
+- **Two phrasings.** `cued` refers to the past. `neutral` is a task that needs the fact with no reference to the past, for example "Write the config line for X". Neutral exists for R, D, X, S and E. C and M ask about the past by their nature, so they have a cued probe only. Both phrasings use the same JSON form and the same code grader. A neutral prompt has no cue phrase of the auto-recall hook and no pointer to the session history. `test_litm.py` checks this for 20 seeds. In a run of design 2, the cued head also says "I told you these values earlier, so remember them." Reason: the hook must be able to fire on a cued probe. All arms get the same text.
+- **Arm R.** Lossless Handoff with `--auto-recall`. The runner writes the project settings of the default install plus the `UserPromptSubmit` hook `auto-recall.py` (timeout 5 seconds). It does not run `install.sh`, so the real `~/.claude` stays untouched. `--lh-path` must hold `hooks/auto-recall.py`, or the run stops at once. After each probe fork, the runner reads `auto-recall.jsonl` of the arm (`HANDOFF_STATE_DIR` is the arm's own folder; the default state folder is read too) and keeps the lines with the session id of the fork. A line means the hook ran. The result row has `auto_recall_fired` and `auto_recall_hits`. The report says "the hook fired on X% of cued and Y% of neutral probes".
+- **No-compaction condition.** For arms A, B and R, a second session has the same plant turns and the same number of filler turns as the nominal timeline, with compaction off (`DISABLE_AUTO_COMPACT=1`). The filler files are small (`nc_lines` lines, one file per turn), so the whole session fits in `--nc-window` (default 200000, under 60% by the arm O size model; the run stops above 75%). The probe comes once, after the last turn, and asks all epochs. The session is invalid if it has a compaction. The report shows how many. Arms Z and O are controls with no condition, so each runs once.
+
+The old filler plan is not the no-compaction plan. In a compaction run the filler is large (it forces compactions), so the positions are nominal tags. In the no-compaction run the positions are the real order of the turns.
+
+### Pre-registered hypotheses
+
+The thresholds are in `thresholds.json` (block `litm`, version 3). The author committed them before any data of this design. A hypothesis that fails stays in the report. Do not change a threshold after a run. All tests use the seed as the unit, the 95% bootstrap interval of the old design, and cued or neutral probes of the types R, D, X, S, E and C, as stated.
+
+| ID | Hypothesis | Pass rule |
+|---|---|---|
+| H1 | Lost in the middle without compaction: arm A (no compaction, cued) loses more middle facts than start and end facts. | middle minus (start and end) at most -10 points, and the interval upper bound below 0 |
+| H2 | Compaction loses facts that long context keeps: arm A with compaction (largest N, cued) scores below arm A with no compaction. | difference at most -15 points, and the interval upper bound below 0 |
+| H3 | Auto-recall helps when the prompt refers to the past: R beats B on cued probes (compaction, largest N). | R minus B at least +5 points, and the interval lower bound above 0 |
+| H4 | Auto-recall does not help without a cue: R does not beat B on neutral probes (compaction, largest N). The honest expectation is no gain, because the hook does not fire. | CONFIRMED if the interval upper bound is below +5 points. REFUTED if R minus B is at least +5 and the lower bound is above 0. Else INCONCLUSIVE. |
+| H5 | Mechanism: the hook fires on cued probes and not on neutral probes. | cued fire rate at least 90%, neutral fire rate at most 5%. A neutral rate above 5% makes the neutral probes invalid. |
+
+The old primary comparisons (B minus A at N=10, N=30 and type X) and the headroom gate stay as they are. The new section does not replace them. For H1, a Sonnet session of about 100k tokens may show no lost-in-the-middle effect. A result of NOT SUPPORTED is a valid result.
+
+Power: each of these types has one middle fact for each seed, so 20 seeds give 120 cued middle probes (6 types) and 100 neutral middle probes (5 types) for each arm and condition, at the largest N. The report prints every count and every interval. Read the interval before you read the point.
+
+### How to run the pilot
+
+```
+python3 bench/continuity/test_litm.py                          # offline self-test, no model call
+bench/continuity/run.sh estimate                               # print the pilot cost and the full cost, no model call
+bench/continuity/run.sh litm-pilot --dry-run --lh-path <checkout with auto-recall>   # print the plan and the cost, no model call
+bench/continuity/run.sh litm-pilot --lh-path <checkout with auto-recall> --budget-usd 200   # 2 dev seeds, arms A,B,R, both conditions, both phrasings, N=1,3,10
+bench/continuity/run.sh litm-full  --lh-path <checkout with auto-recall>                    # 20 report seeds, arms A,B,R,Z,O. Run only after the pilot is clean.
+```
+
+Read the pilot before the full run:
+
+- Table L0: neutral fire rate must be at most 5% (H5). If not, the neutral probes are not neutral.
+- Compactions in the no-compaction sessions must be 0. If not, `DISABLE_AUTO_COMPACT` did not work in this Claude Code version. Stop.
+- Sessions of arm R must show `auto_recall_lines` above 0 in `sessions.jsonl`.
+- Compare the real cost with the estimate below. Put the real numbers in `cost.py`.
+
+### Cost estimate
+
+`cost.py` prices a run from the real Sonnet runs of the full evaluation: about $38 for each seed of Wave 1 (arms A, B, Z, O, N up to 10) and about $92 for each seed of Wave 2 (arms A and B, N up to 30). Assumptions that were not measured: arms Z and O cost $4 for each seed together, probe forks are 30% of a unit, a no-compaction unit costs $5. Plan for plus or minus 30%.
+
+| Run | Seeds | Arms | Estimate |
+|---|---|---|---|
+| Pilot | 2 | A, B, R, both conditions, both phrasings, N=1,3,10 | about $154 |
+| Full | 20 | A, B, R, Z, O, both conditions, both phrasings, N=1,3,10 | about $1,633 |
+
+Add N=30 with `cost.py --seeds 20 --arms A,B,R --n 1,3,10,30` (a printed estimate only; the full preset uses N up to 10).
 
 ## Generator v5 change (2026-11-18)
 
@@ -131,5 +189,9 @@ Run the same arm on the same seeds twice, with two run ids. Then run `run.sh aa 
 | `grade.py` | code grader |
 | `report.py` | tables, bootstrap intervals, gates, verdicts |
 | `test_grader.py` | grader and generator self-test |
+| `test_litm.py` | self-test of position, neutral probes, arm R, no-compaction condition, cost, report, and the old-run regression |
+| `litm.py` | report section: position, phrasing, condition, fire rate, hypotheses H1 to H5 |
+| `cost.py` | cost estimate of the pilot and the full run |
+| `fixtures/legacy-run/` | stored old-design run and its expected report (regression fixture) |
 | `thresholds.json` | pre-registered pass thresholds |
 | `seeds-dev.txt`, `seeds-report.txt` | seed lists |

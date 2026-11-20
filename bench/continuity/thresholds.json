@@ -1,7 +1,7 @@
 {
-  "version": 2,
+  "version": 3,
   "registered": "2026-11-18",
-  "note": "Pass thresholds. They come from the verification plan. v2 adds the headroom gate for generator v4. Committed before any v4 run. Do not change after a run to make a result pass.",
+  "note": "Pass thresholds. They come from the verification plan. v2 adds the headroom gate for generator v4. Committed before any v4 run. Do not change after a run to make a result pass. v3 adds the litm block (lost in the middle, phrasing, auto-recall), committed before any run of probe design 2.",
   "amnesia_max_accuracy": 0.02,
   "oracle_min_accuracy": 0.95,
   "fresh_min_accuracy": 0.95,
@@ -33,5 +33,16 @@
   ],
   "headroom_min_points": 15,
   "headroom_rule": "discriminative at N = (oracle accuracy minus arm A accuracy at N, scored types) >= headroom_min_points. If not, the gain verdict at that N is 'BENCHMARK TOO EASY at this N: no claim either way'.",
-  "zero_parse_gate": "arm Z parse rate is INFO only; a Z parse failure counts as wrong"
+  "zero_parse_gate": "arm Z parse rate is INFO only; a Z parse failure counts as wrong",
+  "litm": {
+    "registered": "2026-11-20",
+    "h1_middle_minus_ends_max_points": -10,
+    "h2_compaction_minus_nocompaction_max_points": -15,
+    "h3_r_minus_b_cued_min_points": 5,
+    "h4_r_minus_b_neutral_no_gain_below_points": 5,
+    "h5_fire_rate_cued_min": 0.9,
+    "h5_fire_rate_neutral_max": 0.05,
+    "nc_compactions_allowed": 0,
+    "note": "Pre-registered before any data. A hypothesis that fails stays in the report. Do not change after a run."
+  }
 }

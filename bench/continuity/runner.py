@@ -18,7 +18,7 @@ import sys, tempfile, threading, time, uuid
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
-import gen, grade  # noqa: E402
+import cost, gen, grade  # noqa: E402
 
 REPO = os.path.realpath(os.path.join(HERE, "..", ".."))
 RESULTS = os.path.join(HERE, "results")
@@ -26,12 +26,21 @@ HOME = os.path.expanduser("~")
 PROJECTS = os.path.join(HOME, ".claude", "projects")
 PREFIX = "lhbench-"
 ALL_TYPES = gen.TYPES + ["F"]
+ALL_ARMS = ("A", "B", "Z", "O", "R")
+LH_ARMS = ("B", "R")        # arms with Lossless Handoff hooks: B default install, R default install plus --auto-recall
 ALLOWED_TOOLS = "Read Grep Task Agent Bash(grep:*) Bash(cat:*) Bash(ls:*) Bash(head:*) Bash(tail:*) Bash(python3:*)"
 MAX_NO_BOUNDARY = 10        # filler turns in a row with no new compaction: the session is invalid
 KINDS = {
     "slice": {"model": "haiku", "window": 30000, "n": [1, 3, 10], "arms": "A,B,Z,O", "seeds": 5, "seed_file": "seeds-dev.txt"},
     "full": {"model": "sonnet", "window": 400000, "n": [1, 3, 10, 30], "arms": "A,B,Z,O", "seeds": 20, "seed_file": "seeds-report.txt"},
+    # Lost-in-the-middle design (probe design 2). The pilot uses dev seeds. Never report from it.
+    "litm-pilot": {"model": "sonnet", "window": 400000, "n": [1, 3, 10], "arms": "A,B,R", "seeds": 2, "seed_file": "seeds-dev.txt",
+                   "conditions": "compact,nocompact", "phrasings": "cued,neutral", "probe_design": 2},
+    "litm-full": {"model": "sonnet", "window": 400000, "n": [1, 3, 10], "arms": "A,B,R,Z,O", "seeds": 20, "seed_file": "seeds-report.txt",
+                  "conditions": "compact,nocompact", "phrasings": "cued,neutral", "probe_design": 2},
 }
+NC_SESSION_WINDOW = 200000      # window of the no-compaction condition
+AUTO_RECALL_LOG = "auto-recall.jsonl"
 
 
 class Pause(Exception):
@@ -211,12 +220,13 @@ class Ctx:
 
 
 # ------------------------------------------------------------------ one claude call
-def lh_settings(hooks_dir):
-    """Project settings of arm B: the hooks of the default install (install.sh, no --canary)."""
+def lh_settings(hooks_dir, auto_recall=False):
+    """Project settings of arm B: the hooks of the default install (install.sh, no --canary).
+    Arm R (auto_recall=True) adds the UserPromptSubmit hook that `install.sh --auto-recall` registers (contract F67.a)."""
     pi = "python3 %s/postcompact-inject.py" % hooks_dir
     led = [{"type": "command", "command": "%s --ledger --part %d" % (pi, n), "timeout": 10} for n in (1, 2, 3)]
     chk = {"type": "command", "command": pi + " --check", "timeout": 5}
-    return {"hooks": {
+    hooks = {
         "PreCompact": [{"hooks": [{"type": "command", "command": "python3 %s/precompact-handoff.py" % hooks_dir, "timeout": 150}]}],
         "SessionStart": [
             {"matcher": "compact", "hooks": [{"type": "command", "command": "%s --part %d" % (pi, n), "timeout": 10} for n in (1, 2, 3)] + led},
@@ -224,7 +234,10 @@ def lh_settings(hooks_dir):
             {"matcher": "resume", "hooks": led + [chk]}],
         "SessionEnd": [{"hooks": [{"type": "command", "command": "python3 %s/recall.py session-end" % hooks_dir, "timeout": 5}]}],
         "PostToolUse": [{"matcher": "*", "hooks": [{"type": "command", "command": "python3 %s/handoff-nudge.py" % hooks_dir, "timeout": 5}]}],
-    }}
+    }
+    if auto_recall:
+        hooks["UserPromptSubmit"] = [{"hooks": [{"type": "command", "command": "python3 %s/auto-recall.py" % hooks_dir, "timeout": 5}]}]
+    return {"hooks": hooks}
 
 
 def deny_rules(base):
@@ -240,17 +253,19 @@ def deny_rules(base):
 
 
 class Session:
-    def __init__(self, ctx, name, seed, arm, st):
-        self.ctx, self.name, self.seed, self.arm, self.st = ctx, name, seed, arm, st
+    def __init__(self, ctx, name, seed, arm, st, cond="compact"):
+        self.ctx, self.name, self.seed, self.arm, self.st, self.cond = ctx, name, seed, arm, st, cond
         cfg = ctx.cfg
         base = work_base(cfg["work_base"])
-        stem = "%s%s-s%d-%s" % (PREFIX, cfg["run_id"], seed, arm)
+        stem = "%s%s-s%d-%s%s" % (PREFIX, cfg["run_id"], seed, arm, "-nc" if cond == "nocompact" else "")
         self.proj = os.path.join(base, stem)
         self.statedir = os.path.join(base, stem + "-state")
-        self.window = cfg["o_window"] if arm == "O" else cfg["window"]
+        self.window = cfg["o_window"] if arm == "O" else (cfg.get("nc_window", NC_SESSION_WINDOW) if cond == "nocompact" else cfg["window"])
         self.script = ctx.script(seed)
         ov = {"CLAUDE_CODE_AUTO_COMPACT_WINDOW": str(self.window), "RECALL_EMBED_URL": "http://127.0.0.1:9"}
-        if arm == "B":
+        if cond == "nocompact":
+            ov["DISABLE_AUTO_COMPACT"] = "1"      # same session length as the compaction run, compaction off
+        if arm in LH_ARMS:
             ov["HANDOFF_STATE_DIR"] = self.statedir
             ov["HANDOFF_SUMMARY_MODEL"] = cfg["model"]
         self.overrides = ov
@@ -260,21 +275,21 @@ class Session:
         if not os.path.isdir(self.proj):
             os.makedirs(os.path.join(self.proj, ".claude"))
             os.makedirs(self.statedir, exist_ok=True)
-            settings = lh_settings(os.path.join(self.ctx.cfg["lh_path"], "hooks")) if self.arm == "B" else {}
+            settings = lh_settings(os.path.join(self.ctx.cfg["lh_path"], "hooks"), auto_recall=(self.arm == "R")) if self.arm in LH_ARMS else {}
             settings["permissions"] = {"deny": deny_rules(work_base(self.ctx.cfg["work_base"]))}
             write_json(os.path.join(self.proj, ".claude", "settings.json"), settings)
             # make the folder its own git root, so that recall.py cannot search outside it
             subprocess.run(["git", "init", "-q", self.proj], capture_output=True, timeout=30)
-            if self.arm == "B":
+            if self.arm in LH_ARMS:
                 src = os.path.join(self.ctx.cfg["lh_path"], "agents", "recall.md")
-                if os.path.isfile(src):     # arm B only: the recall agent of the pinned checkout
+                if os.path.isfile(src):     # arms B and R only: the recall agent of the pinned checkout
                     os.makedirs(os.path.join(self.proj, ".claude", "agents"), exist_ok=True)
                     shutil.copyfile(src, os.path.join(self.proj, ".claude", "agents", "recall.md"))
             if self.st["next_turn"] > 0 or not self.st["first"]:
                 # the folder is gone: the old session cannot continue. Start again from turn 0.
                 self.st.update({"next_turn": 0, "ckpt_i": 0, "boundaries": 0, "last_cost": 0.0, "done_forks": [],
                                 "f_planted": [], "missed": [], "first": True, "sid": None, "events_done": 0, "fill_done": 0,
-                                "filler_no_read_turns": 0, "filler_retries": 0, "filler_retry_no_read": 0})
+                                "filler_no_read_turns": 0, "filler_retries": 0, "filler_retry_no_read": 0, "nc_done": 0})
         self.proj = os.path.realpath(self.proj)
         if not self.st.get("sid"):
             self.st["sid"] = str(uuid.uuid4())
@@ -371,18 +386,27 @@ class Session:
         self.ctx.save()
         return o
 
-    def probe(self, ptype, ckpt, fork_of=None, z_sid=None):
+    def auto_recall_fired(self, fsid):
+        """Arm R: did the auto-recall hook run in this fork? The hook appends one line to auto-recall.jsonl for each prompt
+        that passes its trigger (contract F67.d). HANDOFF_STATE_DIR points to this arm's own folder, so we read it first.
+        We also read the default state folder, and keep only the lines of this fork's session id."""
+        if self.arm != "R" or not fsid:
+            return None, None
+        paths = [os.path.join(self.statedir, AUTO_RECALL_LOG), os.path.join(HOME, ".local", "state", "claude-handoffs", AUTO_RECALL_LOG)]
+        return recall_log_fired([r for p in paths for r in read_jsonl(p)], fsid)
+
+    def probe(self, ptype, ckpt, fork_of=None, z_sid=None, phrasing="cued"):
         """Run one probe type. Fork of the main session (arms A, B, O) or a fresh session (arm Z). Write the result lines."""
         cfg, st, script = self.ctx.cfg, self.st, self.script
-        marker = "PROBE-%d-%s-%d-%s" % (self.seed, self.arm, ckpt, ptype)
+        marker = "PROBE-%d-%s-%d-%s%s" % (self.seed, self.arm, ckpt, ptype, "n" if phrasing == "neutral" else "")
         if ptype == "F":
             items = script["fresh"][str(ckpt)]
         else:
-            em = None if self.arm == "Z" else need_epoch(cfg, self.arm, ckpt)
+            em = None if (self.arm == "Z" or self.cond == "nocompact") else need_epoch(cfg, self.arm, ckpt)
             items = gen.select(script, ptype, em)      # planted so far, oldest first
         if not items:
             return      # nothing of this type is planted yet (M needs 3 epochs)
-        prompt = gen.probe_prompt(ptype, script, marker, ckpt, items=items)
+        prompt = gen.probe_prompt(ptype, script, marker, ckpt, items=items, phrasing=phrasing, cue=cfg.get("probe_design", 1) >= 2)
         if fork_of:
             o = self.call(prompt, "fork", fork_of=fork_of)
         else:
@@ -401,6 +425,8 @@ class Session:
                     os.remove(pth)
                 elif os.path.isdir(pth) and not os.path.islink(pth):
                     shutil.rmtree(pth)
+        fired, hits = self.auto_recall_fired(fsid)
+        posmap = {x["id"]: gen.position_of(script, ptype, x) for x in items}
         u = o.get("usage") if isinstance(o.get("usage"), dict) else {}
         n_actual, pre = (st["boundaries"], st.get("precomputed", 0)) if self.arm != "Z" else (0, 0)
         for g in graded:
@@ -412,9 +438,28 @@ class Session:
                 "abstained": g["abstained"],
                 "used_lookup": used, "lookup_calls": calls_after, "tokens": {"in": u.get("input_tokens"), "out": u.get("output_tokens")},
                 "fork_cost_usd": round(o["_delta"], 6), "claude_version": cfg["claude_version"], "model": cfg["model"],
-                "window": self.window, "commit": cfg["lh_commit"], "turn_index": st["turns"]})
-        st["done_forks"].append("%d:%s" % (ckpt, ptype))
+                "window": self.window, "commit": cfg["lh_commit"], "turn_index": st["turns"],
+                "condition": self.cond, "phrasing": phrasing, "position": posmap.get(g["id"]),
+                "auto_recall_fired": fired, "auto_recall_hits": hits})
+        st["done_forks"].append(fork_key(ckpt, ptype, phrasing))
         self.ctx.save()
+
+
+def fork_key(ckpt, ptype, phrasing="cued"):
+    """Key of a finished probe fork in the state file. A cued key is the old key, so old state files still work."""
+    return "%d:%s" % (ckpt, ptype) + (":neutral" if phrasing == "neutral" else "")
+
+
+def probe_plan(cfg, ptype):
+    """Phrasings to ask for a probe type. Neutral exists for R D X S E only. Old runs have cued only."""
+    ph = [p for p in cfg.get("phrasings", ["cued"]) if p == "cued" or ptype in gen.NEUTRAL_TYPES]
+    return ph or ["cued"]
+
+
+def recall_log_fired(rows, fsid):
+    """From the lines of auto-recall.jsonl: (fired, hits) for one session id. fired is False when no line has this id."""
+    mine = [r for r in rows if isinstance(r, dict) and r.get("session_id") == fsid and r.get("fired")]
+    return bool(mine), (max((r.get("hits") or 0) for r in mine) if mine else 0)
 
 
 # ------------------------------------------------------------------ session logic
@@ -500,6 +545,43 @@ def run_main_session(ctx, ss):
         ctx.save()
 
 
+def nc_plan_steps(script):
+    """Steps of the no-compaction session: the nominal timeline (see gen.nominal_timeline). ("ev", i) or ("fill", k)."""
+    steps, k = [], 0
+    for e in range(script["max_epoch"] + 1):
+        steps += [("ev", i) for i, ev in enumerate(script["events"]) if ev["epoch"] == e]
+        for _ in range(gen.FILL_PER_EPOCH):
+            steps.append(("fill", k))
+            k += 1
+    return steps
+
+
+def run_nc_session(ctx, ss):
+    """No-compaction condition: the same plant turns and the same number of filler turns as the nominal timeline.
+    Filler files are small (cfg nc_lines lines), so the whole session fits in the window. Compaction is off (DISABLE_AUTO_COMPACT)."""
+    cfg, st, script = ctx.cfg, ss.st, ss.script
+    steps = nc_plan_steps(script)
+    while st.get("nc_done", 0) < len(steps):
+        ctx.check_budget()
+        kind, i = steps[st["nc_done"]]
+        if kind == "ev":
+            run_event(ctx, ss, script["events"][i])
+            st["events_done"] = st.get("events_done", 0) + 1
+        else:
+            name, text = gen.filler_file(ss.seed, i, 0, lines=cfg["nc_lines"], version=cfg["gen_version"])
+            if any(x in text for x in script["secrets"]):
+                raise Fatal("a filler file holds an answer token")
+            with open(os.path.join(ss.proj, name), "w", encoding="utf-8") as f:
+                f.write(text)
+            run_filler_turn(ss, gen.filler_prompt(script, i, [name]))
+            st["fill_done"] = i + 1
+        st["nc_done"] += 1
+        st["next_turn"] += 1
+        ctx.save()
+    st["boundaries_at_plant_end"] = st["boundaries"]
+    checkpoint(ctx, ss, 0)          # n_target 0: a compaction in this session makes it a missed checkpoint
+
+
 def checkpoint(ctx, ss, target):
     cfg, st, script = ctx.cfg, ss.st, ss.script
     types = cfg["types"]
@@ -513,9 +595,10 @@ def checkpoint(ctx, ss, target):
         st["missed"].append({"target": target, "actual": n})
         return
     for t in types:
-        if "%d:%s" % (target, t) in st["done_forks"]:
-            continue
-        ss.probe(t, target, fork_of=st["sid"])
+        for ph in probe_plan(cfg, t):
+            if fork_key(target, t, ph) in st["done_forks"]:
+                continue
+            ss.probe(t, target, fork_of=st["sid"], phrasing=ph)
     # leak check: no probe marker may appear in the main timeline
     prefix = "PROBE-%d-%s-" % (ss.seed, ss.arm)
     leaks = 0
@@ -530,15 +613,16 @@ def checkpoint(ctx, ss, target):
 def run_z(ctx, ss):
     st = ss.st
     for t in ctx.cfg["types"]:
-        if "0:%s" % t in st["done_forks"]:
-            continue
-        ss.probe(t, 0, z_sid=str(uuid.uuid4()))
+        for ph in probe_plan(ctx.cfg, t):
+            if fork_key(0, t, ph) in st["done_forks"]:
+                continue
+            ss.probe(t, 0, z_sid=str(uuid.uuid4()), phrasing=ph)
 
 
 def session_summary(ctx, ss):
     """Facts from the transcript, for the report. The main transcript only; subagent compactions are counted apart."""
     st = ss.st
-    out = {"name": ss.name, "seed": ss.seed, "arm": ss.arm, "status": st["status"], "turns": st["turns"],
+    out = {"name": ss.name, "seed": ss.seed, "arm": ss.arm, "condition": ss.cond, "status": st["status"], "turns": st["turns"],
            "boundaries": st["boundaries"], "precomputed": st.get("precomputed", 0), "missed": st["missed"],
            "fork_leaks": st["fork_leaks"], "boundaries_at_plant_end": st.get("boundaries_at_plant_end"), "cost_usd": round(st.get("cost", 0.0), 4), "reason": st.get("reason"),
            "filler_no_read_turns": st.get("filler_no_read_turns", 0), "filler_retries": st.get("filler_retries", 0),
@@ -556,8 +640,10 @@ def session_summary(ctx, ss):
         out["u_main_reads"] = reads
         out["subagent_files"] = len(subs)
         out["sub_boundaries"] = sum(count_boundaries(p)[0] for p in subs)
-        if ss.arm == "B":
+        if ss.arm in LH_ARMS:
             out["hook_receipts"] = len(read_jsonl(os.path.join(ss.statedir, "health.jsonl")))
+        if ss.arm == "R":
+            out["auto_recall_lines"] = len(read_jsonl(os.path.join(ss.statedir, AUTO_RECALL_LOG)))
     return out
 
 
@@ -574,18 +660,20 @@ def write_retention(ctx, ss):
     ctx.append("retention.jsonl", ret)
 
 
-def run_unit(ctx, seed, arm):
-    name = "s%d-%s" % (seed, arm)
+def run_unit(ctx, seed, arm, cond="compact"):
+    name = "s%d-%s%s" % (seed, arm, "-nc" if cond == "nocompact" else "")
     st = ctx.sess(name)
     if st["status"] == "done":
         return
-    ss = Session(ctx, name, seed, arm, st)
+    ss = Session(ctx, name, seed, arm, st, cond)
     try:
         ss.prepare()
         st["status"] = "running"
         ctx.save()
         if arm == "Z":
             run_z(ctx, ss)
+        elif cond == "nocompact":
+            run_nc_session(ctx, ss)
         else:
             run_main_session(ctx, ss)
         if st["status"] == "running":
@@ -619,7 +707,11 @@ def parse_common(ap):
     ap.add_argument("--model", help="claude model alias (slice: haiku, full: sonnet)")
     ap.add_argument("--window", type=int, help="CLAUDE_CODE_AUTO_COMPACT_WINDOW (slice 30000, full 400000)")
     ap.add_argument("--n", help="comma list of compaction counts, for example 1,3,10")
-    ap.add_argument("--arms", help="comma list from A,B,Z,O")
+    ap.add_argument("--arms", help="comma list from A,B,Z,O,R (R = Lossless Handoff with --auto-recall)")
+    ap.add_argument("--conditions", help="comma list from compact,nocompact (default compact; litm kinds: both)")
+    ap.add_argument("--phrasings", help="comma list from cued,neutral (default cued; litm kinds: both)")
+    ap.add_argument("--nc-window", type=int, default=None, help="window of the no-compaction condition (default 200000)")
+    ap.add_argument("--dry-run", action="store_true", help="print the plan and the cost estimate, then stop. No model call")
     ap.add_argument("--types", help="comma list from R,D,X,S,E,U,C,F (default all)")
     ap.add_argument("--seeds", type=int, help="how many seeds to take from the seed list")
     ap.add_argument("--seed-file", help="seed list file (default: seeds-dev.txt for slice, seeds-report.txt for full)")
@@ -674,6 +766,21 @@ def o_plan(o_window, planted, files_per_turn, turns):
     return files_per_turn, turns, est
 
 
+NC_TURNS = None     # filler turns of the no-compaction session: 5 epochs x gen.FILL_PER_EPOCH
+
+
+def nc_plan(window, planted, turns=None):
+    """Lines of each filler file (one file per filler turn) so that the no-compaction session fits in its window.
+    Same size model as arm O: stay under 60% of the window. Fails above 75%."""
+    turns = turns or (gen.build(1)["max_epoch"] + 1) * gen.FILL_PER_EPOCH
+    room = O_TARGET_FRACTION * window - O_OVERHEAD_TOKENS - planted - O_PROBE_TOKENS
+    lines = int(room / turns / (TOKENS_PER_FILE / 330.0))
+    if lines < 20:
+        raise SystemExit("the no-compaction condition would be too large for --nc-window %d: only %d lines per filler file. Raise --nc-window." % (window, lines))
+    est = int(O_OVERHEAD_TOKENS + planted + O_PROBE_TOKENS + turns * lines * TOKENS_PER_FILE / 330.0)
+    return lines, est
+
+
 def build_cfg(kind, a):
     k = KINDS[kind]
     window = a.window or k["window"]
@@ -681,12 +788,19 @@ def build_cfg(kind, a):
     types = [t for t in (a.types.split(",") if a.types else ALL_TYPES)]
     bad = [t for t in types if t not in ALL_TYPES]
     arms = (a.arms or k["arms"]).split(",")
-    bad += [x for x in arms if x not in ("A", "B", "Z", "O")]
+    bad += [x for x in arms if x not in ALL_ARMS]
+    conds = (a.conditions or k.get("conditions", "compact")).split(",")
+    phr = (a.phrasings or k.get("phrasings", "cued")).split(",")
+    bad += [x for x in conds if x not in ("compact", "nocompact")] + [x for x in phr if x not in gen.PHRASINGS]
     if bad:
-        raise SystemExit("unknown type or arm: %s" % bad)
+        raise SystemExit("unknown type, arm, condition or phrasing: %s" % bad)
     lh = os.path.realpath(a.lh_path or REPO)
-    if "B" in arms and not os.path.isfile(os.path.join(lh, "hooks", "precompact-handoff.py")):
-        raise SystemExit("arm B: no hooks in %s/hooks" % lh)
+    if any(x in arms for x in LH_ARMS) and not os.path.isfile(os.path.join(lh, "hooks", "precompact-handoff.py")):
+        raise SystemExit("arm B or R: no hooks in %s/hooks" % lh)
+    if "R" in arms and not os.path.isfile(os.path.join(lh, "hooks", "auto-recall.py")):
+        raise SystemExit("arm R: no hooks/auto-recall.py in %s. Use --lh-path with a checkout that has install.sh --auto-recall." % lh)
+    nc_window = a.nc_window or NC_SESSION_WINDOW
+    nc_lines, nc_est = nc_plan(nc_window, o_planted_tokens(seeds)) if "nocompact" in conds and any(x in arms for x in ("A", "B", "R")) else (None, None)
     dirty = bool(sh(["git", "status", "--porcelain", "--", "hooks"], cwd=lh))
     o_window = a.o_window or 200000
     o_fpt, o_turns, o_est = o_plan(o_window, o_planted_tokens(seeds), a.o_files_per_turn, a.oracle_turns) if "O" in arms else (None, None, None)
@@ -699,6 +813,8 @@ def build_cfg(kind, a):
         "files_per_turn": a.files_per_turn or max(1, min(12, round(window * 0.4 / 6000))),
         "o_window": o_window, "oracle_turns": o_turns or a.oracle_turns or 3, "o_files_per_turn": o_fpt,
         "o_estimate_tokens": o_est,
+        "conditions": conds, "phrasings": phr, "probe_design": k.get("probe_design", 1),
+        "nc_window": nc_window, "nc_lines": nc_lines, "nc_estimate_tokens": nc_est,
         "work_base": work_base(a.work_base), "call_cap_usd": a.call_cap_usd or 1.50,
         "turn_timeout_s": a.turn_timeout_s or (420 if "haiku" in (a.model or k["model"]) else 900),
         "jobs": a.jobs or 2, "budget_usd": a.budget_usd, "claude_version": sh(["claude", "--version"]),
@@ -707,16 +823,23 @@ def build_cfg(kind, a):
     }
 
 
+def work_units(cfg):
+    """(seed, arm, condition). Arms A, B and R run each condition. Z and O are controls with no condition: one unit each."""
+    conds = cfg.get("conditions", ["compact"])
+    return [(s, arm, c) for s in cfg["seeds"] for arm in cfg["arms"]
+            for c in (conds if arm in ("A", "B", "R") else ["compact"])]
+
+
 def execute(ctx):
     cfg = ctx.cfg
     snap0 = sha256_file(os.path.join(HOME, ".claude", "settings.json"))
-    units = [(s, arm) for s in cfg["seeds"] for arm in cfg["arms"]]
+    units = work_units(cfg)
     code = 0
     ctx.state["status"] = "running"
     ctx.save()
     try:
         with concurrent.futures.ThreadPoolExecutor(max_workers=cfg["jobs"]) as ex:
-            futs = [ex.submit(run_unit, ctx, s, arm) for s, arm in units]
+            futs = [ex.submit(run_unit, ctx, s, arm, cond) for s, arm, cond in units]
             for f in futs:
                 try:
                     f.result()
@@ -750,8 +873,21 @@ def execute(ctx):
     return code
 
 
+def cmd_estimate(a):
+    """Print the cost of the pilot and of the full run of the lost-in-the-middle design. No model call."""
+    return cost.main([])
+
+
 def cmd_run(a):
     cfg = build_cfg(a.kind, a)
+    if a.dry_run:
+        units = work_units(cfg)
+        print("dry run: no model call. run %s, kind %s, model %s, window %s, nc window %s (%s lines per filler file)" % (
+            cfg["run_id"], cfg["kind"], cfg["model"], cfg["window"], cfg["nc_window"], cfg["nc_lines"]))
+        print("units (seed, arm, condition):", len(units), "; conditions", cfg["conditions"], "; phrasings", cfg["phrasings"], "; probe design", cfg["probe_design"])
+        print(cost.render("ESTIMATE FOR THIS RUN", {"seeds": len(cfg["seeds"]), "arms": cfg["arms"], "n": cfg["n"],
+                                                     "conditions": cfg["conditions"], "phrasings": cfg["phrasings"]})[1])
+        return 0
     run_dir = os.path.join(RESULTS, cfg["run_id"])
     os.makedirs(run_dir)
     write_json(os.path.join(run_dir, "config.json"), cfg)
@@ -874,6 +1010,7 @@ def main():
     rs.add_argument("run_id")
     rs.add_argument("--budget-usd", type=float, default=None)
     rs.add_argument("--jobs", type=int, default=None)
+    sp.add_parser("estimate")
     sc = sp.add_parser("selfcheck")
     sc.add_argument("--model", default="haiku")
     sc.add_argument("--lh-path")
@@ -883,7 +1020,7 @@ def main():
     c.add_argument("--dry-run", action="store_true")
     c.add_argument("--work-base")
     a = ap.parse_args()
-    return {"run": cmd_run, "resume": cmd_resume, "cleanup": cmd_cleanup, "selfcheck": cmd_selfcheck}[a.cmd](a)
+    return {"run": cmd_run, "resume": cmd_resume, "cleanup": cmd_cleanup, "selfcheck": cmd_selfcheck, "estimate": cmd_estimate}[a.cmd](a)
 
 
 if __name__ == "__main__":
