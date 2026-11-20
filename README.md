@@ -46,7 +46,7 @@ claude -p --model haiku --resume <session_id> "/compact"
 tail -n 3 ~/.local/state/claude-handoffs/health.jsonl
 ```
 
-To check the install without a model call, run `python3 ~/.claude/hooks/postcompact-inject.py --check`. It prints nothing when all is well, or one `HANDOFF CHECK:` line.
+To check the install without a model call, run `python3 ~/.claude/hooks/postcompact-inject.py --check`. It prints nothing when all is well, or one `HANDOFF CHECK:` line for each problem found.
 
 These commands make real model calls and use a small part of your quota. A new line with `"trigger": "manual"` means that the PreCompact hook fired. You can also run `bash tests/smoke.sh`. It uses a temporary HOME and does not touch your real settings.
 
