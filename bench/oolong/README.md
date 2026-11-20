@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This harness answers two questions. Does plain Claude Code still lose on large aggregation tasks? Does the `llm_map` tool (arm C) help?
+This harness answers two questions. Does plain Claude Code still lose on large aggregation tasks? Does Lossless Handoff (arm C) do no harm? With the option `--llm-map-path`, does the `llm_map` tool of the [llm-map project](https://github.com/pratikgh0se/llm-map) help?
 The rule for the first question is in `decision.json`.
 The harness does not test the handoff hooks in a useful way below the compaction window. See "Arm C".
 
@@ -21,17 +21,19 @@ The harness does not test the handoff hooks in a useful way below the compaction
 |---|---|
 | A | Plain Claude Code. The Workflow tool is disallowed. The subagent tool (named Task in this version) stays allowed. |
 | B | Plain Claude Code. The task prompt adds one line: "You may split the work across parallel subagents (Agent tool) if it helps; wait for all their results before your final answer." |
-| C | Lossless Handoff from `--lh-path` (alias `--lh`): the hooks, the recall agent and the `llm_map` tool with its skill. The task prompt is the same as for A. |
+| C | Lossless Handoff from `--lh-path` (alias `--lh`): the hooks and the recall agent only. The task prompt is the same as for A. Option `--llm-map-path <dir>` (a checkout of https://github.com/pratikgh0se/llm-map) adds the `llm_map` tool and its skill to arm C. |
 | N | No-context control. It is the same as A, but `context.txt` is not in the folder. |
 
 These settings are the same in all arms: model, Claude Code version, allowed tools, permission mode, cost cap for each call, time limit, window setting.
 The harness writes a config record for each task and arm (`config_records.json`).
 `check_fairness` compares the records. If any setting other than the intended one differs, the run stops before the first call.
 
-Arm C and llm_map: the harness copies `skills/llm-map/SKILL.md` of the checkout into the task project (`.claude/skills/llm-map/SKILL.md`).
-It replaces each `~/.claude/hooks/llm_map.py` in the file with the absolute path `<lh>/hooks/llm_map.py`. The session never loads user skills (`--setting-sources project`).
-`--disable-slash-commands` also turns off skills. So arm C runs without that flag. A and B keep it. The config record names this difference in `llm_map_skill`.
-If the checkout has no `skills/llm-map/SKILL.md` or no `hooks/llm_map.py`, arm C stops before the first call with a clear message.
+**History.** Until 0.13.x, arm C always included llm_map from `--lh-path`. The run of 2026-11-18 (the 2-task pilot summary and the sandbox evidence in `evidence/`) used arm C with llm_map. To reproduce that setup, add `--llm-map-path` with a checkout of the llm-map project.
+
+Arm C with `--llm-map-path` and llm_map: the harness copies `skill/SKILL.md` of the llm-map checkout into the task project (`.claude/skills/llm-map/SKILL.md`).
+It replaces each `~/.claude/hooks/llm_map.py` in the file with the absolute path `<llm-map>/llm_map.py`. (It also accepts the old layout `skills/llm-map/SKILL.md` and `hooks/llm_map.py`.) The session never loads user skills (`--setting-sources project`).
+`--disable-slash-commands` also turns off skills. So arm C with `--llm-map-path` runs without that flag. A, B and arm C without `--llm-map-path` keep it. The config record names this difference in `llm_map_skill`.
+If the checkout has no `llm_map.py` and `skill/SKILL.md`, the run stops before the first call with a clear message.
 
 Arm C: at lengths under the compaction window, no compaction occurs in the main session. Then C equals A, except for the session-start text.
 The report counts compactions of the main session only. Subagents can compact. If the count is 0, C tests only the session-start text, and that the hooks do no harm.
@@ -47,8 +49,8 @@ Arm B tests parallel subagents instead.
 ## Sandbox and contamination guards
 
 - WebSearch and WebFetch are disallowed. Permission rules deny Bash commands with curl, wget, pip, huggingface, git clone, urllib, requests.
-- Arm C only: `llm_map` must reach the Anthropic API from Bash, and its child `claude -p` needs the real login. So arm C has one sandbox exception:
-  `sandbox.excludedCommands = ["python3 <lh>/hooks/llm_map.py *"]`. Claude Code reads this list only from a trusted settings tier, not from the project file.
+- Arm C with `--llm-map-path` only: `llm_map` must reach the Anthropic API from Bash, and its child `claude -p` needs the real login. So arm C has one sandbox exception:
+  `sandbox.excludedCommands = ["python3 <llm-map>/llm_map.py *"]`. Claude Code reads this list only from a trusted settings tier, not from the project file.
   So the harness sets it in the `--settings` JSON of the arm C call. `allowUnsandboxedCommands` stays false. Other commands stay in the sandbox, also when they are in the same command line.
   WebFetch and WebSearch stay off, and the curl and wget deny rules stay. No general network is open. The config record holds the list in `llm_map_sandbox_exception`.
   Claude Code exempts a call only when every command in it matches. So `llm_map` must be a Bash call of its own. A chain (`&&`, `;`, a pipe), a `cd`, a redirect or a command substitution keeps the call in the sandbox, and then it fails on the network.
@@ -57,7 +59,7 @@ Arm B tests parallel subagents instead.
 - The sandbox does not cover the Read tool. Each unit has deny rules for the bench folder, the cache folder and `~/.claude/projects`. The other task folders have no rule of their own (see "E2BIG and constant-size rules").
 - The gold answers stay in the cache and in `results/`. They never enter a task folder. The harness deletes each task folder when the unit ends.
 - Proof: `run.sh selfcheck` makes a sibling folder with a token. The Read tool and Bash must both fail to read it. It also runs one real `curl` from inside a task session with no curl deny rule. The sandbox must stop it. It stores `evidence/sandbox-<time>.json` with the tool list of each arm.
-  With arm C it also checks three things: the session lists the `llm-map` skill, one `llm_map` run of 3 items succeeds from inside the sandbox, and a curl to example.com in the same session still fails.
+  With arm C and `--llm-map-path` it also checks three things: the session lists the `llm-map` skill, one `llm_map` run of 3 items succeeds from inside the sandbox, and a curl to example.com in the same session still fails.
 - Control N: each question runs once with no context file. A task that is right without context leaves the cleaned score (also by chance: a label question has a 1 in 6 chance).
 - Transcript search: the harness searches the text that the model wrote and its tool inputs. It does not search tool results, which print context lines. It looks for `trec_coarse`, "oolong", "ground truth", Hugging Face, download commands and URLs in commands. The report lists the hits for each task. The plain word "TREC" is a recognition note, not a hit (see "Harness rules of 2026-11-18").
 - A task with a control hit or any transcript hit leaves the cleaned score in all arms (so the pairs stay). The report prints raw and cleaned scores and the counts removed, under the new rule and the old rule.
@@ -84,7 +86,7 @@ python3 test_harness.py                                  # offline tests of harn
 ./run.sh cleanup [--all] [--dry-run]                    # only folders with the exact prefix lhoo-
 ```
 
-Flags of `run`: `--model` (pilot haiku, slice sonnet, full opus), `--lengths`, `--tasks`, `--arms`, `--window`, `--lh-path` (or `--lh`), `--cache`, `--work-base`,
+Flags of `run`: `--model` (pilot haiku, slice sonnet, full opus), `--lengths`, `--tasks`, `--arms`, `--window`, `--lh-path` (or `--lh`), `--llm-map-path`, `--cache`, `--work-base`,
 `--call-cap-usd`, `--timeout-s`, `--jobs` (default 2), `--budget-usd` (pause with exit code 3; resume later), `--answer-types`, `--seed`.
 The run refuses to start if `decision.json` is not committed.
 Set `OOLONG_CACHE` and `LHOO_WORK` to keep the gold and the task folders outside the repo.

@@ -922,6 +922,7 @@ ACs (fixture: the F44.8 fixture plus one subagent transcript for an in-scope ses
 Why: a new subagent gets no project rules. It gets them only after its own compaction, and most subagents never compact. So a subagent can break a standing rule the user set (for example, no traces in commits) that the main agent knows. Claude Code's `SubagentStart` hook can add context to the subagent (`additionalContext`). D3 holds: a subagent never gets the main agent's handoff or notes.
 
 **F58.a Hook.** `postcompact-inject.py --subagent-start` reads the SubagentStart hook JSON from stdin (`cwd`, `agent_id`, `agent_type`; verified live 2026-11-18: the context reaches the subagent and not the main agent, 2 of 2 runs) and prints `{"hookSpecificOutput":{"hookEventName":"SubagentStart","additionalContext":"<ctx>"}}`. `<ctx>` is:
+- (since 0.14.0, F66.b) first, the preamble line of F66.b;
 - the line `Project rules for this repo (standing; from the Lossless Handoff decisions list; the user's latest words win):`
 - each active ledger entry with tag `rule` for the project of `cwd`, newest first, in the same line form as ledger part 1;
 - the recall line (with the F55.c sentence when it applies).
@@ -959,55 +960,10 @@ ACs (fixture: an in-scope session with one subagent transcript. The subagent has
 Version: hooks 1.13.1; release 0.11.1. `HOOK_VERSION` in both hooks and `hook_version` in health rows and sidecars is `1.13.1`. This amends the version value in ACs 136, 150, 172, 180, 188 and 267 again.
 
 ## F60 llm_map: label many items with a small model (2026-11-18)
-Why: the LCM paper's `llm_map` sends each item of a large set through a small model and stores the results, so the main model aggregates exact per-item answers instead of guessing. The pre-registered OOLONG decision (bench/oolong/decision.json, P4-1; run 20261118T132316, Sonnet, Claude Code 2.1.326, trec_coarse 128K, 20 tasks) gave the best plain arm a clean mean of 0.69 (rule: build if 0.70 or less). In the transcripts, plain Claude Code filtered with a regex, read a sample and estimated a count; it never used subagents, even when the prompt allowed them.
-
-**F60.a Command.** `python3 ~/.claude/hooks/llm_map.py --in <file> --prompt <text> --out <file> [--model haiku] [--batch 40] [--jobs 4] [--max-usd 2.00] [--json-out]`
-- `--in`: a text file with one item per line (empty lines are skipped), or a `.jsonl` file whose objects hold `text` (and optionally `id`). Item numbers `i` start at 1, in file order.
-- Items go in batches of `--batch` to the model. Each batch prompt holds the `--prompt` text, then the items as numbered lines `<i>: <text>`, and asks for exactly one JSON line per item: `{"i": <i>, "out": <answer>}`. With `--json-out`, `out` may be any JSON value; else it is a string.
-- Up to `--jobs` batches run at the same time.
-- Items missing from a batch reply, or with lines that do not parse, are sent once more in a new batch. Items that fail again get `"out": null, "error": "<short reason>"`.
-- `--out` gets one JSON line per item, in input order: `{"i", "id" (if given), "text", "out"}` (plus `error` when set). The file is written atomically at the end.
-- stdout ends with one line: `llm_map: <n> items, <ok> ok, <failed> failed, <b> batches, cost $<x.xxxx>` where cost is the sum of `total_cost_usd` the model calls report.
-- `--max-usd`: no new batch starts when the spent total plus the largest batch cost seen so far would pass the cap; unsent items get `error: "budget"`. Exit code 0 when every item has `out`, 3 when some failed, 2 on a usage error (missing file, bad flag, empty input).
-**F60.b Model call.** Each batch runs `claude -p` with the chosen model, JSON output, no tools, no hooks, no MCP servers, no session saved to disk, and a cwd in a new temp folder that is deleted after. The env var `LLM_MAP_CLAUDE` replaces the `claude` command (tests use a fake). Lossless Handoff hooks never run for these calls, so they never write handoffs, ledger rows or health rows.
-**F60.c Skill.** `install.sh` writes `~/.claude/skills/llm-map/SKILL.md` when it is missing or holds the marker line `<!-- lossless-handoff:llm-map-skill -->`; it never overwrites a file without the marker (it prints `~/.claude/skills/llm-map/SKILL.md exists and is not ours; left unchanged.`). `--dry-run` writes nothing; `uninstall.sh` removes it only when it holds the marker. The skill frontmatter has `name: llm-map` and a `description` that says: use it to label, classify, extract or check each item of a large list (hundreds or more) with a small model, instead of estimating from a sample. The body has the marker, the F60.a command with an example (write items to a file with a short script first, run llm_map, then count or aggregate the `out` values with a script), and the rule: report exact counts from the output, and say how many items failed.
-**F60.d Install.** `install.sh` copies `hooks/llm_map.py` with the other hook files. It changes no `settings.json` entry.
-
-ACs (all with a fake `claude` set by `LLM_MAP_CLAUDE`, a script that reads the prompt from its arguments or stdin, answers `{"i": n, "out": "<label>"}` lines, and prints a JSON result object with `result` and `total_cost_usd` like `claude -p --output-format json`):
-- 274. 100 items, `--batch 40`: `--out` has 100 lines in input order with `i` 1..100 and the fake's labels; stdout ends with `llm_map: 100 items, 100 ok, 0 failed, 3 batches, cost $` and the summed fake cost; exit 0.
-- 275. A fake that drops item 7 the first time and answers it on the retry: item 7 has its label, no `error`, exit 0. A fake that never answers item 7: item 7 has `out` null and an `error`, the summary says `1 failed`, exit 3.
-- 276. `.jsonl` input with `id` and `text`: each output line keeps the `id`.
-- 277. `--max-usd` smaller than two batch costs: some items get `error: "budget"`, the summary counts them as failed, exit 3, and the number of fake calls is less than the batch count.
-- 278. A missing `--in` file, or an input with no items: exit 2, a message on stderr, no `--out` file.
-- 279. The fake records its argv and cwd: the call has `-p`, `--model haiku` (default), JSON output, and no-tool and no-hook settings; the cwd is not the user's cwd and is gone after the run. No handoff, ledger or health row appears in the temp HOME.
-- 280. Install in a temp HOME: `~/.claude/skills/llm-map/SKILL.md` exists with the marker, `name: llm-map` and the text `llm_map.py`; `~/.claude/hooks/llm_map.py` exists; `settings.json` hook entries are unchanged by this feature. A SKILL.md without the marker is left unchanged with the F60.c line; uninstall removes only the marked file.
-
-Version: hooks 1.14.0; release 0.12.0. `HOOK_VERSION` in both hooks and `hook_version` in health rows and sidecars is `1.14.0`. This amends the version value in ACs 136, 150, 172, 180, 188 and 267 again.
-
+Moved to the llm-map project (https://github.com/pratikgh0se/llm-map) in release 0.14.0. See F66. This number and ACs 274 to 280 stay reserved. This repository no longer ships `hooks/llm_map.py` or the llm-map skill.
 
 ## F61 llm_map: faster, a fixed label set, progress (2026-11-18)
-Why: a small OOLONG check (run 20261118T142600, Sonnet, 128K, 5 tasks) gave arm C with llm_map 0.20 against 0.60 for plain Claude Code. The diagnosis found:
-- 3,000 items took about 147 s with the F60 defaults. That is longer than the 120 s default of the Bash tool, so 3 of 4 runs moved to the background, and the model waited badly (one wait loop used `pgrep -f llm_map.py`, which matched itself).
-- The small model often answered with a label that was not in the list (short forms such as "description" or "numeric", or an answer to the question such as "1790").
-- One task never used llm_map.
-
-**F61.a Defaults.** `--batch` default is 100 and `--jobs` default is 8.
-**F61.b Fixed labels.** `--labels "<a>|<b>|..."` (labels split on `|`, each trimmed; at least 2) sets the allowed answers. The batch prompt lists them and asks for exactly one of them. A reply value is mapped to a label in this order: (1) equal to a label after trim and case fold; (2) the reply is a prefix of exactly one label, or exactly one label is a prefix of the reply, after case fold, at a word boundary; else the value is invalid. An item with an invalid value is sent once more like a missing item (F60.a); if it is still invalid, it gets `"out": null, "error": "label: <the reply cut to 40 characters>"`. `out` always holds the canonical label text. `--labels` with `--json-out` is a usage error (exit 2).
-**F61.c Progress.** After each batch ends, llm_map prints to stderr `llm_map: <done> of <n> items done`. The final summary line on stdout is unchanged.
-**F61.d Skill text.** `skills/llm-map/SKILL.md`:
-- The `description` also says: use it to count or aggregate over hundreds or thousands of items.
-- The body says: a run of a few thousand items takes about one minute; give the Bash call a timeout of 600000 ms; wait for it to end in the foreground. Do not poll for it with `pgrep` or `ps`. Use relative paths in the current folder for the files (not `$TMPDIR`). Give the exact label set with `--labels`. Read the summary line before you count. Count from the output file with a script.
-- The example uses `--labels`. It stays neutral (not a benchmark's labels).
-
-ACs (fake `claude` as in F60):
-- 281. 250 items with no `--batch` and no `--jobs`: 3 batches (100, 100, 50).
-- 282. `--labels "numeric value|human being|location"`, a fake that answers `numeric`, `Human Being`, `location` and `1790`: the first three items get `numeric value`, `human being`, `location`; the fourth is sent again; if the fake answers `1790` again, it gets `out` null and an `error` that starts with `label:`, the summary counts it as failed, exit 3.
-- 283. A reply that is a prefix of two labels (for example `h` with labels `human being|history`): invalid, handled as in AC 282.
-- 284. `--labels "a"` (one label), or `--labels` with `--json-out`: exit 2, no `--out` file.
-- 285. stderr holds one `llm_map: <done> of <n> items done` line per batch, and the last one says `<n> of <n>` when all items are done.
-- 286. The installed SKILL.md holds `--labels`, `600000`, and the word `pgrep`; the description holds `count`.
-
-Version: hooks 1.14.1; release 0.12.1. `HOOK_VERSION` in both hooks and `hook_version` in health rows and sidecars is `1.14.1`. This amends the version value in ACs 136, 150, 172, 180, 188 and 267 again.
+Moved to the llm-map project (https://github.com/pratikgh0se/llm-map) in release 0.14.0. See F66. This number and ACs 281 to 286 stay reserved.
 
 
 ## F62 Nudge window source (2026-11-19)
@@ -1060,13 +1016,13 @@ Version: hooks 1.14.2; release 0.12.2. `HOOK_VERSION` in both hooks and `hook_ve
 
 Why: an independent review found that the default install changed too much (a global window value, two LaunchAgents, a model pull, a skill).
 
-**F64 (minimal default install).** `./install.sh` with no options installs only the core: the hooks (nudge, PreCompact handoff, post-compaction inject, SessionStart check, SubagentStart rules, SessionEnd index), `recall.py`, the recall subagent and the decisions list. It does not set `CLAUDE_CODE_AUTO_COMPACT_WINDOW`, does not install nightly jobs, does not pull an embedding model, and does not install the `llm_map` hook or skill.
+**F64 (minimal default install).** `./install.sh` with no options installs only the core: the hooks (nudge, PreCompact handoff, post-compaction inject, SessionStart check, SubagentStart rules, SessionEnd index), `recall.py`, the recall subagent and the decisions list. It does not set `CLAUDE_CODE_AUTO_COMPACT_WINDOW`, does not install nightly jobs, does not pull an embedding model, and (since 0.14.0, F66) does not install the `llm_map` hook or skill at all.
 
-- F64.a Opt-in flags add the other parts: `--window N`, `--nightly`, `--semantic` (offers `ollama pull bge-m3`), `--llm-map`. `--semantic` works on the local machine only. If `ollama` is not on PATH it prints how to get it and continues keyword-only. `--yes` pulls without a question.
+- F64.a Opt-in flags add the other parts: `--window N`, `--nightly`, `--semantic` (offers `ollama pull bge-m3`). `--llm-map` was an opt-in flag until 0.13.x. F66.a changes it. `--semantic` works on the local machine only. If `ollama` is not on PATH it prints how to get it and continues keyword-only. `--yes` pulls without a question.
 - F64.b The old flags `--no-window` and `--no-nightly` stay accepted and do nothing extra. The installer prints one note that the default is now off.
 - F64.c `--dry-run` lists exactly what the chosen options install. `--help` lists the new flags.
-- F64.d A rerun never removes or changes an existing `CLAUDE_CODE_AUTO_COMPACT_WINDOW` value, existing nightly jobs, an existing meaning-search setup or an existing llm_map install. It only adds what the flags ask for. A `--no-*` flag only skips adding a part.
-- F64.e `--save-defaults` saves the opt-in flags of the run (`--semantic`, `--nightly`, `--llm-map`, `--window N`) to `~/.config/lossless-handoff/install-defaults` (lines `semantic=1`, `nightly=1`, `llm_map=1`, `window=N`). Every later run reads the file and applies those options as if given. A command-line flag wins over the file. `--no-semantic`, `--no-nightly`, `--no-llm-map` and `--no-window` turn one saved default off for that run; with `--save-defaults` they remove it from the file. `--dry-run` shows which options come from the file and does not write it.
+- F64.d A rerun never removes or changes an existing `CLAUDE_CODE_AUTO_COMPACT_WINDOW` value, existing nightly jobs, an existing meaning-search setup or an existing llm_map install (F66.a keeps this for llm_map). It only adds what the flags ask for. A `--no-*` flag only skips adding a part.
+- F64.e `--save-defaults` saves the opt-in flags of the run (`--semantic`, `--nightly`, `--window N`; F66.a removes `--llm-map` here) to `~/.config/lossless-handoff/install-defaults` (lines `semantic=1`, `nightly=1`, `window=N`). Every later run reads the file and applies those options as if given. A command-line flag wins over the file. `--no-semantic`, `--no-nightly` and `--no-window` turn one saved default off for that run; with `--save-defaults` they remove it from the file. `--dry-run` shows which options come from the file and does not write it.
 - F64.g `--window N` never changes an existing `CLAUDE_CODE_AUTO_COMPACT_WINDOW` value. When a value exists, the installer prints `window already installed, kept: CLAUDE_CODE_AUTO_COMPACT_WINDOW is <value>`, with and without `--window N`. `--window 0` (or a non-number) exits 2. A bad line in the saved defaults file (for example `window=0`) is ignored; the install goes on and exits 0.
 - F64.f Uninstall removes all parts, including the opt-in parts, as before. It keeps the defaults file unless `--purge` is given.
 
@@ -1090,3 +1046,19 @@ Why: an independent review found that the default install changed too much (a gl
 Text without secrets stays byte-identical. The function is idempotent. The hooks never write the unmasked value to a state file. The model writes its own agent handoff file with the Write tool and a hook cannot mask that write; this limit is documented, and every copy that a hook makes of it is masked. This amends F44.4 and ACs 143 and 152: the mark is now `[REDACTED:<kind>]` instead of `[redacted]`, and the patterns are the ones above. The nightly proof treats both marks as redacted.
 
 Version: hooks 1.15.0; release 0.13.0. `HOOK_VERSION` in both hooks and `hook_version` in health rows and sidecars is `1.15.0`.
+
+## F66 llm_map moves out; subagent rules preamble; evidence wording (2026-11-20)
+Why: llm_map is a separate tool with its own life cycle. The README must not claim more than the evidence shows. A subagent must not treat the main session's rules as its own task.
+
+**F66.a llm_map moves out.** llm_map is now a separate project: https://github.com/pratikgh0se/llm-map. This repository no longer ships `hooks/llm_map.py` or the llm-map skill folder. `install.sh` no longer installs llm_map or its skill.
+- `--llm-map` and `--no-llm-map` are still accepted. Each prints exactly one line, `llm-map is now a separate project: https://github.com/pratikgh0se/llm-map`, and changes nothing else. The exit code is the same as without the flag.
+- A saved `llm_map=1` line in `~/.config/lossless-handoff/install-defaults` is ignored and prints the same line. `--save-defaults` never writes an `llm_map` line again and removes an existing one.
+- F64 still holds: a re-install never removes or changes an existing `llm_map.py` or skill. If one of them exists, the installer prints `llm-map: already installed, kept (now maintained at https://github.com/pratikgh0se/llm-map; this installer no longer updates it)`.
+- `uninstall.sh` never removes `~/.claude/hooks/llm_map.py` or `~/.claude/skills/llm-map/` (listed in the manifest or not, with the marker line or not), because the llm-map project installs to the same paths. If either exists, it prints exactly one line: `llm-map: kept (remove it with ./install.sh --uninstall from https://github.com/pratikgh0se/llm-map)`. The manifest and record cleanup does not fail because of them.
+- F60 and F61 (llm_map behaviour) are retired from this spec ("moved to the llm-map project"). Their numbers stay reserved.
+
+**F66.b Subagent rules preamble.** When standing rules from the decisions list are injected at SubagentStart (F58), the injected block starts with exactly this line: `These are the user's standing rules for the main session of this project. Apply only the rules that fit your task. Your task brief comes first.` The preamble is the first line of the rules block. A newline follows it, then the F58.a header line `Project rules for this repo ...` and everything else, unchanged. The 4,000-character cut of F58.a counts the preamble. The main-session injection (SessionStart and PostCompact) does not get this line.
+
+**F66.c Evidence wording.** `README.md` does not use the word "Proof" as a heading or a claim, and holds no `[C1]` to `[C8]` markers. The markers and the claim numbers live in `docs/evidence.md`. `--claims-lint` with no file argument lints `docs/evidence.md` of the repository tree (the tree around the script first, then the current folder). It still accepts an explicit path. `tests/local-proof.sh` lints `docs/evidence.md`. The README states that no scored benchmark result is published yet, and that the live mechanism checks in `docs/evidence.md` currently include failures.
+
+**F66.d Versions.** Product 0.14.0 (`install.sh`). `HOOK_VERSION` is `1.16.0` in every hook that has it. This amends the version value in ACs 136, 150, 172, 180, 188 and 267 again.

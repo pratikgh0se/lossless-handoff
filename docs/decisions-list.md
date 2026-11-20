@@ -4,7 +4,7 @@ How the decisions list works. This page is part of the [docs index](README.md).
 
 ## The project decisions list
 
-A handoff belongs to one session, but decisions belong to the project. The hooks keep one plain-text list for each project (a git repo, or the folder where you started if there is no repo). The path is `~/.local/state/claude-handoffs/projects/<project>-<hash>/decisions.md`. The code and some option names (`HANDOFF_LEDGER`, `--ledger`) call the decisions list the "ledger". Each decision has one line: an id (`D12`), the date, a kind, what was decided, and why.
+A handoff belongs to one session, but decisions belong to the project. The hooks keep one plain-text list for each project (a git repo, or the folder where you started if there is no repo). The path is `~/.local/state/claude-handoffs/projects/<project>-<hash>/decisions.md`. In code, option and file names (`HANDOFF_LEDGER`, `--ledger`, `ledger.py`), the word "ledger" means the decisions list. The two are the same thing. Each decision has one line: an id (`D12`), the date, a kind, what was decided, and why.
 
 - **Kinds.** `[rule]` (a standing rule or working preference), `[decision]` (a choice) or `[task]` (a follow-up that you asked for). Older untagged lines count as decisions.
 - **What goes in.** Only things that you decided or approved explicitly: a choice, a rule, a constraint, a permission, a rejected option. Plans, progress and unapproved ideas of the assistant do not go in.

@@ -8,7 +8,7 @@ This folder holds the detail pages of Lossless Handoff. The short overview is in
 - [Configuration and state files](configuration.md): every environment variable and every file that the hooks write.
 - [Recall](recall.md): word search, meaning search and every `recall.py` command.
 - [The project decisions list](decisions-list.md): what goes in, how it is kept and how it is injected.
-- [llm_map](llm-map.md): label many items with a small model.
+- [llm-map](llm-map.md): moved to its own project; the upgrade note.
 - [FAQ](faq.md) and [Troubleshooting](troubleshooting.md).
 
 ## How it works
@@ -21,7 +21,7 @@ This folder holds the detail pages of Lossless Handoff. The short overview is in
 
 ## Evidence and limits
 
-- [Evidence and benchmarks](evidence.md): measurements, proof checks, the claims register and the two benchmarks.
+- [Evidence and benchmarks](evidence.md): measurements, live checks, the claims register and the two benchmarks.
 - Benchmarks: [bench/continuity/README.md](../bench/continuity/README.md) and [bench/oolong/README.md](../bench/oolong/README.md).
 - [Limitations](limitations.md): the full list.
 - [Background](background.md): why the project exists, the LCM paper and other projects.

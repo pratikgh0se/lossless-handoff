@@ -1,22 +1,19 @@
-# llm_map
+# llm-map has moved
 
-Label many items with a small model. This page is part of the [docs index](README.md).
+llm_map is now a separate project. This page is part of the [docs index](README.md).
 
-## llm_map: label many items with a small model
+**New home:** https://github.com/pratikgh0se/llm-map
 
-`llm_map.py` sends each item of a large list through a small model (Haiku by default) and writes one exact answer for each item. The main model then counts or aggregates the answers with a script, so it does not guess a count from a sample.
+## What changed
 
-When to use it: a task needs a label, class, extracted value or check for each of hundreds of items or more. In OOLONG pilot runs on the author's machine (2026-11-18, results not published), plain Claude Code filtered with a regex, read a sample and estimated the count.
+`llm_map.py` labels, classifies or extracts a value for each item of a large list with a small model. Until release 0.13.x it was part of Lossless Handoff. Since release 0.14.0 it is a project of its own. It has no link to the handoff hooks, so it has its own life cycle and its own releases.
 
-```
-python3 ~/.claude/hooks/llm_map.py --in reviews.txt --prompt "Label each review as positive, negative or mixed." --out labels.jsonl [--labels "positive|negative|mixed"] [--model haiku] [--batch 100] [--jobs 8] [--max-usd 2.00] [--json-out]
-```
+This repository no longer ships `hooks/llm_map.py` or the llm-map skill. `install.sh` no longer installs them.
 
-- `--in` is a text file with one item on each line, or a `.jsonl` file with `text` and an optional `id`.
-- `--out` gets one JSON line for each item, in input order, with `i`, `text`, `out` and (if it failed) `error`.
-- `--labels "a|b|c"` sets the allowed answers (2 or more, split on `|`; not with `--json-out`). `out` is always a canonical label. A reply maps to a label in these cases: it equals a label (trim, case fold), or it is a prefix of exactly one label, or exactly one label is a prefix of it. The prefix must end at a word end of the longer text (`numeric` matches `numeric value`; `h` does not match `human being`). Other replies are invalid. The tool retries them once. Then they get `out` null and `error: "label: <reply>"`.
-- The defaults are 100 items in a batch and 8 batches at the same time, so 3,000 items take about one minute. After each batch, stderr gets `llm_map: <done> of <n> items done`.
-- The tool retries a missing, invalid or unparsable answer once. The last stdout line is `llm_map: <n> items, <ok> ok, <failed> failed, <b> batches, cost $<x>`. Exit code 3 means that some items failed.
-- Cost note: each batch is a real model call and costs money. Haiku batches of 100 items cost a fraction of a cent each. `--max-usd` (default 2.00) stops new batches when the cap would pass. The unsent items get `error: "budget"`.
-- Each call runs `claude -p` with no tools, no hooks, no MCP servers and no saved session, in a new temp folder. Lossless Handoff hooks never run for these calls, so they write no handoffs or health rows.
-- The installer also writes the skill `~/.claude/skills/llm-map/SKILL.md`. Its description tells Claude Code to use llm_map for tasks that need an answer for each item of a large list. Its body gives the command and the rule to report exact counts and the number of failed items. If a skill file is not ours (it has no marker line), install leaves it unchanged. Uninstall removes only the marked file.
+## Upgrade notes
+
+- **You have llm-map from an older install.** Nothing breaks. The installer keeps `~/.claude/hooks/llm_map.py` and `~/.claude/skills/llm-map/SKILL.md`. It prints one line that says where they are maintained now. It does not update them. `./uninstall.sh` never removes them: the llm-map project uses the same paths. It prints `llm-map: kept (remove it with ./install.sh --uninstall from https://github.com/pratikgh0se/llm-map)`.
+- **You want llm-map now.** Clone https://github.com/pratikgh0se/llm-map and run its `./install.sh` (use `--dry-run` first). It uses the same paths as before: `~/.claude/hooks/llm_map.py` and `~/.claude/skills/llm-map/SKILL.md`. It has its own `--uninstall`.
+- **You use `--llm-map` or `--no-llm-map`.** Both flags are still accepted. Each prints `llm-map is now a separate project: https://github.com/pratikgh0se/llm-map` and does nothing else. The exit code does not change.
+- **You have `llm_map=1` in `~/.config/lossless-handoff/install-defaults`.** The installer ignores the line and prints the same message. `--save-defaults` removes it from the file.
+- **You run the OOLONG benchmark.** Arm C is now Lossless Handoff alone. To add llm_map, use `--llm-map-path <dir>` with a checkout of https://github.com/pratikgh0se/llm-map. See [bench/oolong/README.md](../bench/oolong/README.md).

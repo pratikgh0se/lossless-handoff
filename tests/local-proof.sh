@@ -392,7 +392,7 @@ layer_claims() {
   if [ -z "$REAL_STATE_LAST" ] || [ ! -d "$REAL_STATE_LAST" ]; then
     record "7 Claims (info)" INFO "no e2e state to lint (real layers did not run)" 0 "$log"; return
   fi
-  ( cd "$ROOT" && HANDOFF_STATE_DIR="$REAL_STATE_LAST" RECALL_EMBED_URL=http://127.0.0.1:9 python3 hooks/precompact-handoff.py --claims-lint README.md ) >"$log" 2>&1; rc=$?
+  ( cd "$ROOT" && HANDOFF_STATE_DIR="$REAL_STATE_LAST" RECALL_EMBED_URL=http://127.0.0.1:9 python3 hooks/precompact-handoff.py --claims-lint docs/evidence.md ) >"$log" 2>&1; rc=$?
   if [ "$rc" = 0 ]; then status="claims-lint exit 0: every cited claim passes"; else status="claims-lint exit $rc: $(head -c 300 "$log" | tr '\n' ' ')"; fi
   record "7 Claims (info)" INFO "$status" "$(($(now) - t0))" "$log"
 }

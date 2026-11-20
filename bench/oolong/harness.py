@@ -8,7 +8,8 @@ Subcommands:
   cleanup [--all] [--dry-run] delete only this harness's own task folders (exact prefix)
 
 Arms: A plain, Workflow tool disallowed. B plain, task prompt adds one line that permits a workflow.
-      C Lossless Handoff hooks, the recall agent and the llm_map skill from --lh-path (alias --lh). N no-context control (arm A settings, no context file).
+      C Lossless Handoff hooks and the recall agent from --lh-path (alias --lh). With --llm-map-path <dir> (a checkout of
+        https://github.com/pratikgh0se/llm-map) arm C also gets llm_map and its skill. N no-context control (arm A settings, no context file).
 Each unit is one `claude -p` call in a fresh temp folder. It uses the real HOME (a temp HOME cannot log in).
 It never touches ~/.claude settings or hooks, ~/.local/state/claude-handoffs, or launchd.
 Exit: 0 finished, 1 a unit failed, 2 usage error, 3 paused (budget reached; resume later).
@@ -124,22 +125,36 @@ def load_tasks(cache, dataset, length, n, seed, atypes):
             for r in rows[:n]]
 
 
-def llm_map_prefix(lh):
+LLM_MAP_LAYOUTS = (("llm_map.py", os.path.join("skill", "SKILL.md")), (LLM_MAP_HOOK_REL, LLM_MAP_SKILL_REL))
+LLM_MAP_URL = "https://github.com/pratikgh0se/llm-map"
+
+
+def llm_map_files(lm):
+    """(hook path, skill path) of a llm-map checkout, or None. Two layouts: the llm-map repo (llm_map.py, skill/SKILL.md)
+    and the old Lossless Handoff 0.12.x to 0.13.x layout (hooks/llm_map.py, skills/llm-map/SKILL.md)."""
+    for hook_rel, skill_rel in LLM_MAP_LAYOUTS:
+        h, k = os.path.join(lm, hook_rel), os.path.join(lm, skill_rel)
+        if os.path.isfile(h) and os.path.isfile(k):
+            return h, k
+    return None
+
+
+def llm_map_prefix(lm):
     """The exact command start that arm C may run outside the sandbox."""
-    return "python3 %s" % os.path.join(lh, LLM_MAP_HOOK_REL)
+    return "python3 %s" % llm_map_files(lm)[0]
 
 
 def llm_map_excluded(cfg, arm):
-    """sandbox.excludedCommands of arm C: the one llm_map command, and nothing else. Empty for the other arms."""
-    return [llm_map_prefix(cfg["lh_path"]) + " *"] if arm == "C" else []
+    """sandbox.excludedCommands of arm C: the one llm_map command, and nothing else. Empty for the other arms and for arm C
+    without --llm-map-path."""
+    return [llm_map_prefix(cfg["llm_map_path"]) + " *"] if arm == "C" and cfg.get("llm_map_path") else []
 
 
-def require_llm_map(lh):
-    """Arm C needs the llm_map hook and skill in the checkout. Stop with a clear message if one is missing or unsafe."""
-    for rel in (LLM_MAP_SKILL_REL, LLM_MAP_HOOK_REL):
-        if not os.path.isfile(os.path.join(lh, rel)):
-            raise SystemExit("arm C: %s is missing in %s. Use --lh-path with a checkout that has llm_map (Lossless Handoff 0.12.0 or later)." % (rel, lh))
-    pre = llm_map_prefix(lh)
+def require_llm_map(lm):
+    """--llm-map-path needs the llm_map script and the skill in the checkout. Stop with a clear message if one is missing or unsafe."""
+    if not llm_map_files(lm):
+        raise SystemExit("--llm-map-path: llm_map.py and skill/SKILL.md are missing in %s. Use a checkout of %s." % (lm, LLM_MAP_URL))
+    pre = llm_map_prefix(lm)
     bad = [w for w in DENY_BASH + SCRATCH_WORDS + ["oolong"] if w in pre]
     if bad:
         raise SystemExit("arm C: the llm_map path %s holds the denied word %r. The Bash deny rules would block it. Use a checkout under another path." % (pre, bad[0]))
@@ -148,15 +163,15 @@ def require_llm_map(lh):
             raise SystemExit("arm C: the llm_map path is inside the bench folder, which is denied.")
 
 
-def install_llm_map_skill(lh, proj):
+def install_llm_map_skill(lm, proj):
     """Copy the skill into the task project. Replace the user-level hook path with the absolute path of this checkout."""
-    require_llm_map(lh)
-    text = open(os.path.join(lh, LLM_MAP_SKILL_REL), encoding="utf-8").read()
-    hook = os.path.join(lh, LLM_MAP_HOOK_REL)
+    require_llm_map(lm)
+    hook, skill = llm_map_files(lm)
+    text = open(skill, encoding="utf-8").read()
     for old in LLM_MAP_SKILL_PATHS:
         text = text.replace(old, hook)
     if hook not in text:
-        raise SystemExit("arm C: the skill file in %s does not name llm_map.py by its install path (%s). The harness cannot point it at the checkout." % (lh, LLM_MAP_SKILL_PATHS[0]))
+        raise SystemExit("arm C: the skill file in %s does not name llm_map.py by its install path (%s). The harness cannot point it at the checkout." % (lm, LLM_MAP_SKILL_PATHS[0]))
     d = os.path.join(proj, ".claude", "skills", "llm-map")
     os.makedirs(d, exist_ok=True)
     with open(os.path.join(d, "SKILL.md"), "w", encoding="utf-8") as f:
@@ -172,9 +187,9 @@ def trusted_settings(cfg, arm, env_over):
     return s
 
 
-def claude_flags(arm):
-    """Skills are off in A and B (--disable-slash-commands). Arm C needs the project skill, so the flag is dropped there."""
-    return [] if arm == "C" else ["--disable-slash-commands"]
+def claude_flags(arm, llm_map=False):
+    """Skills are off in every arm (--disable-slash-commands). Arm C with --llm-map-path needs the project skill, so the flag is dropped there."""
+    return [] if (arm == "C" and llm_map) else ["--disable-slash-commands"]
 
 
 def prompt_for(arm, question):
@@ -232,7 +247,7 @@ def project_settings(cfg, arm, sandbox_only=False, proj=None):
         deny = {cfg["work_base"], os.path.realpath(HERE), os.path.realpath(cfg["cache"]), PROJECTS} | set(repo_roots()) | shared_tmp_dirs()
         # denyWrite: the deny rule Bash(*TMPDIR*) does not see a redirect target (a redirect to the TMPDIR folder runs), so the sandbox
         # blocks writes to the shared folder. The unit writes in its own folder (cwd) and in CLAUDE_CODE_TMPDIR, both outside it.
-        s["sandbox"]["filesystem"] = {"denyRead": sorted(deny), "allowRead": [proj] + ([os.path.join(cfg["lh_path"], LLM_MAP_HOOK_REL)] if arm == "C" else []),
+        s["sandbox"]["filesystem"] = {"denyRead": sorted(deny), "allowRead": [proj] + ([llm_map_files(cfg["llm_map_path"])[0]] if arm == "C" and cfg.get("llm_map_path") else []),
                                       "denyWrite": sorted({os.path.realpath("/tmp/claude-%d" % os.getuid()), os.path.realpath(os.path.join(tempfile.gettempdir(), "claude-%d" % os.getuid()))})}
     return s
 
@@ -271,7 +286,7 @@ def config_record(cfg, task, arm):
                           "timeout": "last assistant text is scored if it ends with a labelled answer; row timed_out true",
                           "hit_rule": HIT_RULE_ID},
         "hooks": sorted(s.get("hooks", {}).keys()), "recall_agent": core_arm == "C",
-        "llm_map_skill": ({"project_skill": "llm-map", "skills_flag_dropped": True} if core_arm == "C" else None),
+        "llm_map_skill": ({"project_skill": "llm-map", "skills_flag_dropped": True} if core_arm == "C" and cfg.get("llm_map_path") else None),
         "llm_map_sandbox_exception": llm_map_excluded(cfg, core_arm) or None,
         "base_settings_sha": sha(base_settings), "settings_sha": sha(s),
         "context_file": arm != "N", "arm": arm,
@@ -622,7 +637,8 @@ def run_unit(ctx, task, arm, rec, canary=False):
     cont.write_json(os.path.join(proj, ".claude", "settings.json"), project_settings(cfg, core_arm, proj=proj))
     subprocess.run(["git", "init", "-q", proj], capture_output=True, timeout=30)
     if core_arm == "C":
-        install_llm_map_skill(cfg["lh_path"], proj)
+        if cfg.get("llm_map_path"):
+            install_llm_map_skill(cfg["llm_map_path"], proj)
         src = os.path.join(cfg["lh_path"], "agents", "recall.md")
         if os.path.isfile(src):
             os.makedirs(os.path.join(proj, ".claude", "agents"), exist_ok=True)
@@ -636,7 +652,7 @@ def run_unit(ctx, task, arm, rec, canary=False):
     disallowed = list(DISALLOWED_BASE)
     cmd = ["claude", "-p", "--session-id", sid, "--model", cfg["model"], "--setting-sources", "project",
            "--settings", json.dumps(trusted_settings(cfg, core_arm, env_over)), "--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}',
-           *claude_flags(core_arm), "--output-format", "json", "--permission-mode", "acceptEdits",
+           *claude_flags(core_arm, bool(cfg.get("llm_map_path"))), "--output-format", "json", "--permission-mode", "acceptEdits",
            "--allowedTools", ALLOWED_TOOLS, "--disallowedTools", " ".join(disallowed),
            "--max-budget-usd", "%.2f" % cfg["call_cap_usd"], "--", prompt_for(core_arm, task["question"])]
     env = {k: v for k, v in os.environ.items() if not (k.startswith("HANDOFF_") or k == "CLAUDE_CODE_AUTO_COMPACT_WINDOW")}
@@ -784,7 +800,8 @@ def parse_common(r):
     r.add_argument("--answer-types", help="optional filter, e.g. LABEL,NUMERIC,COMPARISON,USER")
     r.add_argument("--seed", default="1")
     r.add_argument("--window", type=int, default=200000, help="CLAUDE_CODE_AUTO_COMPACT_WINDOW, the same in all arms")
-    r.add_argument("--lh-path", "--lh", dest="lh_path", help="Lossless Handoff checkout for arm C: hooks, recall agent, llm_map hook and skill (default: this repo)")
+    r.add_argument("--lh-path", "--lh", dest="lh_path", help="Lossless Handoff checkout for arm C: hooks and recall agent (default: this repo)")
+    r.add_argument("--llm-map-path", dest="llm_map_path", help="optional: a checkout of %s. Arm C then also gets llm_map and its skill, with one sandbox exception for the llm_map command" % LLM_MAP_URL)
     r.add_argument("--cache", default=os.environ.get("OOLONG_CACHE") or os.path.join(HERE, "cache"), help="folder made by fetch.py; holds the gold")
     r.add_argument("--work-base", help="folder for task folders (default: the temp dir)")
     r.add_argument("--call-cap-usd", type=float, default=0.60, help="--max-budget-usd of each claude call")
@@ -804,15 +821,18 @@ def build_cfg(a):
     lh = os.path.realpath(a.lh_path or REPO)
     if "C" in arms and not os.path.isfile(os.path.join(lh, "hooks", "precompact-handoff.py")):
         raise SystemExit("arm C: no hooks in %s/hooks" % lh)
-    if "C" in arms:
-        require_llm_map(lh)
+    lm = os.path.realpath(a.llm_map_path) if getattr(a, "llm_map_path", None) else None
+    if lm and "C" not in arms:
+        raise SystemExit("--llm-map-path needs arm C in --arms")
+    if lm:
+        require_llm_map(lm)
     ok, dcommit = decision_committed()
     if not ok:
         raise SystemExit("refuse: bench/oolong/decision.json is not committed. Commit it before any scored run.")
     return {
         "run_id": datetime.datetime.now().strftime("%Y%m%dT%H%M%S"), "model": a.model, "lengths": lens, "tasks": a.tasks,
         "arms": arms, "control": not a.no_control, "answer_types": a.answer_types.split(",") if a.answer_types else None,
-        "seed": a.seed, "window": a.window, "lh_path": lh, "cache": os.path.realpath(a.cache),
+        "seed": a.seed, "window": a.window, "lh_path": lh, "llm_map_path": lm, "cache": os.path.realpath(a.cache),
         "lh_commit": sh(["git", "rev-parse", "--short", "HEAD"], cwd=lh), "bench_commit": sh(["git", "rev-parse", "--short", "HEAD"], cwd=REPO),
         "decision_commit": dcommit, "dataset": LOCK["dataset"], "hf_revision": LOCK["hf_revision"], "oolong_commit": LOCK["oolong_commit"],
         "work_base": os.path.realpath(a.work_base or os.environ.get("LHOO_WORK") or tempfile.gettempdir()),
@@ -1123,14 +1143,14 @@ def selfcheck_llm_map(cfg, a, ev):
     os.makedirs(os.path.join(proj, ".claude"), exist_ok=True)
     cont.write_json(os.path.join(proj, ".claude", "settings.json"), project_settings(cfg, "C", sandbox_only=True, proj=proj))
     subprocess.run(["git", "init", "-q", proj], capture_output=True)
-    install_llm_map_skill(cfg["lh_path"], proj)
+    install_llm_map_skill(cfg["llm_map_path"], proj)
     env_over = env_for(cfg, "C", proj + "-state", proj)
     os.makedirs(env_over["CLAUDE_CODE_TMPDIR"], exist_ok=True)
     env = {k: v for k, v in os.environ.items() if not (k.startswith("HANDOFF_") or k == "CLAUDE_CODE_AUTO_COMPACT_WINDOW")}
     env.update(env_over)
     items = ["apple", "carrot", "salmon"]
     open(os.path.join(proj, "items.txt"), "w").write("\n".join(items) + "\n")
-    cmd_lm = "%s --in items.txt --prompt 'Say fruit, vegetable or fish for each item.' --out labels.jsonl" % llm_map_prefix(cfg["lh_path"])
+    cmd_lm = "%s --in items.txt --prompt 'Say fruit, vegetable or fish for each item.' --out labels.jsonl" % llm_map_prefix(cfg["llm_map_path"])
     prompt = ("Do three things, each in its own Bash call (never chain them), and report the raw output of each. "
               "1) Run exactly this command and nothing else: %s . 2) Run: cat labels.jsonl . "
               "3) Run: curl -sS -m 10 -o /dev/null -w '%%{http_code}' https://example.com ; echo EXIT=$? . Do not change the commands." % cmd_lm)
@@ -1194,12 +1214,15 @@ def cmd_selfcheck(a):
     """Live proof of the sandbox. For each arm: list the tools, run one curl from inside a task session (it must fail),
     and try to read a file in the gold cache (it must be denied). Stores evidence/sandbox-<time>.json."""
     cfg = {"run_id": "selfcheck" + uuid.uuid4().hex[:6], "model": a.model, "window": 200000, "lh_path": os.path.realpath(a.lh_path or REPO),
+           "llm_map_path": os.path.realpath(a.llm_map_path) if a.llm_map_path else None,
            "cache": os.path.realpath(a.cache), "work_base": os.path.realpath(a.work_base or os.environ.get("LHOO_WORK") or tempfile.gettempdir()),
            "call_cap_usd": 0.30, "timeout_s": 300, "claude_version": sh(["claude", "--version"])}
     ev = {"time": now_iso(), "claude_version": cfg["claude_version"], "model": a.model, "arms": {}}
     ok = True
     if "C" in a.arms.split(","):
-        require_llm_map(cfg["lh_path"])
+        if cfg["llm_map_path"]:
+            require_llm_map(cfg["llm_map_path"])
+            ev["llm_map_path"] = cfg["llm_map_path"]
         ev["lh_path"], ev["lh_commit"] = cfg["lh_path"], sh(["git", "rev-parse", "--short", "HEAD"], cwd=cfg["lh_path"])
     gold_probe = os.path.join(cfg["cache"], "probe-gold.txt")
     os.makedirs(cfg["cache"], exist_ok=True)
@@ -1233,8 +1256,8 @@ def cmd_selfcheck(a):
         proj = os.path.realpath(proj)
         cont.write_json(os.path.join(proj, ".claude", "settings.json"), project_settings(cfg, arm, proj=proj))
         subprocess.run(["git", "init", "-q", proj], capture_output=True)
-        if arm == "C":
-            install_llm_map_skill(cfg["lh_path"], proj)
+        if arm == "C" and cfg["llm_map_path"]:
+            install_llm_map_skill(cfg["llm_map_path"], proj)
         own_token = "OWNTOKEN-" + uuid.uuid4().hex[:8]
         open(os.path.join(proj, "ownfile.txt"), "w").write(own_token)
         disallowed = list(DISALLOWED_BASE)
@@ -1288,7 +1311,7 @@ def cmd_selfcheck(a):
                            "extra_tools_absent": not any(x in tools for x in DISALLOWED_BASE), "own_folder_readable_by_bash": own_token in res, "cost_usd": o.get("total_cost_usd")}
         ok = ok and good and not any(x in tools for x in DISALLOWED_BASE) and bool(cct_entries) and ("Task" in tools or "Agent" in tools)
         ok = selfcheck_subagent(cfg, a, arm, proj, env, base, sib_file, sib_token, ev) and ok
-        if arm == "C":
+        if arm == "C" and cfg["llm_map_path"]:
             ok = ok and ev["arms"][arm]["llm_map_skill_listed"] and "Skill" in tools
         print("arm %s: Workflow tool present %s; denials %s; gold leaked %s\n  reply: %s" % (arm, "Workflow" in tools, [d["tool"] for d in dens], token in res, res.replace("\n", " | ")[:500]))
     os.remove(gold_probe)
@@ -1314,7 +1337,7 @@ def cmd_selfcheck(a):
     sbx_ok = ("000" in res or "EXIT=0" not in res) and "200" not in res
     ok = ok and sbx_ok
     print("sandbox-only curl:", res.replace("\n", " | ")[:400])
-    if "C" in a.arms.split(","):
+    if "C" in a.arms.split(",") and cfg["llm_map_path"]:
         ok = selfcheck_llm_map(cfg, a, ev) and ok
     ev["pass"] = ok
     os.makedirs(os.path.join(HERE, "evidence"), exist_ok=True)
@@ -1344,6 +1367,7 @@ def main():
     sc.add_argument("--model", default="haiku")
     sc.add_argument("--arms", default="A,B")
     sc.add_argument("--lh-path", "--lh", dest="lh_path")
+    sc.add_argument("--llm-map-path", dest="llm_map_path", help="optional: a checkout of %s (arm C then also gets llm_map)" % LLM_MAP_URL)
     sc.add_argument("--cache", default=os.environ.get("OOLONG_CACHE") or os.path.join(HERE, "cache"))
     sc.add_argument("--work-base")
     c = sp.add_parser("cleanup")

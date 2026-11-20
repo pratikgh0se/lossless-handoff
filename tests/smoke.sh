@@ -75,7 +75,7 @@ python3 - "$H" <<'PY'
 import hashlib, json, sys
 h = sys.argv[1]
 m = json.load(open(h + "/.handoff-manifest.json"))
-assert m["version"] == "1.15.0" and m["installed_at"], m
+assert m["version"] == "1.16.0" and m["installed_at"], m
 pkg = ["lossless_handoff/%s.py" % n for n in "__init__ transcript summary ledger handoff runtime redaction pipeline reconcile prove claims".split()]
 assert sorted(m["files"]) == sorted(["claims.json", "handoff-nudge.py", "postcompact-inject.py", "precompact-handoff.py", "recall.py"] + pkg), m
 for n, want in m["files"].items():
@@ -807,118 +807,76 @@ ok "F54: leaves, ids, append only, SessionStart line, subagent, map, describe, s
   "$ROOT/uninstall.sh" >/dev/null; [ ! -e "$AG" ] || fail "F55.b: uninstall left our agent file"
 )
 
-# F60: llm_map with a fake claude (ACs 274, 275, 278, 280)
+# F66: llm_map moved out (flags, saved line, existing copy kept, uninstall) and the subagent rules preamble
 (
-  export HOME="$T/home-f60"; mkdir -p "$HOME/.claude"
-  FK="$T/fake-claude.py"
-  cat > "$FK" <<'PY'
-import json, os, re, sys
-a = sys.argv[1:]
-prompt = a[a.index("-p") + 1]
-with open(os.environ["FAKE_LOG"], "a") as f:
-    f.write(json.dumps({"argv": a, "cwd": os.getcwd()}) + "\n")
-drop = os.environ.get("FAKE_DROP")  # item number to drop
-once = os.environ.get("FAKE_ONCE")  # "1": drop it on the first call only
-seen = os.environ["FAKE_LOG"] + ".seen"
-lines = []
-for m in re.finditer(r"^(\d+): ", prompt, re.M):
-    i = int(m.group(1))
-    if drop and i == int(drop) and not (once and os.path.exists(seen)):
-        continue
-    lines.append(json.dumps({"i": i, "out": "L%d" % i}))
-if drop and once:
-    open(seen, "w").close()
-print(json.dumps({"type": "result", "result": "```json\n" + "\n".join(lines) + "\n```", "total_cost_usd": 0.01}))
-PY
-  export LLM_MAP_CLAUDE="python3 $FK" FAKE_LOG="$T/f60.log"
-  LM="$ROOT/hooks/llm_map.py"
-  seq 1 100 | sed 's/^/item /' > "$T/f60-in.txt"
-  # AC 274
-  : > "$FAKE_LOG"
-  o="$(cd "$T" && python3 "$LM" --in "$T/f60-in.txt" --prompt "label" --out "$T/f60-out.jsonl" --batch 40)" || fail "F60 274: exit"
-  grep -q '^llm_map: 100 items, 100 ok, 0 failed, 3 batches, cost \$0.0300$' <<<"$o" || fail "F60 274: summary: $o"
-  python3 - "$T/f60-out.jsonl" <<'PY' || fail "F60 274: out file"
-import json, sys
-r = [json.loads(l) for l in open(sys.argv[1])]
-assert [x["i"] for x in r] == list(range(1, 101)) and all(x["out"] == "L%d" % x["i"] and "error" not in x for x in r), r[:2]
-PY
-  # call flags: no tools, no hooks, no MCP, no session; cwd is gone after the run
-  python3 - "$FAKE_LOG" "$T" <<'PY' || fail "F60 flags"
-import json, os, sys
-rows = [json.loads(l) for l in open(sys.argv[1])]
-a = rows[0]["argv"]
-assert "-p" in a and a[a.index("--model") + 1] == "haiku" and a[a.index("--output-format") + 1] == "json", a
-assert a[a.index("--tools") + 1] == "" and "--strict-mcp-config" in a and "--no-session-persistence" in a, a
-assert "disableAllHooks" in a[a.index("--settings") + 1], a
-assert not os.path.exists(rows[0]["cwd"]) and rows[0]["cwd"] != sys.argv[2], rows[0]
-PY
-  # AC 275: item dropped once, then answered on the retry
-  rm -f "$FAKE_LOG.seen"
-  o="$(FAKE_DROP=7 FAKE_ONCE=1 python3 "$LM" --in "$T/f60-in.txt" --prompt "label" --out "$T/f60-out2.jsonl")" || fail "F60 275: retry exit"
-  sed -n 7p "$T/f60-out2.jsonl" | grep -q '"out": "L7"' && ! sed -n 7p "$T/f60-out2.jsonl" | grep -q error || fail "F60 275: item 7"
-  # AC 275: item never answered
-  set +e; o="$(FAKE_DROP=7 python3 "$LM" --in "$T/f60-in.txt" --prompt "label" --out "$T/f60-out3.jsonl")"; rc=$?; set -e
-  [ "$rc" = 3 ] && grep -q ' 1 failed,' <<<"$o" && sed -n 7p "$T/f60-out3.jsonl" | grep -q '"out": null, "error"' || fail "F60 275: failed item (rc=$rc): $o"
-  # AC 278: missing file, empty input
-  : > "$T/f60-empty.txt"
-  set +e
-  python3 "$LM" --in "$T/nope.txt" --prompt x --out "$T/f60-o4.jsonl" 2>"$T/f60.err"; r1=$?
-  python3 "$LM" --in "$T/f60-empty.txt" --prompt x --out "$T/f60-o5.jsonl" 2>>"$T/f60.err"; r2=$?
   set -e
-  [ "$r1" = 2 ] && [ "$r2" = 2 ] && [ -s "$T/f60.err" ] && [ ! -e "$T/f60-o4.jsonl" ] && [ ! -e "$T/f60-o5.jsonl" ] || fail "F60 278: usage errors ($r1 $r2)"
-  # AC 280: install and uninstall
+  export HOME="$T/f66home"; mkdir -p "$HOME/.claude/hooks"; F="$HOME/.claude/hooks"; DF="$HOME/.config/lossless-handoff/install-defaults"
   SK="$HOME/.claude/skills/llm-map/SKILL.md"
-  "$ROOT/install.sh" --no-nightly --llm-map --dry-run >/dev/null; [ ! -e "$SK" ] || fail "F60 280: dry-run wrote the skill"
-  "$ROOT/install.sh" --no-nightly --llm-map >/dev/null
-  grep -qF "<!-- lossless-handoff:llm-map-skill -->" "$SK" && grep -q "^name: llm-map$" "$SK" && grep -q "llm_map.py" "$SK" \
-    && [ -f "$HOME/.claude/hooks/llm_map.py" ] || fail "F60 280: install"
-  printf 'mine\n' > "$SK"; cp "$SK" "$T/f60.mine"
-  o="$("$ROOT/install.sh" --no-nightly --llm-map)"
-  # shellcheck disable=SC2088  # the literal ~ is the expected output text
-  cmp -s "$SK" "$T/f60.mine" && grep -qF "~/.claude/skills/llm-map/SKILL.md exists and is not ours; left unchanged." <<<"$o" || fail "F60 280: foreign skill touched"
-  "$ROOT/uninstall.sh" >/dev/null; [ -f "$SK" ] || fail "F60 280: uninstall removed a foreign skill"
-  rm "$SK"; "$ROOT/install.sh" --no-nightly --llm-map >/dev/null
-  "$ROOT/uninstall.sh" >/dev/null; [ ! -e "$SK" ] && [ ! -e "$HOME/.claude/hooks/llm_map.py" ] || fail "F60 280: uninstall left our files"
-  # F61: AC 281 (default batch 100, 3 batches for 250 items) and AC 285 (progress on stderr)
-  seq 1 250 | sed 's/^/item /' > "$T/f61-in.txt"
-  : > "$FAKE_LOG"
-  python3 "$LM" --in "$T/f61-in.txt" --prompt "label" --out "$T/f61-out.jsonl" 2>"$T/f61.err" >/dev/null || fail "F61 281: exit"
-  [ "$(wc -l < "$FAKE_LOG" | tr -d ' ')" = 3 ] || fail "F61 281: call count"
-  python3 - "$FAKE_LOG" <<'PY' || fail "F61 281: batch sizes"
-import json, re, sys
-n = sorted(len(re.findall(r"^\d+: ", (lambda a: a[a.index("-p") + 1])(json.loads(l)["argv"]), re.M)) for l in open(sys.argv[1]))
-assert n == [50, 100, 100], n
-PY
-  [ "$(grep -c '^llm_map: [0-9]* of 250 items done$' "$T/f61.err")" = 3 ] && tail -n 1 "$T/f61.err" | grep -qx 'llm_map: 250 of 250 items done' || fail "F61 285: progress: $(cat "$T/f61.err")"
-  # F61: AC 282 (label mapping and one resend)
-  FK2="$T/fake-claude2.py"
-  cat > "$FK2" <<'PY'
-import json, re, sys
-a = sys.argv[1:]
-prompt = a[a.index("-p") + 1]
-rep = ["numeric", "Human Being", "location", "1790"]
-lines = [json.dumps({"i": int(m.group(1)), "out": rep[(int(m.group(1)) - 1) % 4]}) for m in re.finditer(r"^(\d+): ", prompt, re.M)]
-print(json.dumps({"type": "result", "result": "\n".join(lines), "total_cost_usd": 0.01}))
-PY
-  seq 1 4 | sed 's/^/q /' > "$T/f61-l.txt"
-  set +e
-  LLM_MAP_CLAUDE="python3 $FK2" python3 "$LM" --in "$T/f61-l.txt" --prompt "label" --labels "numeric value|human being|location" --out "$T/f61-lo.jsonl" >"$T/f61-l.out" 2>/dev/null; rc=$?
-  set -e
-  python3 - "$T/f61-lo.jsonl" <<'PY' || fail "F61 282: label mapping"
+  LMLINE="llm-map is now a separate project: https://github.com/pratikgh0se/llm-map"
+  KEPT="llm-map: already installed, kept (now maintained at https://github.com/pratikgh0se/llm-map; this installer no longer updates it)"
+  [ ! -e "$ROOT/hooks/llm_map.py" ] && [ ! -e "$ROOT/skills/llm-map" ] || fail "F66.a: llm_map files still in the repo"
+  # the flags print one line and change nothing else; the exit code is the same as without them
+  for fl in --llm-map --no-llm-map; do
+    o="$("$ROOT/install.sh" --dry-run $fl)"; [ "$(grep -cxF "$LMLINE" <<<"$o")" = 1 ] || fail "F66.a: $fl line: $o"
+    [ "$(grep -c "llm-map is now" <<<"$o")" = 1 ] || fail "F66.a: $fl printed the line more than once"
+  done
+  o="$("$ROOT/install.sh" --dry-run)"; ! grep -q "llm-map" <<<"$o" || fail "F66.a: default dry-run mentions llm-map"
+  "$ROOT/install.sh" --llm-map >"$T/f66-1.out"
+  grep -qxF "$LMLINE" "$T/f66-1.out" && [ ! -e "$F/llm_map.py" ] && [ ! -e "$SK" ] || fail "F66.a: --llm-map installed something"
+  [ -f "$F/recall.py" ] && [ -f "$F/lossless_handoff/ledger.py" ] || fail "F66.a: core missing"
+  ! grep -q "llm_map" "$F/.handoff-manifest.json" || fail "F66.a: manifest lists llm_map"
+  # exit code of a bad flag is unchanged
+  r=0; "$ROOT/install.sh" --llm-map --window 0 >/dev/null 2>&1 || r=$?; [ "$r" = 2 ] || fail "F66.a: exit code changed with --llm-map ($r)"
+  # a saved llm_map=1 is ignored with the same line; --save-defaults removes it and never writes it
+  mkdir -p "$(dirname "$DF")"; printf 'llm_map=1\nsemantic=0\n' > "$DF"
+  o="$("$ROOT/install.sh" --dry-run)"; grep -qxF "$LMLINE" <<<"$o" || fail "F66.a: saved llm_map=1 not noted"
+  ! grep -q "llm_map.py" <<<"$o" || fail "F66.a: saved llm_map=1 was applied"
+  "$ROOT/install.sh" --save-defaults --window 300000 >/dev/null
+  ! grep -q "llm_map" "$DF" && grep -qx "window=300000" "$DF" || fail "F66.a: --save-defaults kept llm_map: $(cat "$DF")"
+  "$ROOT/install.sh" --save-defaults --llm-map --window 300000 >/dev/null
+  ! grep -q "llm_map" "$DF" || fail "F66.a: --save-defaults --llm-map wrote llm_map"
+  rm -f "$DF"
+  # an existing copy (older install) is kept: not changed, not removed, one kept line
+  printf 'OLD LLM MAP\n' > "$F/llm_map.py"; mkdir -p "$(dirname "$SK")"; printf 'OLD SKILL\n' > "$SK"
+  o="$("$ROOT/install.sh" --dry-run)"; grep -qxF "[dry-run] $KEPT" <<<"$o" || fail "F66.a: no kept line (dry-run): $o"
+  o="$("$ROOT/install.sh")"; [ "$(grep -cxF "$KEPT" <<<"$o")" = 1 ] || fail "F66.a: no kept line: $o"
+  [ "$(cat "$F/llm_map.py")" = "OLD LLM MAP" ] && [ "$(cat "$SK")" = "OLD SKILL" ] || fail "F66.a: install changed an existing llm-map"
+  "$ROOT/install.sh" --llm-map >/dev/null
+  [ "$(cat "$F/llm_map.py")" = "OLD LLM MAP" ] && [ "$(cat "$SK")" = "OLD SKILL" ] || fail "F66.a: --llm-map changed an existing llm-map"
+  # uninstall never removes llm_map.py or the llm-map skill (listed in the manifest or marked or not); one kept line
+  "$ROOT/install.sh" >/dev/null
+  python3 - "$F/.handoff-manifest.json" <<'PY'
 import json, sys
-r = [json.loads(l) for l in open(sys.argv[1])]
-assert [x["out"] for x in r[:3]] == ["numeric value", "human being", "location"], r
-assert r[3]["out"] is None and r[3]["error"].startswith("label:"), r[3]
+d = json.load(open(sys.argv[1])); d["files"]["llm_map.py"] = "x"; json.dump(d, open(sys.argv[1], "w"))
 PY
-  [ "$rc" = 3 ] && grep -q ' 1 failed, 2 batches,' "$T/f61-l.out" || fail "F61 282: rc=$rc $(cat "$T/f61-l.out")"
-  # F61: AC 284 (usage errors, no out file)
-  set +e
-  python3 "$LM" --in "$T/f61-l.txt" --prompt x --labels "a" --out "$T/f61-u1.jsonl" 2>/dev/null; r1=$?
-  python3 "$LM" --in "$T/f61-l.txt" --prompt x --labels "a|b" --json-out --out "$T/f61-u2.jsonl" 2>/dev/null; r2=$?
-  set -e
-  [ "$r1" = 2 ] && [ "$r2" = 2 ] && [ ! -e "$T/f61-u1.jsonl" ] && [ ! -e "$T/f61-u2.jsonl" ] || fail "F61 284: ($r1 $r2)"
+  printf '<!-- lossless-handoff:llm-map-skill -->\nOLD\n' > "$SK"
+  UL="llm-map: kept (remove it with ./install.sh --uninstall from https://github.com/pratikgh0se/llm-map)"
+  o="$("$ROOT/uninstall.sh")"
+  [ "$(grep -cxF "$UL" <<<"$o")" = 1 ] || fail "F66.a: uninstall kept line: $o"
+  [ "$(cat "$F/llm_map.py")" = "OLD LLM MAP" ] && [ -f "$SK" ] || fail "F66.a: uninstall removed llm_map.py or the skill"
+  [ ! -e "$F/precompact-handoff.py" ] || fail "F66.a: uninstall did not finish its other work"
+  rm "$F/llm_map.py" "$SK"; rmdir "$(dirname "$SK")"; o="$("$ROOT/uninstall.sh")"; ! grep -q "llm-map: kept" <<<"$o" || fail "F66.a: kept line without llm-map files"
+  # F66.d versions
+  [ "$("$ROOT/install.sh" --version)" = "Lossless Handoff 0.14.0" ] || fail "F66.d: product version"
+  [ "$(grep -c '^HOOK_VERSION = "1.16.0"$' "$ROOT/hooks/precompact-handoff.py" "$ROOT/hooks/postcompact-inject.py" | grep -c ':1$')" = 2 ] || fail "F66.d: HOOK_VERSION"
+  # F66.c: README holds no claim markers; evidence page does; claims-lint default path
+  ! grep -qE '\[C[1-8]\]' "$ROOT/README.md" && ! grep -qiE '^#+ .*proof|\*\*proof' "$ROOT/README.md" || fail "F66.c: README holds Proof or claim markers"
+  grep -qE '\[C1\]' "$ROOT/docs/evidence.md" || fail "F66.c: docs/evidence.md has no markers"
+  grep -qi "no scored benchmark result" "$ROOT/README.md" || fail "F66.c: README does not state that no scored result exists"
+  # a clean state has no live evidence, so lint may exit 1 (no-data); the file must be found and every marker known
+  r=0; ( cd "$ROOT" && HANDOFF_STATE_DIR="$T/f66-state" python3 hooks/precompact-handoff.py --claims-lint ) >"$T/f66-lint.out" 2>&1 || r=$?
+  [ "$r" -le 1 ] && ! grep -qE "no docs/evidence.md|cannot read|unknown claim" "$T/f66-lint.out" || fail "F66.c: --claims-lint default path: $(cat "$T/f66-lint.out")"
+  ( cd "$T" && HANDOFF_STATE_DIR="$T/f66-state" python3 "$ROOT/hooks/precompact-handoff.py" --claims-lint ) >"$T/f66-lint2.out" 2>&1 || true
+  cmp -s "$T/f66-lint.out" "$T/f66-lint2.out" || fail "F66.c: --claims-lint default path differs outside the repo folder"
+  # another project's docs/evidence.md must not be linted by default (script tree first)
+  mkdir -p "$T/f66-other/docs"; printf 'bogus marker [C99]\n' > "$T/f66-other/docs/evidence.md"
+  ( cd "$T/f66-other" && HANDOFF_STATE_DIR="$T/f66-state" python3 "$ROOT/hooks/precompact-handoff.py" --claims-lint ) >"$T/f66-lint4.out" 2>&1 || true
+  cmp -s "$T/f66-lint.out" "$T/f66-lint4.out" && ! grep -q "C99" "$T/f66-lint4.out" || fail "F66.c: --claims-lint in another project linted that project's docs/evidence.md"
+  for n in 1 2 3 4 5 6 7 8; do grep -qF "[C$n]" "$ROOT/docs/evidence.md" || fail "F66.c: evidence.md lacks [C$n]"; done
+  HANDOFF_STATE_DIR="$T/f66-state" python3 "$ROOT/hooks/precompact-handoff.py" --claims-lint "$ROOT/docs/evidence.md" >"$T/f66-lint3.out" 2>&1 || true
+  cmp -s "$T/f66-lint.out" "$T/f66-lint3.out" || fail "F66.c: explicit path gives another result"
 )
-ok "F60: llm_map batches, retry, failures, usage errors, call flags, skill install and uninstall"
+ok "F66: llm-map flags, saved line, existing copy kept, uninstall, versions, evidence wording"
 ok "F55: agent file install, foreign file kept, replace when marked, uninstall, recall-line sentence"
 
 # F56: excerpt cut in health rows and prove
@@ -947,7 +905,7 @@ rows = {json.loads(x)["sid"]: json.loads(x) for x in open(sys.argv[1]) if x.stri
 a, b = rows["f56a"], rows["f56b"]
 assert a["excerpt_chars"] > 0 and a["excerpt_dropped"] == 0, a
 assert b["excerpt_dropped"] > 0 and 0 < b["excerpt_chars"] <= 120000, b
-assert a["hook_version"] == "1.15.0"
+assert a["hook_version"] == "1.16.0"
 PY
   p="$(python3 "$ROOT/hooks/precompact-handoff.py" --prove --days 1; echo "rc=$?")"
   grep -qE "^excerpt cut: 1 of 2 compactions, median dropped [0-9]+ chars$" <<<"$p" || fail "F56.b: prove line: $p"
@@ -1103,8 +1061,9 @@ PY
   o="$(sin | python3 "$POST" --subagent-start)"
   python3 -c "import sys,json; d=json.loads(sys.argv[1])['hookSpecificOutput']; assert d['hookEventName']=='SubagentStart'" "$o" || fail "F58: output is not valid hook JSON: $o"
   c="$(cx <<<"$o")"
-  [ "$(head -n 1 <<<"$c")" = "Project rules for this repo (standing; from the Lossless Handoff decisions list; the user's latest words win):" ] || fail "F58: header: $c"
-  [ "$(sed -n 2p <<<"$c" | cut -c1-5)" = "- D4 " ] && [ "$(sed -n 3p <<<"$c" | cut -c1-5)" = "- D1 " ] || fail "F58: rules not newest first: $c"
+  [ "$(head -n 1 <<<"$c")" = "These are the user's standing rules for the main session of this project. Apply only the rules that fit your task. Your task brief comes first." ] || fail "F66.b: preamble: $c"
+  [ "$(sed -n 2p <<<"$c")" = "Project rules for this repo (standing; from the Lossless Handoff decisions list; the user's latest words win):" ] || fail "F58: header: $c"
+  [ "$(sed -n 3p <<<"$c" | cut -c1-5)" = "- D4 " ] && [ "$(sed -n 4p <<<"$c" | cut -c1-5)" = "- D1 " ] || fail "F58: rules not newest first: $c"
   grep -q "^- recall: " <<<"$c" || fail "F58: no recall line: $c"
   ! grep -q DECISIONTEXT <<<"$c" && ! grep -q TASKTEXT <<<"$c" || fail "F58: decision or task text in the output: $c"
   # AC 267: health row
@@ -1112,7 +1071,7 @@ PY
 import json, sys
 rows = [json.loads(x) for x in open(sys.argv[1]) if x.strip()]
 r = [x for x in rows if x.get("event") == "subagent_start"][-1]
-assert r["rules"] == 2 and r["chars"] > 0 and r["hook_version"] == "1.15.0" and r["agent_type"] == "general-purpose", r
+assert r["rules"] == 2 and r["chars"] > 0 and r["hook_version"] == "1.16.0" and r["agent_type"] == "general-purpose", r
 PY
   # AC 262: no handoff text, no agent notes
   printf '# Handoff\n- cwd: %s\nLATESTTOKEN\n' "$PROJ" > "$STF/s58-latest.md"; printf 'AGENTTOKEN\n' > "$STF/s58-agent.md"
@@ -1392,15 +1351,15 @@ PY
   set -e
   export HOME="$T/f64home"; mkdir -p "$HOME/.claude"; F="$HOME/.claude/hooks"; FS="$HOME/.claude/settings.json"; DF="$HOME/.config/lossless-handoff/install-defaults"
   hp="$("$ROOT/install.sh" --help)"
-  for fl in --window --nightly --semantic --llm-map --save-defaults --no-semantic --no-llm-map install-defaults; do grep -q -- "$fl" <<<"$hp" || fail "F64: --help lacks $fl"; done
+  for fl in --window --nightly --semantic --save-defaults --no-semantic install-defaults; do grep -q -- "$fl" <<<"$hp" || fail "F64: --help lacks $fl"; done
   o="$("$ROOT/install.sh" --dry-run)"
   grep -q "LaunchAgent" <<<"$o" && fail "F64: default dry-run lists a nightly job"
-  grep -q "llm_map.py\|llm-map skill\|bge-m3" <<<"$o" && fail "F64: default dry-run lists an opt-in part"
+  grep -q "llm_map.py\|llm-map\|bge-m3" <<<"$o" && fail "F64: default dry-run lists an opt-in part"
   grep -q "settings: window not set" <<<"$o" || fail "F64: default dry-run does not say the window is off"
   [ ! -e "$HOME/.claude/hooks" ] || fail "F64: dry-run wrote files"
   "$ROOT/install.sh" >"$T/f64-1.out"
   [ -f "$F/recall.py" ] && [ -f "$F/precompact-handoff.py" ] && [ -f "$F/postcompact-inject.py" ] && [ -f "$F/handoff-nudge.py" ] && [ -f "$HOME/.claude/agents/recall.md" ] || fail "F64: core missing"
-  [ ! -e "$F/llm_map.py" ] && [ ! -e "$HOME/.claude/skills/llm-map/SKILL.md" ] && [ ! -e "$HOME/Library/LaunchAgents" ] && [ ! -e "$DF" ] || fail "F64: default installed an opt-in part"
+  [ ! -e "$HOME/Library/LaunchAgents" ] && [ ! -e "$DF" ] || fail "F64: default installed an opt-in part"
   python3 - "$FS" <<'PY'
 import json, sys
 d = json.load(open(sys.argv[1]))
@@ -1411,20 +1370,17 @@ PY
   # opt-in flags
   "$ROOT/install.sh" --window 250000 >/dev/null
   python3 -c "import json,sys; assert json.load(open(sys.argv[1]))['env']['CLAUDE_CODE_AUTO_COMPACT_WINDOW']=='250000'" "$FS" || fail "F64: --window"
-  "$ROOT/install.sh" --llm-map >/dev/null
-  [ -f "$F/llm_map.py" ] && [ -f "$HOME/.claude/skills/llm-map/SKILL.md" ] || fail "F64: --llm-map"
   "$ROOT/install.sh" --nightly >/dev/null
   [ "$(uname)" != Darwin ] || { [ -f "$HOME/Library/LaunchAgents/com.lossless-handoff.recall-index.plist" ] && [ -f "$HOME/Library/LaunchAgents/com.lossless-handoff.handoff-reconcile.plist" ] || fail "F64: --nightly"; }
-  # re-install without flags keeps window, llm-map, nightly jobs; --no-* flags do not uninstall
+  # re-install without flags keeps window and nightly jobs; --no-* flags do not uninstall
   "$ROOT/install.sh" --window 111111 >/dev/null
-  "$ROOT/install.sh" --no-llm-map --no-nightly --no-window >/dev/null
+  "$ROOT/install.sh" --no-nightly --no-window >/dev/null
   python3 -c "import json,sys; assert json.load(open(sys.argv[1]))['env']['CLAUDE_CODE_AUTO_COMPACT_WINDOW']=='250000'" "$FS" || fail "F64: re-install changed the window"
-  [ -f "$F/llm_map.py" ] && [ -f "$HOME/.claude/skills/llm-map/SKILL.md" ] || fail "F64: re-install removed llm-map"
   [ "$(uname)" != Darwin ] || [ -f "$HOME/Library/LaunchAgents/com.lossless-handoff.recall-index.plist" ] || fail "F64: re-install removed nightly jobs"
   # --window 0 is rejected; an upgrade run says "already installed, kept"
   r=0; "$ROOT/install.sh" --window 0 --dry-run >/dev/null 2>&1 || r=$?; [ "$r" = 2 ] || fail "F64: --window 0 was not rejected"
   o="$("$ROOT/install.sh" --dry-run)"
-  grep -q "window already installed, kept" <<<"$o" && grep -q "llm-map: already installed, kept" <<<"$o" || fail "F64: upgrade run does not say already installed, kept"
+  grep -q "window already installed, kept" <<<"$o" || fail "F64: upgrade run does not say already installed, kept"
   [ "$(uname)" != Darwin ] || grep -q "nightly jobs: already installed, kept" <<<"$o" || fail "F64: upgrade run: nightly message"
   o="$("$ROOT/install.sh" --window 300000 --dry-run)"
   grep -q "window already installed, kept.*250000" <<<"$o" || fail "F64: --window N on an existing value: no kept line"
@@ -1439,7 +1395,7 @@ PY
   o="$("$ROOT/install.sh" --no-window --no-nightly --dry-run)"
   [ "$(grep -c "no longer needed" <<<"$o")" = 1 ] || fail "F64: old flags note"
   "$ROOT/uninstall.sh" >/dev/null
-  [ ! -e "$F/llm_map.py" ] && [ ! -e "$HOME/Library/LaunchAgents/com.lossless-handoff.recall-index.plist" ] || fail "F64: uninstall left opt-in parts"
+  [ ! -e "$HOME/Library/LaunchAgents/com.lossless-handoff.recall-index.plist" ] || fail "F64: uninstall left opt-in parts"
   # --semantic with a stub ollama (the stub only records the call; no real pull)
   mkdir -p "$T/f64bin"; printf '#!/bin/sh\necho "$@" >> "%s/f64-ollama.calls"\n' "$T" > "$T/f64bin/ollama"; chmod +x "$T/f64bin/ollama"
   PATH="$T/f64bin:$PATH" "$ROOT/install.sh" >/dev/null
@@ -1453,12 +1409,12 @@ PY
   # saved defaults
   "$ROOT/install.sh" --dry-run --save-defaults --semantic --window 300000 >/dev/null
   [ ! -e "$DF" ] || fail "F64: dry-run saved defaults"
-  "$ROOT/install.sh" --save-defaults --semantic --llm-map --window 300000 >/dev/null
-  grep -qx "semantic=1" "$DF" && grep -qx "llm_map=1" "$DF" && grep -qx "window=300000" "$DF" && ! grep -q nightly "$DF" || fail "F64: saved defaults file: $(cat "$DF")"
+  "$ROOT/install.sh" --save-defaults --semantic --window 300000 >/dev/null
+  grep -qx "semantic=1" "$DF" && grep -qx "window=300000" "$DF" && ! grep -q nightly "$DF" || fail "F64: saved defaults file: $(cat "$DF")"
   "$ROOT/uninstall.sh" >/dev/null; [ -f "$DF" ] || fail "F64: uninstall removed the defaults file"
   rm -f "$T/f64-ollama.calls"
   o="$(PATH="$T/f64bin:$PATH" "$ROOT/install.sh" --dry-run)"
-  grep -q "options from saved defaults.*semantic" <<<"$o" && grep -q "would ask whether to run: ollama pull bge-m3" <<<"$o" && grep -q "llm_map.py" <<<"$o" || fail "F64: saved defaults not applied in dry-run"
+  grep -q "options from saved defaults.*semantic" <<<"$o" && grep -q "would ask whether to run: ollama pull bge-m3" <<<"$o" || fail "F64: saved defaults not applied in dry-run"
   o="$(PATH="$T/f64bin:$PATH" "$ROOT/install.sh" --no-semantic --dry-run)"
   grep -q "bge-m3" <<<"$o" && fail "F64: --no-semantic did not override the saved default"
   PATH="$T/f64bin:$PATH" "$ROOT/install.sh" --yes >/dev/null
