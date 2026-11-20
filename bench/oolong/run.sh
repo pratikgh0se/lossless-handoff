@@ -5,7 +5,7 @@
 #   run.sh run [options]                                run; then report (python3 harness.py run --help)
 #   run.sh resume <run-id> [--budget-usd X] [--jobs N]
 #   run.sh report <run-id> [--draws N]
-#   run.sh selfcheck [--model M] [--arms A,B,C]         sandbox proof, stores evidence/
+#   run.sh selfcheck [--model M] [--arms A,B,C] [--llm-map-path DIR]  sandbox proof, stores evidence/
 #   run.sh cleanup [--all] [--dry-run] [--work-base DIR]
 #   run.sh tmpcheck [--quarantine-tmp] [--list-file F]  loose items in /tmp/claude-<uid> (moves them with --quarantine-tmp, deletes nothing)
 # Exit: 0 finished, 1 a unit failed, 2 usage error, 3 paused (budget).
