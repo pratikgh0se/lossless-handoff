@@ -30,7 +30,7 @@ hooks_dir = os.environ["HC_HOOKS"]
 ts = os.environ["HC_TS"]
 marker_path = os.path.join(hooks_dir, ".claude-handoff-install.json")
 tag = "[dry-run] " if dry else ""
-ours = {"python3 %s/%s" % (hooks_dir, s) for s in ("precompact-handoff.py", "handoff-nudge.py")}
+ours = {"python3 %s/%s" % (hooks_dir, s) for s in ("precompact-handoff.py", "handoff-nudge.py", "auto-recall.py")}
 ours |= {"python3 %s/postcompact-inject.py --part %d" % (hooks_dir, n) for n in (1, 2, 3)}
 ours |= {"python3 %s/postcompact-inject.py --ledger --part %d" % (hooks_dir, n) for n in (1, 2, 3)}
 ours.add("python3 %s/postcompact-inject.py --ledger" % hooks_dir)
@@ -184,7 +184,7 @@ if [ -e "$HOOKS_DIR/handoff-canary" ] || [ -e "$HOOKS_DIR/handoff-canary.sh" ]; 
   fi
 fi
 
-for f in precompact-handoff.py postcompact-inject.py handoff-nudge.py recall.py claims.json .handoff-manifest.json .claude-handoff-install.json; do
+for f in precompact-handoff.py postcompact-inject.py handoff-nudge.py auto-recall.py recall.py claims.json .handoff-manifest.json .claude-handoff-install.json; do
   if [ -e "$HOOKS_DIR/$f" ]; then
     say "remove $HOOKS_DIR/$f"
     [ "$DRY" = 1 ] || rm "$HOOKS_DIR/$f"

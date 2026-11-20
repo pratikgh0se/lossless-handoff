@@ -2,7 +2,7 @@
 # Lossless Handoff installer (formerly claude-handoff): copies the hooks and merges them into ~/.claude/settings.json.
 set -euo pipefail
 
-VERSION="0.14.0"
+VERSION="0.15.0"
 usage() {
   cat <<EOF
 Lossless Handoff $VERSION (formerly claude-handoff)
@@ -10,13 +10,13 @@ Default install (F64): the core only. It copies the hooks (nudge, PreCompact han
 SessionStart check, SubagentStart rules, SessionEnd index) and the recall command into ~/.claude/hooks,
 merges them into ~/.claude/settings.json, installs the recall subagent (~/.claude/agents/recall.md, unless a
 file of that name that is not ours is there), keeps the decisions list, and starts a first recall index.
-Hooks 1.16.0 keep the chat store: handoff files live 365 days, and --keep-transcripts raises Claude Code's transcript retention.
-Hooks 1.16.0 also mask secrets in every file they write (see SECURITY.md).
+Hooks 1.17.0 keep the chat store: handoff files live 365 days, and --keep-transcripts raises Claude Code's transcript retention.
+Hooks 1.17.0 also mask secrets in every file they write (see SECURITY.md).
 The default does NOT set CLAUDE_CODE_AUTO_COMPACT_WINDOW, pull a model, or install nightly jobs.
 Add them with the opt-in flags below. A rerun never removes, turns off or changes a part that is already installed
 (window value, meaning search, nightly jobs): a --no-* flag only skips adding it. Use ./uninstall.sh to remove parts.
 
-Usage: ./install.sh [--dry-run] [--force] [--window N] [--nightly] [--semantic [--yes]] [--save-defaults] [--no-nudge] [--canary] [--managed-hooks] [--keep-transcripts[=DAYS]] [--version] [-h|--help]
+Usage: ./install.sh [--dry-run] [--force] [--window N] [--nightly] [--semantic [--yes]] [--auto-recall] [--save-defaults] [--no-nudge] [--canary] [--managed-hooks] [--keep-transcripts[=DAYS]] [--version] [-h|--help]
 
   --dry-run     list exactly what the chosen options install (and which come from saved defaults), change nothing
   --window N    opt-in: set CLAUDE_CODE_AUTO_COMPACT_WINDOW to N tokens (for example 400000);
@@ -26,18 +26,23 @@ Usage: ./install.sh [--dry-run] [--force] [--window N] [--nightly] [--semantic [
   --semantic    opt-in: meaning search on this machine only (nothing is sent to a remote service). If ollama is
                 on PATH, offer "ollama pull bge-m3" (an interactive run asks y/N; a non-interactive run skips the
                 pull unless --yes is given). If ollama is missing, print how to get it and continue keyword-only
+  --auto-recall opt-in (F67): install the UserPromptSubmit hook auto-recall.py. When your prompt refers to the past
+                (for example "what did we decide earlier"), it searches this project's earlier chats and adds
+                the top 3 exact quotes (secrets masked) to the context. It takes at most 2 seconds, never blocks
+                a prompt, and writes only ~/.local/state/claude-handoffs/auto-recall.jsonl (no prompt text).
+                Set HANDOFF_AUTO_RECALL=0 to switch it off at run time. Off by default
   --yes         with --semantic: answer yes to the model pull without asking
   --llm-map, --no-llm-map
                 no longer used. llm-map is now a separate project (https://github.com/pratikgh0se/llm-map).
                 The flags are accepted and print one line; they change nothing else
   --save-defaults
-                save the opt-in flags given in this run (--semantic, --nightly, --window N) to
+                save the opt-in flags given in this run (--semantic, --nightly, --auto-recall, --window N) to
                 ~/.config/lossless-handoff/install-defaults (key=value lines: semantic=1, nightly=1,
-                window=N). Every later ./install.sh run reads that file and applies those
+                auto_recall=1, window=N). Every later ./install.sh run reads that file and applies those
                 options as if you gave them. A flag on the command line wins over the file.
                 With --save-defaults, a --no-* flag removes that saved default. Delete the file, or run
                 ./uninstall.sh --purge, to drop all saved defaults
-  --no-semantic, --no-nightly, --no-window
+  --no-semantic, --no-nightly, --no-auto-recall, --no-window
                 turn one opt-in off for this run, also when a saved default turns it on. They only skip
                 adding the part; they never uninstall one that is there
   --no-nudge    do not install the context nudge (handoff-nudge.py). Use it if another tool already
@@ -65,7 +70,7 @@ search still works (https://ollama.com/download). Ollama itself is never install
 EOF
 }
 
-DRY=0; FORCE=0; WINDOW=400000; SETWINDOW=0; YES=0; NIGHTLY=0; SEMANTIC=0; NOTE_LM=0; OLDFLAG=0; SAVE=0; C_WIN=""; C_NIGHT=""; C_SEM=""; MANAGED=0; CANARY=0; NONUDGE=0; KEEP=""
+DRY=0; FORCE=0; WINDOW=400000; SETWINDOW=0; YES=0; NIGHTLY=0; SEMANTIC=0; NOTE_LM=0; OLDFLAG=0; SAVE=0; C_WIN=""; C_NIGHT=""; C_SEM=""; C_AR=""; AUTORECALL=0; MANAGED=0; CANARY=0; NONUDGE=0; KEEP=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --dry-run) DRY=1 ;;
@@ -79,6 +84,8 @@ while [ $# -gt 0 ]; do
     --nightly) C_NIGHT=1 ;;
     --semantic) C_SEM=1 ;;
     --no-semantic) C_SEM=0 ;;
+    --auto-recall) C_AR=1 ;;
+    --no-auto-recall) C_AR=0 ;;
     --llm-map|--no-llm-map) NOTE_LM=1 ;;
     --save-defaults) SAVE=1 ;;
     --no-nudge) NONUDGE=1 ;;
@@ -99,12 +106,13 @@ command -v python3 >/dev/null || { echo "python3 is required" >&2; exit 1; }
 say() { if [ "$DRY" = 1 ]; then echo "[dry-run] $*"; else echo "$*"; fi; }
 # saved defaults: read key=value lines (never sourced); a command-line flag wins over the file
 DEFAULTS_FILE="$HOME/.config/lossless-handoff/install-defaults"
-D_WIN=""; D_NIGHT=""; D_SEM=""
+D_WIN=""; D_NIGHT=""; D_SEM=""; D_AR=""
 if [ -f "$DEFAULTS_FILE" ]; then
   while IFS= read -r line || [ -n "$line" ]; do
     case "$line" in
       semantic=1) D_SEM=1 ;;
       nightly=1) D_NIGHT=1 ;;
+      auto_recall=1) D_AR=1 ;;
       llm_map=1) NOTE_LM=1 ;;
       window=*) v="${line#window=}"; case "$v" in ''|*[!0-9]*) ;; *) if [ "${#v}" -le 12 ] && [ "$((10#$v))" -gt 0 ]; then D_WIN="$v"; fi ;; esac ;;
     esac
@@ -117,11 +125,12 @@ pick() { # $1 name, $2 cli value, $3 saved value -> sets P (the effective value)
 pick window "$C_WIN" "$D_WIN"; case "$P" in ''|off) SETWINDOW=0 ;; *) SETWINDOW=1; WINDOW="$P" ;; esac
 pick nightly "$C_NIGHT" "$D_NIGHT"; [ "$P" = 1 ] && NIGHTLY=1 || NIGHTLY=0
 pick semantic "$C_SEM" "$D_SEM"; [ "$P" = 1 ] && SEMANTIC=1 || SEMANTIC=0
+pick auto_recall "$C_AR" "$D_AR"; [ "$P" = 1 ] && AUTORECALL=1 || AUTORECALL=0
 if [ "$NOTE_LM" = 1 ]; then echo "llm-map is now a separate project: https://github.com/pratikgh0se/llm-map"; fi
 if [ -n "$FROM_SAVED" ]; then say "options from saved defaults ($DEFAULTS_FILE):$FROM_SAVED"; fi
 if [ "$SAVE" = 1 ]; then
   if [ "$DRY" = 1 ]; then say "would save the opt-in flags of this run to $DEFAULTS_FILE"; else
-    HC_DF="$DEFAULTS_FILE" HC_CWIN="$C_WIN" HC_CN="$C_NIGHT" HC_CS="$C_SEM" python3 - <<'PY'
+    HC_DF="$DEFAULTS_FILE" HC_CWIN="$C_WIN" HC_CN="$C_NIGHT" HC_CS="$C_SEM" HC_CA="$C_AR" python3 - <<'PY'
 import os
 p = os.environ["HC_DF"]
 cur = {}
@@ -141,6 +150,7 @@ def setk(k, v, on):
         cur.pop(k, None)
 setk("semantic", os.environ["HC_CS"], "1")
 setk("nightly", os.environ["HC_CN"], "1")
+setk("auto_recall", os.environ["HC_CA"], "1")
 cur.pop("llm_map", None)
 w = os.environ["HC_CWIN"]
 if w == "off":
@@ -173,6 +183,9 @@ MANIFEST="$HOOKS_DIR/.handoff-manifest.json"
 FILES="precompact-handoff.py postcompact-inject.py handoff-nudge.py recall.py claims.json"
 # --no-nudge: the nudge file is not part of the install, so the manifest does not list it
 if [ "$NONUDGE" = 1 ]; then FILES="precompact-handoff.py postcompact-inject.py recall.py claims.json"; fi
+# F67: auto-recall.py is opt-in. A copy that is already installed is kept up to date and stays in the manifest.
+AR_THERE=0; [ -e "$HOOKS_DIR/auto-recall.py" ] && AR_THERE=1
+if [ "$AUTORECALL" = 1 ] || [ "$AR_THERE" = 1 ]; then FILES="$FILES auto-recall.py"; fi
 # The PreCompact hook keeps its code in the folder hooks/lossless_handoff/. It is part of the install and of the manifest.
 PKG_FILES="$(cd "$SRC/hooks" 2>/dev/null && ls lossless_handoff/*.py 2>/dev/null | tr '\n' ' ')"
 if [ -z "$PKG_FILES" ]; then echo "error: hooks/lossless_handoff/ is missing from this copy; get a full copy of the repo" >&2; exit 1; fi
@@ -309,7 +322,7 @@ fi
 if [ "$CLEANUP_WARN" = 1 ]; then printf "warning: $CLEANUP_LINE_FMT\n" "$EFF_DAYS"; fi
 
 # 3. settings merge
-HC_KEEP="$KEEP" HC_NONUDGE="$NONUDGE" HC_DRY="$DRY" HC_FORCE="$FORCE" HC_WINDOW="$WINDOW" HC_SETWINDOW="$SETWINDOW" HC_SETTINGS="$SETTINGS" \
+HC_AR="$AUTORECALL" HC_KEEP="$KEEP" HC_NONUDGE="$NONUDGE" HC_DRY="$DRY" HC_FORCE="$FORCE" HC_WINDOW="$WINDOW" HC_SETWINDOW="$SETWINDOW" HC_SETTINGS="$SETTINGS" \
 HC_HOOKS="$HOOKS_DIR" HC_TS="$TS" python3 - <<'PY'
 import json, os, shutil, sys
 dry = os.environ["HC_DRY"] == "1"
@@ -318,6 +331,7 @@ hooks_dir = os.environ["HC_HOOKS"]
 ts = os.environ["HC_TS"]
 pre = "python3 %s/precompact-handoff.py" % hooks_dir
 nudge = "python3 %s/handoff-nudge.py" % hooks_dir
+auto_recall = "python3 %s/auto-recall.py" % hooks_dir  # F67
 post = ["python3 %s/postcompact-inject.py --part %d" % (hooks_dir, n) for n in (1, 2, 3)]
 post_led = ["python3 %s/postcompact-inject.py --ledger --part %d" % (hooks_dir, n) for n in (1, 2, 3)]
 start_led = "python3 %s/postcompact-inject.py --ledger" % hooks_dir  # pre-0.5.0 startup/resume form, migrated away
@@ -349,8 +363,8 @@ if not isinstance(hooks, dict):
     sys.exit("settings.json: hooks is not an object")
 
 # conflict check: the same hook scripts registered from a different path would run twice
-own_cmds = set([pre, nudge, start_led, check_cmd, subagent_cmd] + post + post_led)
-names = ("precompact-handoff.py", "postcompact-inject.py", "handoff-nudge.py")
+own_cmds = set([pre, nudge, auto_recall, start_led, check_cmd, subagent_cmd] + post + post_led)
+names = ("precompact-handoff.py", "postcompact-inject.py", "handoff-nudge.py", "auto-recall.py")
 conflicts = []
 for ev, groups_ in hooks.items():
     if not isinstance(groups_, list):
@@ -412,6 +426,15 @@ else:
     groups = hooks["PostToolUse"]
     groups.append({"matcher": "*", "hooks": [{"type": "command", "command": nudge, "timeout": 5}]})
     changes.append("add PostToolUse nudge hook (matcher *, timeout 5)")
+
+# F67: the opt-in UserPromptSubmit hook. Never removed here (a rerun keeps what is installed).
+if os.environ["HC_AR"] == "1":
+    ups = hooks.setdefault("UserPromptSubmit", [])
+    if has_cmd(ups, auto_recall):
+        changes.append("UserPromptSubmit auto-recall hook already present")
+    else:
+        ups.append({"hooks": [{"type": "command", "command": auto_recall, "timeout": 5}]})
+        changes.append("add UserPromptSubmit auto-recall hook (timeout 5)")
 
 groups = hooks.setdefault("SessionStart", [])
 grp = next((g for g in groups if isinstance(g, dict) and g.get("matcher") == "compact"
@@ -615,6 +638,11 @@ fi
 LM_DST="$HOOKS_DIR/llm_map.py"; SK_DST="$HOME/.claude/skills/llm-map/SKILL.md"
 if [ -e "$LM_DST" ] || [ -e "$SK_DST" ]; then
   say "llm-map: already installed, kept (now maintained at https://github.com/pratikgh0se/llm-map; this installer no longer updates it)"
+fi
+
+# F67: auto-recall is opt-in. An installed copy is never removed by a rerun.
+if [ "$AUTORECALL" = 0 ] && [ "$AR_THERE" = 1 ]; then
+  say "auto-recall: already installed, kept"
 fi
 
 # --no-nudge: remove a nudge file left by an earlier install
