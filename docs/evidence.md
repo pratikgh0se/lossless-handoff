@@ -30,7 +30,7 @@ Two benchmarks are in this repository. Both are code-graded: no model grades an 
 
 **OOLONG** ([bench/oolong/README.md](../bench/oolong/README.md)) tests two things on large aggregation tasks: the `llm_map` tool (now the separate [llm-map](https://github.com/pratikgh0se/llm-map) project), and that the hooks do no harm. In this harness the context is a file. The report counts compactions of the main session only, and subagents can compact. If the count is 0, the hooks add only their session-start text to the main session. The test shows if plain Claude Code still loses on counting tasks, and if `llm_map` helps. Arm C is Lossless Handoff alone. The option `--llm-map-path` adds llm_map as an extra. The pilot of 2026-11-18 used arm C with llm_map.
 
-No scored results are published yet, except one 2-task pilot summary in `bench/oolong/evidence/`. That file is harness evidence only. Results come after the full evaluation: continuity at 30 compactions, and LoCoMo and OOLONG with forced compactions. LoCoMo is a published benchmark for memory over long conversations.
+One OOLONG run is published ([summary](../bench/oolong/evidence/run-20261118T221353-summary.md)): Lossless Handoff with llm_map tied plain Claude Code. In that run the main session never compacted, so it does not test the handoff. No scored result for the handoff's main claim is published yet. The 2-task pilot files in `bench/oolong/evidence/` are harness evidence only. The handoff results come after the full evaluation: continuity at 30 compactions, and LoCoMo and OOLONG with forced compactions. LoCoMo is a published benchmark for memory over long conversations.
 
 ## Local proof
 
@@ -112,6 +112,8 @@ The command exits 1 unless every marker is known and `pass`. An unknown, `fail`,
 
 **What the author's own data says.** In a 30-day reconcile on the author's machine (2026-11-17), 188 of 192 main compactions had a handoff [C2]. Of the 4 misses, 3 came from a deliberate probe run with user settings switched off. The other one was a hook that most likely stopped at its timeout on 2026-10-23. For subagents, 0 of 28 compactions had a handoff before this release. That gap is the bug that 1.10.0 fixes. A live subagent test after the fix gave right-agent 2/2 [C3], delivered 2/2 [C4], failed 0. A dated one-off blind quiz (2026-11-14, same sessions with and without the handoff) scored 98% with the handoff against 62% with Claude Code's compaction summary alone [C7]. This is one author, one machine, and small counts.
 
+**Three counts.** The numbers 217, 188 of 192 and 196 of 200 are three different counts. 217 is all compactions with a handoff over 32 days (2026-11-16). 188 of 192 is the reconcile of 2026-11-17 and 196 of 200 is the nightly run of 2026-11-18, both over 30 days for main compactions. The two rates have the same 4 misses; only the windows and the totals differ.
+
 ## The claims register
 
 Each claim has one marker. The README holds no markers. This page holds all of them. Status and numbers are in the `--claims` table.
@@ -124,7 +126,7 @@ Each claim has one marker. The README holds no markers. This page holds all of t
 | [C4] | The handoff reaches the model after compaction | live rate |
 | [C5] | Recorded project decisions are never lost by a decisions-list update | live rate |
 | [C6] | Subagent compactions are covered too | live rate |
-| [C7] | A blind quiz after compaction scored 98% with the handoff against 62% with the compaction summary alone | dated one-off (2026-11-14) |
+| [C7] | A blind quiz after compaction scored 98% (65 of 66) with the decisions list plus recall, against 62% (41 of 66) with the v0.4 injection | dated one-off (2026-11-14) |
 | [C8] | About 19% lower cost at a 400k window than at 1M | dated one-off (2026-10-20) |
 
 These results come from one machine and one heavy user. A quiz or a cost study is a hint, not a promise.

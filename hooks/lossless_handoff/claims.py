@@ -112,9 +112,10 @@ def claims_print():
 
 
 def claims_default_doc():
-    """F66.c: docs/evidence.md of the current folder, else of the tree around this script (repo checkout). None if neither exists."""
+    """F66.c: docs/evidence.md of the tree around this script (repo checkout), else of the current folder. None if neither exists.
+    The script's own tree comes first, so a lint run in another project does not lint that project's docs/evidence.md."""
     here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    for base in (os.getcwd(), os.path.dirname(here), here):
+    for base in (here, os.getcwd()):
         q = os.path.join(base, "docs", "evidence.md")
         if os.path.isfile(q):
             return q

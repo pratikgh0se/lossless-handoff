@@ -868,6 +868,10 @@ PY
   [ "$r" -le 1 ] && ! grep -qE "no docs/evidence.md|cannot read|unknown claim" "$T/f66-lint.out" || fail "F66.c: --claims-lint default path: $(cat "$T/f66-lint.out")"
   ( cd "$T" && HANDOFF_STATE_DIR="$T/f66-state" python3 "$ROOT/hooks/precompact-handoff.py" --claims-lint ) >"$T/f66-lint2.out" 2>&1 || true
   cmp -s "$T/f66-lint.out" "$T/f66-lint2.out" || fail "F66.c: --claims-lint default path differs outside the repo folder"
+  # another project's docs/evidence.md must not be linted by default (script tree first)
+  mkdir -p "$T/f66-other/docs"; printf 'bogus marker [C99]\n' > "$T/f66-other/docs/evidence.md"
+  ( cd "$T/f66-other" && HANDOFF_STATE_DIR="$T/f66-state" python3 "$ROOT/hooks/precompact-handoff.py" --claims-lint ) >"$T/f66-lint4.out" 2>&1 || true
+  cmp -s "$T/f66-lint.out" "$T/f66-lint4.out" && ! grep -q "C99" "$T/f66-lint4.out" || fail "F66.c: --claims-lint in another project linted that project's docs/evidence.md"
   for n in 1 2 3 4 5 6 7 8; do grep -qF "[C$n]" "$ROOT/docs/evidence.md" || fail "F66.c: evidence.md lacks [C$n]"; done
   HANDOFF_STATE_DIR="$T/f66-state" python3 "$ROOT/hooks/precompact-handoff.py" --claims-lint "$ROOT/docs/evidence.md" >"$T/f66-lint3.out" 2>&1 || true
   cmp -s "$T/f66-lint.out" "$T/f66-lint3.out" || fail "F66.c: explicit path gives another result"

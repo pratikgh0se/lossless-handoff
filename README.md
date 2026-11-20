@@ -46,13 +46,13 @@ claude -p --model haiku --resume <session_id> "/compact"
 tail -n 3 ~/.local/state/claude-handoffs/health.jsonl
 ```
 
-To check the install without a model call, run `python3 ~/.claude/hooks/postcompact-inject.py --check`. It prints nothing when all is well, or one `HANDOFF CHECK:` line for each problem found.
-
 These commands make real model calls and use a small part of your quota. A new line with `"trigger": "manual"` means that the PreCompact hook fired. You can also run `bash tests/smoke.sh`. It uses a temporary HOME and does not touch your real settings.
+
+To check the install without a model call, run `python3 ~/.claude/hooks/postcompact-inject.py --check`. It prints nothing when all is well, or one `HANDOFF CHECK:` line for each problem found. On a new install it can print one line about `cleanupPeriodDays`. `./install.sh --keep-transcripts` sets the value.
 
 **Uninstall.** Run `./uninstall.sh`. Add `--purge` to also delete the saved install defaults. Handoff files, indexes and decisions lists stay. See [docs/install.md](docs/install.md#uninstall).
 
-**Use it.** Work as usual. After a compaction, ask "what exactly did I say about X?". Claude runs recall and quotes you. Try it yourself, from a project folder: `python3 ~/.claude/hooks/recall.py user --last 5`
+**Use it.** Work as usual. After a compaction, ask "what exactly did I say about X?". Claude runs recall and quotes you. Try it yourself, from a project folder: `python3 ~/.claude/hooks/recall.py user --last 5`. It prints nothing in a folder with no earlier chats.
 
 ## How it works
 
@@ -71,7 +71,7 @@ The parts, the events and the files are in [docs/architecture.md](docs/architect
 
 ## Evidence
 
-- **No scored benchmark result is published yet.** Two benchmarks are in this repository: [bench/continuity/README.md](bench/continuity/README.md) and [bench/oolong/README.md](bench/oolong/README.md). Both are code-graded. The full evaluation has not run. The one file in `bench/oolong/evidence/` is a 2-task pilot summary. It shows that the test harness works. It is not a result.
+- **No scored benchmark result for the handoff's main claim is published yet.** One OOLONG run is published ([bench/oolong/evidence/run-20261118T221353-summary.md](bench/oolong/evidence/run-20261118T221353-summary.md)): Lossless Handoff with llm_map tied plain Claude Code. In that run the main session never compacted, so it does not test the handoff. Two benchmarks are in this repository: [bench/continuity/README.md](bench/continuity/README.md) and [bench/oolong/README.md](bench/oolong/README.md). Both are code-graded. The full evaluation has not run. The pilot files in `bench/oolong/evidence/` are from a 2-task pilot. They show that the test harness works. They are not a result.
 - **Live mechanism checks.** The hooks check themselves on the author's machine: is a handoff there, does it reach the model, does recall return old messages word for word. These checks show that the mechanism works. They do not show that answers get better. Some of these checks currently fail. [docs/evidence.md](docs/evidence.md) lists each check, its number and the reason for each failure.
 - **One-off measurements.** The author ran a blind quiz (2026-11-14) and a cost estimate (2026-10-20). Models wrote and graded the quiz. Both come from one user and one machine. Read them as hints. The numbers are in [docs/evidence.md](docs/evidence.md).
 - The details, the limits of each test and the other reliability notes are in [docs/evidence.md](docs/evidence.md) and [docs/handoff-reliability.md](docs/handoff-reliability.md).
