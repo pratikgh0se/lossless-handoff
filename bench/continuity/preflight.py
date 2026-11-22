@@ -13,6 +13,7 @@ import cost, design4, gates, runner  # noqa: E402
 COST_CAP_USD = 5.0
 COST_RATIO_MAX = 1.3
 RUNAWAY_ARM_MAX = 0.05
+REFUSED_ARM_MAX = 0.10
 REANCHOR_TOKENS = 50000
 NL_ORACLE_MIN = 0.80      # non-literal probes: the oracle must answer at least this share of every type
 BIG_MIN_TOKENS = 250000
@@ -201,6 +202,16 @@ def check(rd, projects=None, mcp=True):
         if str(r.get("type", "")).startswith("L"):
             lv_rw.setdefault(r["type"], []).append(r)
     add("runaway forks per level (counts)", None, ", ".join("%s %d/%d" % ((lv,) + gates.runaway_rate(v)) for lv, v in sorted(lv_rw.items())) or "no design-4 rows")
+    # refused forks: a safety filter refused a probe fork (class refused, an outcome), at most 10% of the forks of each arm
+    rf_arm = {a_: gates.refused_rate([r for r in R.rows if r.get("arm") == a_]) for a_ in sorted({r.get("arm") for r in R.rows})}
+    rf_bad = {a_: v for a_, v in rf_arm.items() if v[1] and v[0] / float(v[1]) > REFUSED_ARM_MAX}
+    add("refused rate at most %d%% of the probe forks of each arm (a fork that a safety filter refused)" % int(100 * REFUSED_ARM_MAX),
+        None if not any(v[1] for v in rf_arm.values()) else not rf_bad, "above the limit: %s" % ({a_: "%d/%d" % v for a_, v in rf_bad.items()} or "none"))
+    lv_rf = {}
+    for r in R.rows:
+        if str(r.get("type", "")).startswith("L"):
+            lv_rf.setdefault(r["type"], []).append(r)
+    add("refused forks per level (counts)", None, ", ".join("%s %d/%d" % ((lv,) + gates.refused_rate(v)) for lv, v in sorted(lv_rf.items())) or "no design-4 rows")
     add("median probe output tokens", None, "no data" if not outs else "median %d, max %d (%d fork(s))" % (outs[len(outs) // 2], outs[-1], len(outs)))
     # 8. parse and grade
     # Parse policy (one threshold, gates.PARSE_ERROR_RATE_MAX, the same as the abort gate): a reply that cannot be read counts as wrong for every arm.

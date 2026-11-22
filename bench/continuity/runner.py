@@ -567,6 +567,11 @@ class Session:
                 self.save_failed(o, out, err_txt, kind, fork_of, attempt)       # a probe that hit the output cap: an outcome, not a failure; no retry
                 o["_runaway"] = True
                 return o
+            if o.get("is_error") and self.d4 and kind in ("fork", "z") and gates.failure_class(o.get("result")) == "safety_refusal":
+                self.save_failed(o, out, err_txt, kind, fork_of, attempt)       # a probe refused by a safety filter: an outcome (class refused), no retry
+                self.st["safety_refusals"] = self.st.get("safety_refusals", 0) + 1
+                o["_refused"] = True
+                return o
             if o.get("is_error") or p.returncode != 0:
                 refusal = gates.failure_class(o.get("result")) == "safety_refusal"
                 if refusal or attempt == 2:
@@ -635,7 +640,9 @@ class Session:
             o = self.call(prompt, "z", sid=z_sid, first=True)
         raw = o.get("result") if isinstance(o.get("result"), str) else ""
         fsid = o.get("session_id")
-        if self.d4 and o.get("_runaway"):
+        if self.d4 and o.get("_refused"):
+            graded = design4.refused_rows(items)          # a safety filter refused the fork: an outcome, left out of the accuracy (class refused)
+        elif self.d4 and o.get("_runaway"):
             graded = design4.runaway_rows(items)          # the fork hit the output cap: a probe outcome, every item is wrong (class runaway)
         else:
             graded = design4.grade_level(items, raw, script) if self.d4 else grade.grade(ptype, items, raw)
@@ -679,7 +686,7 @@ class Session:
                 "condition": self.cond, "phrasing": phrasing, "position": posmap.get(g["id"]), "attempt": st.get("restarts", 0), **view_fields,
                 "auto_recall_fired": fired, "auto_recall_hits": hits, "auto_recall_timed_out": timed_out,
                 **({k_: g[k_] for k_ in ("m1", "m2", "m3", "error_class", "lag", "alt_ok", "undo_last")} if self.d4 else {}),
-                **({"chunk": chunk[0], "runaway": bool(o.get("_runaway"))} if self.d4 else {})})
+                **({"chunk": chunk[0], "runaway": bool(o.get("_runaway")), "refused": bool(o.get("_refused"))} if self.d4 else {})})
         if self.view_of is not None:
             st.setdefault("first_fork_cost_usd", round(o["_delta"], 6))      # K: the cache-miss check of the preflight
         st["done_forks"].append(fork_key(ckpt, ptype, phrasing, None if chunk is None else chunk[0]))

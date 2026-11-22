@@ -28,7 +28,7 @@ import gen        # noqa: E402
 import grade      # noqa: E402
 
 DESIGN = 4
-GEN_VERSION = "litm4-5"
+GEN_VERSION = "litm4-6"
 POSITIONS = gen.POSITIONS
 LEVELS = {
     "L1": {"k": 2, "fam": 1, "rejects": 0, "undo": False, "scoped": 0, "chains": 3, "prefix": False},
@@ -42,7 +42,7 @@ PLANT_TURNS_PER_THIRD = 23
 FILL_TURNS_PER_THIRD = 12
 STMTS_PER_TURN = 4
 PHRASINGS = ("cued", "neutral", "nonliteral")
-ERROR_CLASSES = ("stale", "lure", "sibling", "other_chain", "abstain", "runaway", "novel", "unreadable")
+ERROR_CLASSES = ("stale", "lure", "sibling", "other_chain", "abstain", "runaway", "refused", "novel", "unreadable")
 MAX_ITEMS_PER_PROBE = 4      # a probe fork answers at most this many chains (12 items made a fork think for 8,000 tokens, 4 times, in preflight4 runs 1 and 2)
 FORM = '{"answers":[{"id":1,"current":"...","previous":"...","replaced":["..."]}]}'
 FIELDS = ("In each answer, `current` is the value in force now. `previous` is the value that `current` took the place of; "
@@ -498,6 +498,36 @@ def n_probe_forks(levels=D4_LEVELS, phrasings=3):
     return phrasings * sum(-(-LEVELS[lv]["chains"] * 3 // MAX_ITEMS_PER_PROBE) for lv in levels)
 
 
+REFUSED_CELL_MAX = 0.05      # a calibration cell with more refused probe forks than this share cannot be picked
+
+
+def refused_rows(items):
+    """The grade of a probe fork that an API safety filter refused (a probe outcome, not a session failure). The items are wrong in the
+    sensitivity reading and left out of the accuracy denominator in the main tables (class refused)."""
+    return [dict(g, error_class="refused") for g in runaway_rows(items)]
+
+
+def fork_key4(r):
+    return (r.get("seed"), r.get("arm"), r.get("condition"), r.get("type"), r.get("phrasing"), r.get("chunk"), r.get("fork_sid") if r.get("chunk") is None else None)
+
+
+def refused_forks(rows, level=None, arm=None, phrasing=None):
+    """(refused forks, forks, refused items, items) of the no-compaction design-4 rows. A fork is one (seed, arm, type, phrasing, chunk)."""
+    forks, items, bad_items = {}, 0, 0
+    for r in rows:
+        if "refused" not in r and "runaway" not in r:
+            continue
+        if (level is not None and r.get("type") != level) or (arm is not None and r.get("arm") != arm) or (phrasing is not None and r.get("phrasing") != phrasing):
+            continue
+        if r.get("condition", "nocompact") != "nocompact":
+            continue
+        k = fork_key4(r)
+        forks[k] = bool(r.get("refused")) or forks.get(k, False)
+        items += 1
+        bad_items += 1 if r.get("refused") else 0
+    return sum(1 for v in forks.values() if v), len(forks), bad_items, items
+
+
 def runaway_rows(items):
     """The grade of a probe fork that hit the output cap (a probe outcome, not a session failure): every item is wrong, class runaway."""
     return [{"id": it["id"], "parse_ok": False, "parsed": None, "abstained": False, "m1": False, "m2": False, "m3": False, "correct": False,
@@ -762,6 +792,8 @@ def decide(rows, levels=D4_LEVELS, l5_done=False):
     allowed only when the alt rate (the share of correct answers that needed the other reading of `previous`) is below 10%.
     If A is above 80% in every cell: add L5 (its own run, replaces all cells); if still above 80%: Sonnet has no loss here.
     Returns {"decision": pick | add_l5 | no_loss | none, "pick", "seed2", "abstain", "alt", "phrasing_rates", "notes"}."""
+    all_rows = rows
+    rows = [r for r in rows if not r.get("refused")]        # refused items are left out of every accuracy denominator
     cells = calibration_cells(rows, levels)
     notes, pick, extra = [], None, {}
     a_vals = [(k, c["A"]) for k, c in cells.items() if c["A"][1]]
@@ -788,11 +820,17 @@ def decide(rows, levels=D4_LEVELS, l5_done=False):
                 notes.append("%s %s: A is outside %d%% to %d%% for a phrasing (%s): not picked." % (m.upper(), lv, int(100 * H1_LOW), int(100 * H1_HIGH), ", ".join(ph_bad)))
             if in_band and o_ok and z_ok and not ph_bad and not alt_ok:
                 notes.append("%s %s: the alt rate is %.0f%% (limit %d%%): the answers depend on the reading of `previous`: not picked." % (m.upper(), lv, 100 * alt[0], int(100 * ALT_MAX)))
-            if in_band and o_ok and z_ok and not ph_bad and alt_ok and pick is None:
+            rf = refused_forks(all_rows, lv)
+            ref_ok = not rf[1] or rf[0] / float(rf[1]) <= REFUSED_CELL_MAX
+            if in_band and o_ok and z_ok and not ph_bad and alt_ok and not ref_ok:
+                notes.append("%s %s: %d of %d probe forks (%.0f%%) were refused by a safety filter (limit %d%%): not picked." % (
+                    m.upper(), lv, rf[0], rf[1], 100.0 * rf[0] / rf[1], int(100 * REFUSED_CELL_MAX)))
+            if in_band and o_ok and z_ok and not ph_bad and alt_ok and ref_ok and pick is None:
                 pick = (m, lv)
                 extra = {"abstain": {arm: abstain_rate(rows, arm, lv) for arm in ("A", "O", "Z")}, "alt": alt,
-                         "phrasing_rates": {p: v for p, v in ph.items() if v[1]}}
-    base = {"abstain": None, "alt": None, "phrasing_rates": None}
+                         "phrasing_rates": {p: v for p, v in ph.items() if v[1]},
+                         "refused": {arm: refused_forks(all_rows, lv, arm) for arm in ("A", "O", "Z")}}
+    base = {"abstain": None, "alt": None, "phrasing_rates": None, "refused": None, "refused_total": refused_forks(all_rows)}
     if pick:
         return dict(base, decision="pick", pick=pick, seed2=seed2, notes=notes, **extra)
     if a_vals and all(v[0] > BAND_HIGH for _k, v in a_vals):
@@ -810,10 +848,14 @@ def describe_decision(d):
         lines.append("pick: %s %s (commit it in thresholds.json litm.design4.pick before the full run)" % (d["pick"][0].upper(), d["pick"][1]))
         ab = d.get("abstain") or {}
         lines.append("abstain rate in the picked cell: " + ", ".join("%s %s" % (arm, "%.1f%% (n=%d)" % (100 * v[0], v[1]) if v and v[1] else "no rows") for arm, v in sorted(ab.items())))
+        lines.append("refused probe forks in the picked cell (forks refused / forks, items refused / items): " + ", ".join(
+            "%s %d/%d, %d/%d" % ((arm,) + tuple(v)) for arm, v in sorted((d.get("refused") or {}).items())))
         lines.append("alt rate (correct answers that needed the other reading of `previous`): %.1f%% (n=%d)" % (100 * d["alt"][0], d["alt"][1]))
         lines.append("arm A for each phrasing in the picked cell: " + ", ".join("%s %.0f%% (n=%d)" % (p, 100 * v[0], v[1]) for p, v in d["phrasing_rates"].items()))
     if d["decision"] == "add_l5":
         lines.append("command: %s" % L5_COMMAND)
+    rt = d.get("refused_total") or (0, 0, 0, 0)
+    lines.append("refused probe forks in all cells: %d of %d forks (items left out of the accuracy: %d of %d)" % rt)
     lines.append("seed 2 needed (a cell of arm A is between %d%% and %d%%): %s" % (int(100 * SEED2_LOW), int(100 * SEED2_HIGH), "yes" if d["seed2"] else "no"))
     lines += ["note: " + n for n in d["notes"]]
     return "\n".join(lines)

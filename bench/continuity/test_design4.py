@@ -937,7 +937,7 @@ class NeutralLexicon(unittest.TestCase):
     def test_zero_overlap_and_unique_checks_still_hold(self):
         for sd in range(1, 101):
             self.assertEqual(d4.check_script(d4.build_litm4(sd)), [], sd)
-        self.assertEqual(d4.GEN_VERSION, "litm4-5")
+        self.assertEqual(d4.GEN_VERSION, "litm4-6")
 
     def test_a_safety_refusal_is_its_own_failure_class(self):
         msg = ("is_error: API Error: Haiku 5.5 can't help with this. Start a new session to continue.\n\nLearn more: https://www.anthropic.com/legal/aup\n\n"
@@ -1266,6 +1266,111 @@ class SmallProbes(unittest.TestCase):
         self.assertIn("Table D4-6", "\n".join(md))
         self.assertTrue(out["runaway"]["K|L2"][0] > 0)
         self.assertEqual(out["runaway"]["A|L2"][0], 0)
+
+
+class RefusedProbes(unittest.TestCase):
+    """A probe fork (or a Z call) that a safety filter refuses is an outcome with class refused, not a session failure."""
+    REFUSAL = {"result": "API Error: Haiku 5.5 can't help with this [bio]", "session_id": "f7", "total_cost_usd": 0.1, "usage": {"output_tokens": 4512}, "is_error": True}
+
+    def test_a_refused_fork_is_an_outcome_left_out_of_the_accuracy(self):
+        d = tempfile.mkdtemp()
+        try:
+            ctx, ss, prompts = SmallProbes().make_session(d, lambda n, p: {"result": "x", "session_id": None, "_refused": n == 2})
+            ss.probe("L2", 0, fork_of="p1", phrasing="neutral")
+            rows = [json.loads(l) for l in open(os.path.join(ctx.dir, "results.jsonl"))]
+            rf = [r for r in rows if r["refused"]]
+            self.assertEqual({r["chunk"] for r in rf}, {2})
+            self.assertEqual(len(rf), 4)
+            self.assertTrue(all(r["error_class"] == "refused" and r["m1"] is False and r["runaway"] is False and r["abstained"] is False for r in rf))
+            self.assertNotEqual(ss.st.get("status"), "failed")
+            self.assertEqual(ss.st["done_forks"][-1], "0:L2:neutral")
+        finally:
+            shutil.rmtree(d)
+
+    def test_call_returns_a_refused_probe_and_raises_for_a_main_turn(self):
+        for kind in ("fork", "z"):
+            d, ctx, ss, seen, err = ProbeCapAndFailures().run_call_d4([self.REFUSAL], kind)
+            try:
+                self.assertIsNone(err, kind)
+                self.assertEqual(len(seen), 1)                                       # no retry
+                self.assertEqual(len([f for f in os.listdir(os.path.join(ctx.dir, "failed")) if f.endswith(".json")]), 1)   # the evidence is kept
+                self.assertEqual(ss.st.get("safety_refusals"), 1)
+            finally:
+                shutil.rmtree(d)
+        d, ctx, ss, seen, err = ProbeCapAndFailures().run_call_d4([self.REFUSAL], "turn")
+        try:
+            self.assertIsInstance(err, runner.SafetyRefusal)                          # a refused main-session turn stays a failure
+        finally:
+            shutil.rmtree(d)
+
+    def rows(self, seed, n, bad, arm="A", level="L2", ph="cued"):
+        return [{"seed": seed, "arm": arm, "condition": "nocompact", "type": level, "phrasing": ph, "chunk": i, "fork_sid": "f%d-%d" % (seed, i), "item": 1,
+                 "runaway": False, "refused": i < bad, "m1": False, "m2": False, "m3": False} for i in range(n)]
+
+    def test_refused_rate_and_the_abort_gate(self):
+        self.assertEqual(gates.refused_rate(self.rows(1, 36, 3)), (3, 36))
+        self.assertEqual(gates.runaway_rate(self.rows(1, 36, 3)), (0, 36))
+        self.assertFalse([w for w in gates.abort_reasons([], self.rows(1, 36, 1), None, [1]) if "refused" in w])         # 2.8%
+        self.assertTrue([w for w in gates.abort_reasons([], self.rows(1, 36, 2), None, [1]) if "refused rate 6%" in w and "seed 1" in w])   # 5.6%
+        self.assertFalse([w for w in gates.abort_reasons([], self.rows(2, 36, 9), None, [1]) if "refused" in w])
+
+    def test_refused_is_not_a_failed_session(self):
+        self.assertEqual(gates.failure_class("is_error: API Error: Haiku 5.5 can't help with this."), "safety_refusal")
+        self.assertFalse(gates.session_reasons({"a": "done", "b": "done"}, {}, {}))
+        self.assertIn("refused", d4.ERROR_CLASSES)
+
+    def test_pick_rule_leaves_refused_items_out_and_blocks_a_cell_above_5_percent(self):
+        pr = PickRule()
+        base = pr.rows({"L1": 0.9, "L2": 0.9, "L3": 0.7, "L4": 0.9})
+        for i, r in enumerate(base):
+            r.update(seed=1, chunk=i, fork_sid="x", runaway=False, refused=False)        # one fork for each row
+        self.assertEqual(d4.decide(base)["pick"], ("m1", "L3"))
+        # 20 refused A items at L3 are left out of the denominator: A stays at 70%, the cell is still in the band
+        ref = [dict(r, refused=True, m1=False, m2=False, m3=False, error_class="refused", chunk=100 + i, fork_sid="r%d" % i) for i, r in enumerate(
+            [r for r in base if r["arm"] == "A" and r["type"] == "L3"][:1])]
+        d = d4.decide(base + ref)
+        self.assertEqual(d["pick"], ("m1", "L3"))          # 1 refused fork of 21 (4.8%): allowed
+        self.assertEqual(d["refused"]["A"][:2], (1, 21))
+        ref2 = [dict(ref[0], chunk=200 + i, fork_sid="q%d" % i) for i in range(3)]
+        d = d4.decide(base + ref + ref2)                   # 4 refused forks of 24 (17%)
+        self.assertNotEqual(d["pick"], ("m1", "L3"))
+        self.assertTrue([n for n in d["notes"] if "refused by a safety filter" in n and "L3" in n], d["notes"])
+        self.assertIn("refused probe forks in all cells", d4.describe_decision(d))
+
+    def test_report_tables_and_the_sensitivity_reading(self):
+        th = json.load(open(os.path.join(HERE, "thresholds.json")))
+        rows = ReportAndPreflight().synth_rows()
+        for i, r in enumerate(rows):
+            r["chunk"], r["fork_sid"], r["runaway"], r["refused"] = i % 3, "f%d" % (i // 3), False, False
+        md, out = litm4.section4(rows, {}, th, 100)
+        self.assertNotIn("sensitivity", out)                                          # nothing refused: no sensitivity table
+        self.assertIn("Table D4-7", "\n".join(md))
+        rows2 = [dict(r) for r in rows]
+        for r in rows2:
+            if r["arm"] == "A" and r["type"] == "L2" and r["chunk"] == 0:
+                r.update(refused=True, error_class="refused", m1=False, m2=False, m3=False)
+        md2, out2 = litm4.section4(rows2, {}, th, 100)
+        text = "\n".join(md2)
+        self.assertIn("Table D4-4s", text)
+        self.assertTrue(out2["refused"]["A|L2"][0] > 0)
+        self.assertEqual(out2["refused"]["K|L2"][0], 0)
+        self.assertEqual(len(out2["sensitivity"]), len(out2["hypotheses"]))
+        self.assertTrue("The two readings" in text)
+        self.assertIsInstance(out2["readings_disagree"], list)
+
+    def test_preflight_lines(self):
+        import preflight
+        d = tempfile.mkdtemp()
+        try:
+            rd, projects = test_litm.make_pf_run(d, d4=True)
+            names = [r[0] for r in preflight.check(rd, projects, mcp=False)]
+            self.assertTrue(any(n.startswith("refused rate at most 10%") for n in names), names)
+            self.assertIn("refused forks per level (counts)", names)
+        finally:
+            shutil.rmtree(d)
+        self.assertEqual(preflight.REFUSED_ARM_MAX, 0.10)
+        self.assertEqual(gates.REFUSED_SEED_MAX, 0.05)
+        self.assertEqual(d4.REFUSED_CELL_MAX, 0.05)
 
 
 if __name__ == "__main__":
