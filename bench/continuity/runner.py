@@ -1297,7 +1297,8 @@ def check_gates(ctx):
         last[s["name"]] = s
     costs = {n: st.get("cost", 0.0) for n, st in ctx.state["sessions"].items() if n != "big" and int(n[1:].split("-")[0]) in fin}
     return gates.abort_reasons(list(last.values()), read_jsonl(os.path.join(ctx.dir, "results.jsonl")), cost.estimate_per_seed(ctx.cfg), fin, costs,
-                               expected=expected_forks(ctx.cfg, fin))
+                               expected=expected_forks(ctx.cfg, fin),
+                               haiku_l12=str(ctx.cfg.get("kind", "")).startswith("preflight") and ctx.cfg.get("probe_design", 1) >= 4)
 
 
 def run_unit(ctx, seed, arm, cond="compact"):

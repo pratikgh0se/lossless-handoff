@@ -978,7 +978,7 @@ class Preflight(unittest.TestCase):
     def test_each_line_fails_when_its_fact_is_wrong(self):
         cases = [("no_compaction", "a compaction happened"), ("no_receipt", "receipt was written"), ("no_inject", "was injected after"),
                  ("no_decisions", "decisions list or the rules"), ("nc_cleared", "no-compaction sessions"), ("nc_small", "no-compaction sessions"),
-                 ("r_missing_fire", "arm R:"), ("r_neutral_fire", "arm R:"), ("k_no_reanchor", "reanchor health row"), ("k_no_rule", "recall-rule line is in the injected text"),
+                 ("r_missing_fire", "arm R:"), ("r_neutral_fire", "arm R:"), ("k_no_reanchor", "reanchor hook ran"), ("k_no_rule", "recall-rule line is in the injected text"),
                  ("k_no_mcp_call", "MCP check turn"), ("no_used_lookup", "used_lookup is set"),
                  ("bad_parse", "parsed and graded"), ("not_graded", "parsed and graded"), ("o_nl_low", "nonliteral oracle"), ("no_nonliteral", "row count"), ("no_arm_Z", "arms A, Z and O produced rows"), ("hook_changed", "hooks of each arm"),
                  ("foreign", "no instructions record"), ("memory", "auto-memory"), ("env_leak", "environment of"), ("selfcheck_fail", "deny-rule selfcheck"),

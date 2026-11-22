@@ -551,6 +551,49 @@ class PreflightHaikuScope(ReportAndPreflight):
         self.assertEqual(grade.request_stats([{"type": "user", "message": {"content": "x"}}], "PROBE-q"), (0, None))
 
 
+class PreflightRun5Fixes(unittest.TestCase):
+    def rows(self):
+        out = []
+        for lv, n_rw, n_rf in (("L1", 0, 0), ("L2", 0, 0), ("L3", 6, 4), ("L4", 6, 4)):
+            for i in range(6):
+                out.append({"seed": 1, "arm": "A", "type": lv, "phrasing": "cued", "condition": "nocompact", "chunk": i, "fork_sid": "f%s%d" % (lv, i),
+                            "runaway": i < n_rw, "refused": (n_rw <= i < n_rw + n_rf), "parse_ok": not (i < n_rw), "m1": True})
+        return out
+
+    def test_abort_gate_counts_l1_l2_only_for_a_haiku_preflight(self):
+        import gates
+        rows = self.rows()
+        sess = [{"name": "s1-A", "seed": 1, "arm": "A", "status": "done", "condition": "nocompact"}]
+        why_all = gates.abort_reasons(sess, rows, None, {1})
+        self.assertTrue([w for w in why_all if "runaway rate" in w])
+        why_h = gates.abort_reasons(sess, rows, None, {1}, haiku_l12=True)
+        self.assertFalse([w for w in why_h if "runaway rate" in w or "refused rate" in w or "parse error" in w], why_h)
+
+    def test_runner_passes_the_haiku_scope_only_for_preflight4(self):
+        import inspect
+        src = inspect.getsource(runner)
+        self.assertIn('haiku_l12=str(ctx.cfg.get("kind", "")).startswith("preflight") and ctx.cfg.get("probe_design", 1) >= 4', src)
+
+    def test_runaway_and_refused_lines_are_info_with_counts(self):
+        import preflight
+        d = tempfile.mkdtemp()
+        try:
+            rd, projects = test_litm.make_pf_run(d, d4=True)
+            res = preflight.check(rd, projects, mcp=False)
+            for start in ("runaway forks of each arm at L1 and L2", "refused forks of each arm"):
+                line = [x for x in res if x[0].startswith(start)]
+                self.assertEqual([x[1] for x in line], ["INFO"], start)
+                self.assertIn("counts:", line[0][2])
+        finally:
+            shutil.rmtree(d)
+
+    def test_reanchor_line_source_accepts_an_anchor_without_a_row(self):
+        import inspect, preflight
+        src = inspect.getsource(preflight.check)
+        self.assertIn("has_anchor", src)
+        self.assertIn("reanchor-", src)
+
+
 class AuditFixes(unittest.TestCase):
     """Fixes of the audit of PR #35 (findings 1 to 9). Offline, from the script generator and the code only."""
     SEEDS = range(1000, 1200)
@@ -1289,7 +1332,7 @@ class SmallProbes(unittest.TestCase):
         try:
             rd, projects = test_litm.make_pf_run(d, d4=True)
             names = [r[0] for r in preflight.check(rd, projects, mcp=False)]
-            self.assertTrue(any(n.startswith("runaway rate at most 5%") for n in names), names)
+            self.assertTrue(any(n.startswith("runaway forks of each arm at L1 and L2") for n in names), names)
             self.assertIn("runaway forks per level (counts)", names)
         finally:
             shutil.rmtree(d)
@@ -1400,7 +1443,7 @@ class RefusedProbes(unittest.TestCase):
         try:
             rd, projects = test_litm.make_pf_run(d, d4=True)
             names = [r[0] for r in preflight.check(rd, projects, mcp=False)]
-            self.assertTrue(any(n.startswith("refused rate at most 10%") for n in names), names)
+            self.assertTrue(any(n.startswith("refused forks of each arm") for n in names), names)
             self.assertIn("refused forks per level (counts)", names)
         finally:
             shutil.rmtree(d)
