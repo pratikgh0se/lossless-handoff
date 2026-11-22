@@ -51,6 +51,20 @@ D3_FORK_OUT = 800                # reply tokens of a probe fork (JSON of 6 answe
 D3_SLACK = 1.2                   # retries, hook time, reads of tool calls: 20% on top
 # Arm factors on a design-3 unit. Assumed: R adds hook output of 3 snippets per cued prompt. K adds MCP calls, recall rules and reanchor text.
 ARM_FACTOR = {"A": 1.0, "B": 1.0, "R": 1.05, "K": 1.2}
+
+# ---- CALIBRATION from the first real preflight run (20261122T110446-preflight, Haiku, 1 seed, 30000 window, $2.92 in total).
+# Each ratio is real cost divided by the estimate of this file before the run. Real costs come from calls.jsonl (delta_usd) of that run.
+#   no-compaction main session (75 turns):   real $0.0921, estimate $0.6435  -> 0.143  (real replies were about 12 tokens, not 150)
+#   forks of arm A (15 forks):               real $0.1092, estimate $0.2340  -> 0.467  (B: $0.1104, R: $0.1151, so B x1.01, R x1.05 of A)
+#   forks of arm K (16 forks, 85 turns):     real $0.4279 = 3.92 x the forks of arm A (MCP search turns and one cache miss of 91k tokens)
+#   compaction unit (A, B, R, K):            real $0.033, $0.031, $0.033, $0.036 against $0.102 to $0.123 -> about 0.31
+#   Z compaction 0.15, Z design 3 0.26, O design 3 (turns plus forks, $0.024) 0.20
+#   big Sonnet turn: 467,684 tokens cost $1.7979; the standard-price estimate is $1.6894, so the price ratio is 1.06 (no long-context premium seen)
+# The ratios come from Haiku at a 90k context and one seed. They are applied to the Sonnet 300k model as a first calibration: keep the +-40% band.
+CAL_NC_MAIN, CAL_NC_FORK, K_FORK_VS_A = 0.143, 0.467, 3.92
+CAL_PF_COMPACT, CAL_PF_Z_COMPACT, CAL_PF_Z_NC, CAL_PF_O_NC = 0.31, 0.15, 0.26, 0.20
+BIG_PRICE_RATIO = 1.06       # real cost / standard price of the big Sonnet turn (assumed list prices above)
+ARM_FACTOR["K"] = K_FORK_VS_A     # measured: replaces the assumed 1.2 (affects the forks of arm K in the no-compaction condition only)
 # Design 3 compaction condition: the design-2 compaction unit, with the K factor above.
 
 
@@ -60,12 +74,12 @@ def d3_nc_main():
     read = D3_TURNS * avg_ctx * PRICE_CACHE_READ / 1e6
     write = D3_CONTEXT_END * PRICE_CACHE_WRITE / 1e6
     out = D3_TURNS * D3_OUT_PER_TURN * PRICE_OUTPUT / 1e6
-    return (read + write + out) * D3_SLACK
+    return (read + write + out) * D3_SLACK * CAL_NC_MAIN
 
 
 def d3_nc_forks():
     """USD of the probe forks of ONE arm on the finished no-compaction session (15 forks, each reads the full context from cache)."""
-    return D3_FORKS * (D3_CONTEXT_END * PRICE_CACHE_READ / 1e6 + D3_FORK_OUT * PRICE_OUTPUT / 1e6) * D3_SLACK
+    return D3_FORKS * (D3_CONTEXT_END * PRICE_CACHE_READ / 1e6 + D3_FORK_OUT * PRICE_OUTPUT / 1e6) * D3_SLACK * CAL_NC_FORK
 
 
 def d3_nc_unit():
@@ -73,7 +87,7 @@ def d3_nc_unit():
     return d3_nc_main() + d3_nc_forks()
 
 
-D3_CONTROL_USD = {"Z": 0.15, "O": 0.30}      # no-compaction controls of design 3: Z = amnesia forks of an empty session, O = short oracle (about 35 small turns)
+D3_CONTROL_USD = {"Z": round(0.15 * CAL_PF_Z_NC, 3), "O": round(0.30 * CAL_PF_O_NC, 3)}      # no-compaction controls of design 3: Z = amnesia forks of an empty session, O = short oracle (about 35 small turns)
 
 
 def estimate3(seeds, arms, n, conditions, phrasings=("cued", "neutral", "nonliteral"), skip=(), n_by_arm=None):
@@ -87,7 +101,7 @@ def estimate3(seeds, arms, n, conditions, phrasings=("cued", "neutral", "nonlite
             f = ARM_FACTOR[a]
             if "compact" in conditions and (a, "compact") not in skip:
                 nn = (n_by_arm or {}).get(a, n)
-                u = (BASE + PER_COMPACTION * max(nn)) * mult * (1.2 if a == "K" else 1.0)
+                u = (BASE + PER_COMPACTION * max(nn)) * mult * (1.2 if a == "K" else 1.0)      # compaction units: Wave numbers, not calibrated
                 per_seed += u
                 lines.append("arm %s, with compactions (N up to %d): $%.2f per seed" % (a, max(nn), u))
             if "nocompact" in conditions and (a, "nocompact") not in skip:
@@ -181,14 +195,14 @@ def render(name, cfg):
 # Assumed (not measured) Haiku-class prices, USD per million tokens. The compaction unit comes from the measured smoke run of the first
 # harness test (Haiku, 30000 window: $0.146 for 2 arms, N=1, 2 types, so about $0.073 a unit) with a 1.4 factor for the neutral forks and hooks.
 HAIKU_CACHE_READ, HAIKU_CACHE_WRITE, HAIKU_OUTPUT = 0.10, 1.25, 5.0
-PF_COMPACT_UNIT = 0.073 * 1.4
-PF_Z_COMPACT = 0.03
+PF_COMPACT_UNIT = 0.073 * 1.4 * CAL_PF_COMPACT      # calibrated with the first preflight run
+PF_Z_COMPACT = 0.03 * CAL_PF_Z_COMPACT
 PF_ARM_FACTOR = {"A": 1.0, "B": 1.0, "R": 1.05, "K": 1.2, "O": 1.0}
 PF_NC_TURNS, PF_NC_CTX0, PF_NC_CTX1, PF_FORKS, PF_SLACK = 75, 8000, 90000, 15, 1.2    # design-3 mini session: 75 turns, context 8k to 90k, 15 forks per arm
-PF_O3, PF_Z3, PF_SELFCHECK, PF_MCP = 0.12, 0.08, 0.15, 0.02
+PF_O3, PF_Z3, PF_SELFCHECK, PF_MCP = 0.12 * CAL_PF_O_NC, 0.08 * CAL_PF_Z_NC, 0.15, 0.02
 PF_BIG_TOKENS = 300000
 PF_BIG_LOW = PF_BIG_TOKENS * PRICE_CACHE_WRITE / 1e6 * 1.05      # one cold-cache Sonnet turn with a 300k paste, standard price
-PF_BIG_HIGH = 2 * PF_BIG_LOW                                   # if the price above 200k tokens is double (assumed worst case)
+PF_BIG_HIGH = PF_BIG_TOKENS * PRICE_CACHE_WRITE / 1e6 * BIG_PRICE_RATIO     # measured price ratio 1.06 (no long-context premium); the cap of the turn is $2.50
 
 
 def pf_nc_main():
@@ -229,7 +243,7 @@ def estimate_preflight(arms=("A", "B", "R", "K", "Z", "O"), conditions=("compact
                                                     + (" and the forks of arms A,B,R,K" if a == "A" else "")}[c], u))
     sc, big_lo, big_hi = PF_SELFCHECK, PF_BIG_LOW, PF_BIG_HIGH
     lines.append("deny-rule selfcheck (arms A and B, Haiku): $%.2f" % sc)
-    lines.append("one Sonnet turn with a 300k-token paste: $%.2f at the standard price, $%.2f if the price above 200k tokens is double" % (big_lo, big_hi))
+    lines.append("one Sonnet turn with a 300k-token paste: $%.2f at the standard price, $%.2f at the measured price ratio %.2f (cap $2.50)" % (big_lo, big_hi, BIG_PRICE_RATIO))
     return total + sc + big_hi, lines
 
 
@@ -278,8 +292,8 @@ ASSUMPTIONS3 = [
     "  - %.0f%% slack for retries and hook time; arm factors on a no-compaction unit: %s" % (100 * (D3_SLACK - 1), ", ".join("%s x%.2f" % kv for kv in ARM_FACTOR.items())),
     "  - a unit with compactions is the design-2 model (Wave 1 and Wave 2 numbers, probe forks 30% of a unit), arm K x1.2",
     "  - if the cache has expired between turns (more than 5 minutes), the cache-read cost becomes a cache-write cost: the cost can be 5 times higher for those turns",
-    "  - preflight: assumed Haiku-class prices (cache read %.2f, write %.2f, output %.2f); the design-3 mini session has %d turns with context %d to %d tokens and %d forks for each of arms A, B, R, K; %.0f%% slack; a compaction unit is $%.3f (measured smoke run x1.4); the Sonnet 300k turn is a cold-cache write at %.2f USD per million tokens (x2 as the worst case if the price above 200k tokens doubles)" % (
-        HAIKU_CACHE_READ, HAIKU_CACHE_WRITE, HAIKU_OUTPUT, PF_NC_TURNS, PF_NC_CTX0, PF_NC_CTX1, PF_FORKS, 100 * (PF_SLACK - 1), PF_COMPACT_UNIT, PRICE_CACHE_WRITE),
+    "  - preflight: assumed Haiku-class prices (cache read %.2f, write %.2f, output %.2f); the design-3 mini session has %d turns with context %d to %d tokens and %d forks for each of arms A, B, R, K; %.0f%% slack; a compaction unit is $%.3f (measured smoke run x1.4); the Sonnet 300k turn is a cold-cache write at %.2f USD per million tokens (measured price ratio %.2f; calibration in the header of this file)" % (
+        HAIKU_CACHE_READ, HAIKU_CACHE_WRITE, HAIKU_OUTPUT, PF_NC_TURNS, PF_NC_CTX0, PF_NC_CTX1, PF_FORKS, 100 * (PF_SLACK - 1), PF_COMPACT_UNIT, PRICE_CACHE_WRITE, BIG_PRICE_RATIO),
     "  - design-3 no-compaction condition: the main session runs ONCE for each seed (arm A), then arms A, B, R, K fork it (15 forks each); controls Z %.2f and O %.2f USD per seed" % (D3_CONTROL_USD["Z"], D3_CONTROL_USD["O"]),
     "  - power: base accuracy 80% at start and end, seed-level spread 10 points, normal interval, seeds are the resampling unit",
 ]

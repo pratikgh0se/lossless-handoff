@@ -40,6 +40,14 @@ ENV_ALLOW = ("PATH", "HOME", "USER", "LOGNAME", "SHELL", "TMPDIR", "LANG", "LC_A
 # Auto-memory off for every arm. Source: the installed binary (claude 2.1.326) holds the environment variable name CLAUDE_CODE_DISABLE_AUTO_MEMORY
 # and the settings key autoMemoryEnabled. We set both (the env var in the overrides, the key in the project settings).
 MEMORY_ENV = "CLAUDE_CODE_DISABLE_AUTO_MEMORY"
+# Every variable the runner itself sets for a call (Session overrides). The preflight env check allows exactly these plus ENV_ALLOW.
+OVERRIDE_ENV = ("CLAUDE_CODE_AUTO_COMPACT_WINDOW", "RECALL_EMBED_URL", MEMORY_ENV, "DISABLE_AUTOUPDATER", "DISABLE_AUTO_COMPACT",
+                "HANDOFF_STATE_DIR", "HANDOFF_SUMMARY_MODEL", "HANDOFF_HOOKS_HOME")
+# Big preflight turn (Sonnet). Measured in the first preflight run: 961706 characters of filler gave 467684 tokens in total, of which about
+# O_OVERHEAD_TOKENS were system prompt and tools, so the paste is about 0.46 tokens per character (random words). Target: 300k tokens in total.
+BIG_TOKENS_PER_CHAR = 0.46
+BIG_TARGET_TOKENS = 300000
+BIG_CAP_USD = 2.5        # cap of this one turn (a cold-cache write of 300k tokens costs about $1.2; the measured turn of 468k tokens cost $1.80)
 K_FORK_CAP_USD = 3.0     # per-call cap of a fork in arm K. MCP tools change the tool list, so the first K fork may miss the cache and write about 300k tokens ($1.1 to $2.3), above the normal cap of $1.50
 NC3_FORK_ARMS = ("B", "R", "K")  # design 3, no compaction: these arms fork the session of arm A with their own settings
 MAX_NO_BOUNDARY = 10        # filler turns in a row with no new compaction: the session is invalid
@@ -552,7 +560,8 @@ class Session:
         if self.view_of is not None and fsid:       # B, R and K fork the session of arm A: did the SessionStart hooks of the arm run at the start of the fork?
             blob = json.dumps(frecs)
             view_fields = {"fork_injected": any(m in blob for m in ("Project decisions for this repo", "Project rules for this repo", "searchable word for word")),
-                           "fork_rule_line": "recall rule: before you state an earlier number" in blob}
+                           "fork_rule_line": "recall rule: before you state an earlier number" in blob,
+                           "fork_rule_source": gates.rule_line_sources(frecs, "recall rule: before you state an earlier number")}
         kinds = []
         if (cfg.get("probe_design", 1) >= 3 or cfg.get("search_used")) and fsid:      # design 3 and preflight: a search by recall.py, by the MCP tool, or by auto-recall counts for every arm
             used, kinds = grade.search_used(frecs, marker)
@@ -849,6 +858,11 @@ def mcp_check(ctx, v):
     ctx.save()
 
 
+def big_docs(chars_per_doc):
+    """Number of filler documents so that the big turn has about BIG_TARGET_TOKENS tokens in total (measured tokens per character)."""
+    return int(math.ceil((BIG_TARGET_TOKENS - O_OVERHEAD_TOKENS) / (chars_per_doc * BIG_TOKENS_PER_CHAR)))
+
+
 def run_big_check(ctx):
     """Preflight: one Sonnet turn with a paste of about 300k tokens (the size of the real session). It records the real cost, whether the price
     per token is above the standard price (long-context price above 200k tokens), and whether one cold-cache call stays under the call cap."""
@@ -859,17 +873,16 @@ def run_big_check(ctx):
     ss = Session(ctx, "big", seed, "A", ctx.sess("big"), "nocompact")
     ss.prepare()
     lines, _ = nc3_plan(NC3_WINDOW)
-    per_doc = lines * TOKENS_PER_FILE / 330.0
-    docs = int(math.ceil(300000 / per_doc))
     script = ctx.script3(seed)
+    docs = big_docs(len(gen.filler_doc_prompt(script, 0, lines)[0]))
     prompt = "\n\n".join(gen.filler_doc_prompt(script, k, lines)[0] for k in range(docs)) + "\n\nReply with only the word OK."
-    o = ss.call(prompt, "turn", sid=ss.st["sid"], first=True, model=cfg.get("big_model", "sonnet"), cap=cfg.get("big_cap_usd", 3.0))
+    o = ss.call(prompt, "turn", sid=ss.st["sid"], first=True, model=cfg.get("big_model", "sonnet"), cap=cfg.get("big_cap_usd", BIG_CAP_USD))
     u = o.get("usage") if isinstance(o.get("usage"), dict) else {}
     i_, cr, cw, out = (u.get(k) or 0 for k in ("input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens", "output_tokens"))
     std = (i_ * 3.0 + cr * 0.30 + cw * 3.75 + out * 15.0) / 1e6          # standard Sonnet list price (assumed)
     ctx.state["big"] = {"cost_usd": round(o["_delta"], 4), "tokens": i_ + cr + cw, "standard_price_usd": round(std, 4),
-                        "price_ratio": round(o["_delta"] / std, 2) if std else None, "call_cap_usd": cfg["call_cap_usd"],
-                        "over_call_cap": o["_delta"] > cfg["call_cap_usd"], "docs": docs, "chars": len(prompt)}
+                        "price_ratio": round(o["_delta"] / std, 2) if std else None, "call_cap_usd": cfg.get("big_cap_usd", BIG_CAP_USD),
+                        "over_call_cap": o["_delta"] > cfg.get("big_cap_usd", BIG_CAP_USD), "docs": docs, "chars": len(prompt)}
     ctx.save()
 
 
@@ -1299,11 +1312,11 @@ def build_cfg(kind, a):
         "o_window": o_window, "oracle_turns": o_turns or a.oracle_turns or 3, "o_files_per_turn": o_fpt,
         "o_estimate_tokens": o_est,
         "conditions": conds, "phrasings": phr, "probe_design": k.get("probe_design", 1), "search_used": bool(k.get("search_used")), "gates": True,
-        "mcp_check": bool(k.get("mcp_check")), "selfcheck": bool(k.get("selfcheck")), "big_check": bool(k.get("big_check")), "big_model": "sonnet", "big_cap_usd": 3.0,
+        "mcp_check": bool(k.get("mcp_check")), "selfcheck": bool(k.get("selfcheck")), "big_check": bool(k.get("big_check")), "big_model": "sonnet", "big_cap_usd": BIG_CAP_USD,
         "n_by_arm": k.get("n_by_arm", {}),
         "live_recall_sha256": sha256_file(os.path.join(HOME, ".claude", "hooks", "recall.py")),      # the injected text still names ~/.claude/hooks/recall.py
         "pinned_recall_sha256": sha256_file(os.path.join(lh, "hooks", "recall.py")),
-        "env_allowlist": list(ENV_ALLOW), "auto_memory": "off (%s=1 and autoMemoryEnabled=false)" % MEMORY_ENV,
+        "env_allowlist": list(ENV_ALLOW), "env_overrides": list(OVERRIDE_ENV), "auto_memory": "off (%s=1 and autoMemoryEnabled=false)" % MEMORY_ENV,
         "nc_window": nc_window, "nc_lines": nc_lines, "nc_estimate_tokens": nc_est,
         "work_base": work_base(a.work_base), "call_cap_usd": a.call_cap_usd or 1.50,
         "turn_timeout_s": a.turn_timeout_s or (420 if "haiku" in (a.model or k["model"]) else 900),

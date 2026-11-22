@@ -335,6 +335,11 @@ def probe_prompt(ptype, script, marker, ckpt=None, items=None, phrasing="cued", 
     return head + body + "\nReply with JSON only, in this form: " + form
 
 
+# Type E has two fields. In the first preflight run (2026-11-22) the oracle arm answered 6 of 6 E items with the right code and "proceed": null,
+# because "the main field" was not clear. The note names the main field. It is the same for every arm.
+E_NOTE = " For error codes the main field is reason_code. Always set proceed to true or false."
+
+
 # ---- position and phrasing (probe design 2, added with the lost-in-the-middle design; see README.md)
 # These helpers read a script. They never change a script, so every old seed gives the same script and the same old probe text.
 FILL_PER_EPOCH = 6                       # nominal filler turns after the plant turns of each epoch
@@ -404,7 +409,7 @@ def neutral_probe_prompt(ptype, script, marker, items=None):
     """Neutral probe text: the same JSON form and the same grader as the cued probe, a different question."""
     if items is None:
         items = script["items"][ptype]
-    head = "[%s] Do not guess. If you do not know a value, set the main field to null.\n" % marker
+    head = "[%s] Do not guess. If you do not know a value, set the main field to null.%s\n" % (marker, E_NOTE if ptype == "E" else "")
     body = "\n".join("%d. %s" % (x["id"], neutral_question(ptype, x)) for x in items)
     form = {"X": '{"answers":[{"id":1,"current":"...","replaced":["..."]}]}',
             "E": '{"answers":[{"id":1,"proceed":true,"reason_code":"..."}]}'}.get(ptype, '{"answers":[{"id":1,"answer":"..."}]}')
@@ -446,17 +451,24 @@ def content_words(text, drop=()):
     return {w for w in re.findall(r"[a-z0-9]+", text.lower()) if w not in STOPWORDS and w not in gone}
 
 
+# Word list of design 3 (told in each bridge turn). First preflight run: the old questions said "lane" for a queue and "the exact string stored"
+# for a settings value, and arms A and O answered null or gave the topic name. The bridge now explains each word, so the question is not ambiguous.
+L3_S_WORD = {"deploy command": "ship step", "output path": "landing folder", "export env line": "shell switch"}
+L3_WORD_LIST = ('Word list for this project: `holding line` means a queue. `ship step` means a deploy command. `landing folder` means an output path. '
+                '`shell switch` means an export env line.')
+
+
 def nonliteral_question(ptype, item):
     """A task that needs the fact but shares no content word with the plant sentence. It names the topic by an alias that only a bridge turn explains."""
     a = item["alias"]
     if ptype == "R":
         return "For %s, give the closing marker that each change record needs to carry." % a
     if ptype == "D":
-        return "For %s, write the name of the lane that jobs are sent to." % a
+        return "For %s, which holding line was picked? Write its name." % a
     if ptype == "X":
-        return "For %s, write the lane that jobs go to today, and list every lane that was dropped on the way." % a
+        return "For %s, write the holding line that is active now, and list every holding line that was set aside." % a
     if ptype == "S":
-        return "For %s, write the exact string that was stored for it, character for character." % a
+        return "For %s, write the %s, character for character." % (a, L3_S_WORD[item["kind"]])
     if ptype == "E":
         return ("For %s, a teammate wants to run the same idea again. Give the go or no-go in proceed. In reason_code, copy the exact "
                 "fault identifier it hit, character for character." % a)
@@ -467,7 +479,7 @@ def nonliteral_probe_prompt(ptype, script, marker, items=None):
     """Same head, JSON form and grader as the neutral probe. Only the question differs."""
     if items is None:
         items = script["items"][ptype]
-    head = "[%s] Do not guess. If you do not know a value, set the main field to null.\n" % marker
+    head = "[%s] Do not guess. If you do not know a value, set the main field to null.%s\n" % (marker, E_NOTE if ptype == "E" else "")
     body = "\n".join("%d. %s" % (x["id"], nonliteral_question(ptype, x)) for x in items)
     form = {"X": '{"answers":[{"id":1,"current":"...","replaced":["..."]}]}',
             "E": '{"answers":[{"id":1,"proceed":true,"reason_code":"..."}]}'}.get(ptype, '{"answers":[{"id":1,"answer":"..."}]}')
@@ -531,7 +543,7 @@ def build_litm3(seed):
         facts = third_facts[th][:]
         g.r.shuffle(facts)
         bridge = " ".join("In my notes, %s is the one called `%s`." % (it["alias"], it["topic"]) for _t, it in sorted(facts, key=lambda x: x[1]["alias"]))
-        plan.append({"kind": "bridge", "third": th, "prompt": "%s Naming notes for this project, for reference: %s Reply only `ok`." % (prose3(pr, 300, 500), bridge)})
+        plan.append({"kind": "bridge", "third": th, "prompt": "%s Naming notes for this project, for reference: %s %s Reply only `ok`." % (prose3(pr, 300, 500), bridge, L3_WORD_LIST)})
         for _t, it in facts:
             plan.append({"kind": "fact", "third": th, "type": _t, "id": it["id"],
                          "prompt": "%s Note for this project: %s Reply only `ok`." % (prose3(pr, 300, 500), it["plant"])})

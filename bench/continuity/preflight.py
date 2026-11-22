@@ -13,7 +13,9 @@ import cost, gates, runner  # noqa: E402
 COST_CAP_USD = 5.0
 COST_RATIO_MAX = 1.3
 REANCHOR_TOKENS = 50000
+NL_ORACLE_MIN = 0.80      # non-literal probes: the oracle must answer at least this share of every type
 BIG_MIN_TOKENS = 250000
+BIG_MAX_TOKENS = 350000     # the paste is sized for 280k to 320k tokens; above this the turn costs more than planned
 DECISION_MARKERS = ("decisions list", "Project decisions for this repo", "Project rules for this repo")
 RECALL_RULE = "recall rule: before you state an earlier number"
 
@@ -78,8 +80,7 @@ class Run:
 
 
 def allowed_env_names(cfg):
-    return set(cfg.get("env_allowlist", runner.ENV_ALLOW)) | {"CLAUDE_CODE_AUTO_COMPACT_WINDOW", "RECALL_EMBED_URL", runner.MEMORY_ENV, "DISABLE_AUTO_COMPACT",
-                                                              "HANDOFF_STATE_DIR", "HANDOFF_SUMMARY_MODEL", "HANDOFF_HOOKS_HOME"}
+    return set(cfg.get("env_allowlist", runner.ENV_ALLOW)) | set(runner.OVERRIDE_ENV)      # one list: every override the runner sets
 
 
 def check(rd, projects=None, mcp=True):
@@ -160,8 +161,12 @@ def check(rd, projects=None, mcp=True):
         add("arm K: the recall-rule line is in the injected text (compaction session)", bool([x for x in k_sess if cond(x) == "compact"]) and not rule_bad, "missing in: %s" % (rule_bad or "none"))
         k_rows = [r for r in R.rows if r["arm"] == "K" and cond_row(r) == "nocompact"]
         k_bad = [r for r in k_rows if not r.get("fork_rule_line")]
+        srcs = sorted({x for r in k_rows for x in (r.get("fork_rule_source") or [])})
+        via = {"mcp_instructions": "MCP server instructions, not a hook", "hook": "a hook"}
+        where = " and ".join(via.get(x, x) for x in srcs) or "not recorded in this run"
         add("arm K: the recall-rule line is in the transcript of every no-compaction fork (conditional, decides the label of K; not a FAIL)", None,
-            "%d fork row(s); without the line: %d; claim: %s" % (len(k_rows), len(k_bad), "K = R + recall rule line + MCP tool" if (k_rows and not k_bad) else "K = R + MCP tool"))
+            "%d fork row(s); without the line: %d; source: %s; claim: %s" % (len(k_rows), len(k_bad), where,
+                "K = R + recall rule line (from %s) + MCP tool" % where if (k_rows and not k_bad) else "K = R + MCP tool"))
         kf = [(s["name"], s.get("first_fork_cost_usd")) for s in k_sess if s.get("view_of_arm_a")]
         add("arm K: cost of the first fork (a cache miss writes about 300k tokens; per-call cap of K forks $%.2f)" % runner.K_FORK_CAP_USD, None,
             "first K fork $%s; other arms: %s" % (kf[0][1] if kf else "n/a", [(s["name"], s.get("first_fork_cost_usd")) for s in views if s["arm"] != "K"]))
@@ -173,7 +178,23 @@ def check(rd, projects=None, mcp=True):
     add("used_lookup is set for every probe (every arm)", bool(R.rows) and not no_ul, "%d probe row(s); without it: %d" % (len(R.rows), len(no_ul)))
     # 8. parse and grade
     bad_p = [r for r in R.rows if not r.get("parse_ok") or not isinstance(r.get("correct"), bool)]
-    add("every probe answer parsed and graded (no grader error)", bool(R.rows) and not bad_p, "%d probe row(s); not parsed or not graded: %d" % (len(R.rows), len(bad_p)))
+    # A row with a readable entry that the grader rejects is a model format deviation (reported with arm, phrasing, type, condition).
+    # A row with no readable entry, or a correct that is not true or false, is a harness or grader error: a FAIL.
+    unread = [r for r in bad_p if not isinstance(r.get("parsed"), dict) or not isinstance(r.get("correct"), bool)]
+    dev = [r for r in bad_p if r not in unread]
+    kinds = sorted({(r["arm"], r.get("phrasing"), r.get("type"), r.get("condition")) for r in dev})
+    add("every probe answer parsed and graded (no grader error)", bool(R.rows) and not unread, "%d probe row(s); unreadable or not graded: %d; model format deviations (entry read, field rejected): %d %s" % (
+        len(R.rows), len(unread), len(dev), kinds))
+    # 8b. the non-literal probes must be answerable: the short oracle (arm O, no compaction) gets at least 80% on every type
+    o_nl = [r for r in R.rows if r["arm"] == "O" and r.get("phrasing") == "nonliteral" and cond_row(r) == "nocompact"]
+    by_t = {}
+    for r in o_nl:
+        c = by_t.setdefault(r["type"], [0, 0])
+        c[0] += 1 if r.get("correct") is True else 0
+        c[1] += 1
+    low = {t: "%d/%d" % tuple(c) for t, c in sorted(by_t.items()) if c[0] < NL_ORACLE_MIN * c[1]}
+    add("nonliteral oracle (arm O) accuracy at least %d%% per type" % int(NL_ORACLE_MIN * 100), bool(by_t) and not low,
+        "per type: %s%s" % ({t: "%d/%d" % tuple(c) for t, c in sorted(by_t.items())}, "; below the limit: %s" % low if low else ""))
     # 9. row counts: no probe class is missing (for example non-literal)
     miss_f = gates.missing_forks(runner.expected_forks(R.cfg), R.rows, R.cfg["seeds"])
     add("row count: every expected probe fork (arm x phrasing x condition x type) has rows", not miss_f, "none missing" if not miss_f else gates.describe_missing(miss_f))
@@ -202,7 +223,15 @@ def check(rd, projects=None, mcp=True):
         "sha256 at start %s; now %s%s; pinned copy %s" % ((R.cfg.get("live_recall_sha256") or "none")[:12], (live or "none")[:12],
                                                           " (CHANGED during the run)" if R.cfg.get("live_recall_sha256") != live else "", (R.cfg.get("pinned_recall_sha256") or "none")[:12]))
     # 12. machine state
-    fi = [(s["name"], s.get("foreign_instructions")) for s in R.sessions if s.get("foreign_instructions")]
+    fi = []
+    for s in R.sessions:
+        t = R.transcript(s)
+        if t and os.path.exists(t):      # read the transcript again: a run made before the record shape was known stored wrong values
+            f = gates.foreign_instructions(jl(t), os.path.join(R.cfg["work_base"], R.stem(s, "A" if s.get("view_of_arm_a") else None)))
+        else:
+            f = s.get("foreign_instructions")
+        if f:
+            fi.append((s["name"], f))
     add("no instructions record loaded from outside the project folder of the session", not fi and any("foreign_instructions" in s for s in R.sessions), "found: %s" % (fi or "none"))
     mf = [(s["name"], len(s.get("memory_files") or [])) for s in R.sessions if s.get("memory_files")]
     add("auto-memory: no file in the memory folder of any session", not mf and any("memory_files" in s for s in R.sessions), "files in: %s" % (mf or "none"))
@@ -217,7 +246,7 @@ def check(rd, projects=None, mcp=True):
         add("one Sonnet turn with a 300k-token paste (size, price, call cap)", False, "not run")
     else:
         add("one Sonnet turn with a 300k-token paste: reached the size and stayed under the call cap of $%.2f" % big["call_cap_usd"],
-            big["tokens"] >= BIG_MIN_TOKENS and not big["over_call_cap"],
+            BIG_MIN_TOKENS <= big["tokens"] <= BIG_MAX_TOKENS and not big["over_call_cap"],
             "tokens %d, cost $%.2f (standard price $%.2f), price ratio %s%s" % (big["tokens"], big["cost_usd"], big["standard_price_usd"], big["price_ratio"],
                                                                            "; the price per token is above the standard price (long-context price)" if (big["price_ratio"] or 0) > 1.3 else ""))
     # 14. cost
