@@ -1551,7 +1551,7 @@ def cmd_run(a):
         print("budget_usd: %s%s" % (cfg["budget_usd"], " (default: %.1f x the estimate of the whole run; the run pauses there, exit code 3)" % gates.DEFAULT_BUDGET_FACTOR if cfg.get("budget_default") else ""))
         c_ = {"levels": cfg.get("levels"), "seeds": len(cfg["seeds"]), "arms": cfg["arms"], "n": cfg["n"], "conditions": cfg["conditions"], "phrasings": cfg["phrasings"], "n_by_arm": cfg.get("n_by_arm"), "design": cfg["probe_design"]}
         if cfg["kind"].startswith("preflight"):
-            tot, ln = cost.estimate_preflight(cfg["arms"], cfg["conditions"])
+            tot, ln = cost.estimate_preflight(cfg["arms"], cfg["conditions"], 4 if cfg.get("probe_design", 1) >= 4 else 3)
             print("ESTIMATE FOR THIS RUN (Haiku, assumptions in cost.py):\n" + "\n".join("  " + x for x in ln) + "\n  total about $%.2f (target: under $3)" % tot)
             return 0
         print((cost.render3 if cfg["probe_design"] >= 3 else cost.render)("ESTIMATE FOR THIS RUN", c_)[1])
@@ -1574,6 +1574,15 @@ def cmd_resume(a):
     cfg = json.load(open(os.path.join(run_dir, "config.json"), encoding="utf-8"))
     if a.budget_usd is not None:
         cfg["budget_usd"] = a.budget_usd
+        cfg["budget_default"] = False
+    elif cfg.get("budget_default"):
+        # the default budget is 1.5 x the estimate of the run: take the estimate of the code that resumes, not the one frozen in config.json
+        est = cost.estimate_per_seed(cfg)
+        if est:
+            new = round(gates.DEFAULT_BUDGET_FACTOR * est * (1 if cfg["kind"].startswith("preflight") else len(cfg["seeds"])), 2)
+            if new != cfg.get("budget_usd"):
+                print("budget_usd refreshed from the current estimate: %s -> %s (default budget; pass --budget-usd to set it)" % (cfg.get("budget_usd"), new))
+                cfg["budget_usd"] = new
     if a.jobs:
         cfg["jobs"] = a.jobs
     if getattr(a, "ignore_gates", False):

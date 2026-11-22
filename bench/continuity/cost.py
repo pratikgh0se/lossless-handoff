@@ -247,6 +247,20 @@ PF_BIG_LOW = PF_BIG_TOKENS * PRICE_CACHE_WRITE / 1e6 * 1.05      # one cold-cach
 PF_BIG_HIGH = PF_BIG_TOKENS * PRICE_CACHE_WRITE / 1e6 * BIG_PRICE_RATIO     # measured price ratio 1.06 (no long-context premium); the cap of the turn is $2.50
 
 
+# ---- preflight4 (design 4, Haiku): figures of the real run 20261122T162409-preflight4 (calls.jsonl, USD, 1 seed). A-nc: 105 turns $0.0694 and 36 forks of arm A
+# $0.4203; O-nc: 69 turns $0.0297 and 36 forks $0.3160 ($0.3457); Z-nc: 36 calls $0.0466; O with a compaction: $0.0954; the big turn $0.0365 (it was a small paste then).
+# The design-3 figures were 5 to 20 times too low for O-nc and Z-nc, and the per-session gate stopped the run on O-nc.
+PF4_SLACK = 1.15
+PF4_A_TURNS, PF4_A_FORK_ALL, PF4_O_NC, PF4_Z_NC, PF4_O_COMPACT = 0.0694, 0.4203, 0.3457, 0.0466, 0.0954
+PF4_FORKS = 36               # probe forks of one arm in a design-4 no-compaction session (4 levels x 3 phrasings x 3 chunks)
+
+
+def pf4_nc_unit_parts(arms=("A", "B", "R", "K", "Z", "O")):
+    """(turns USD of the main session of arm A, USD of the forks of arm A, scale of the forks of the arms that fork it) for design 4."""
+    scale = sum(PF_ARM_FACTOR[x] for x in ("A", "B", "R", "K") if x in arms)
+    return PF4_A_TURNS * PF4_SLACK, PF4_A_FORK_ALL * PF4_SLACK, scale
+
+
 def pf_nc_main():
     read = PF_NC_TURNS * (PF_NC_CTX0 + PF_NC_CTX1) / 2 * HAIKU_CACHE_READ / 1e6
     write = PF_NC_CTX1 * HAIKU_CACHE_WRITE / 1e6
@@ -258,9 +272,22 @@ def pf_nc_forks():
     return PF_FORKS * (PF_NC_CTX1 * HAIKU_CACHE_READ / 1e6 + 800 * HAIKU_OUTPUT / 1e6) * PF_SLACK
 
 
-def preflight_unit(arm, cond, arms=("A", "B", "R", "K", "Z", "O")):
-    """USD of one preflight unit. The no-compaction unit of arm A includes the forks of arms A, B, R and K (and the MCP check turn of K)."""
+def preflight_unit(arm, cond, arms=("A", "B", "R", "K", "Z", "O"), design=3):
+    """USD of one preflight unit. The no-compaction unit of arm A includes the forks of arms A, B, R and K (and the MCP check turn of K).
+    design 4: the figures of the real preflight4 run (cheap Haiku units with 36 forks each)."""
     f = PF_ARM_FACTOR.get(arm, 1.0)
+    if design >= 4:
+        if cond == "nocompact":
+            if arm == "Z":
+                return PF4_Z_NC * PF4_SLACK
+            if arm == "O":
+                return PF4_O_NC * PF4_SLACK
+            if arm == "A":
+                turns, forks, scale = pf4_nc_unit_parts(arms)
+                return turns + forks * scale + (PF_MCP if "K" in arms else 0)
+            return 0.0
+        if arm == "O":
+            return PF4_O_COMPACT * PF4_SLACK
     if arm == "Z":
         return PF_Z_COMPACT if cond == "compact" else PF_Z3
     if cond == "compact":
@@ -272,16 +299,16 @@ def preflight_unit(arm, cond, arms=("A", "B", "R", "K", "Z", "O")):
     return 0.0
 
 
-def estimate_preflight(arms=("A", "B", "R", "K", "Z", "O"), conditions=("compact", "nocompact")):
+def estimate_preflight(arms=("A", "B", "R", "K", "Z", "O"), conditions=("compact", "nocompact"), design=3):
     """(total USD with the high price of the big turn, lines). Lines show the parts."""
     lines, total = [], 0.0
     for a in arms:
         for c in conditions:
             if c == "nocompact" and a in ("B", "R", "K"):
                 continue            # forks inside the unit of arm A
-            u = preflight_unit(a, c, arms)
+            u = preflight_unit(a, c, arms, design)
             total += u
-            lines.append("arm %s, %s: $%.2f" % (a, {"compact": "with a compaction (N=1, types R,X)", "nocompact": "design-3 mini session"
+            lines.append("arm %s, %s: $%.2f" % (a, {"compact": "with a compaction (N=1, types R,X)", "nocompact": "design-%d mini session" % (4 if design >= 4 else 3)
                                                     + (" and the forks of arms A,B,R,K" if a == "A" else "")}[c], u))
     sc, big_lo, big_hi = PF_SELFCHECK, PF_BIG_LOW, PF_BIG_HIGH
     lines.append("deny-rule selfcheck (arms A and B, Haiku): $%.2f" % sc)
@@ -294,7 +321,7 @@ def estimate_per_seed(cfg):
     kind = cfg.get("kind", "")
     arms, conds = cfg["arms"], cfg.get("conditions", ["compact"])
     if kind.startswith("preflight"):
-        return estimate_preflight(arms, conds)[0]
+        return estimate_preflight(arms, conds, 4 if cfg.get("probe_design", 1) >= 4 else 3)[0]
     if kind == "slice":
         return None
     if cfg.get("probe_design", 1) >= 3:
@@ -309,7 +336,7 @@ def unit_estimate(cfg, arm, cond):
         return None
     arms = cfg["arms"]
     if kind.startswith("preflight"):
-        return preflight_unit(arm, cond, arms)
+        return preflight_unit(arm, cond, arms, 4 if cfg.get("probe_design", 1) >= 4 else 3)
     if cfg.get("probe_design", 1) >= 3:
         dz = cfg["probe_design"]
         if arm == "A" and cond == "nocompact":        # the unit holds the forks of arms B, R and K
