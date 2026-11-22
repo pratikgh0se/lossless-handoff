@@ -187,24 +187,32 @@ def section(rows, sessions, th, draws, helpers=None):
     md.append("")
 
     # ---- search rate (probe design 3 records used_lookup for every probe of every arm)
-    md.append("### Table L5: search rate by arm, phrasing and position (share of probe items whose fork searched: recall.py call, MCP call or auto-recall injection)\n")
-    md.append("| Arm | Condition | Phrasing | start | middle | end |")
-    md.append("|---|---|---|---|---|---|")
-    t5 = {}
-    for a in arms:
-        for cond in ("compact", "nocompact"):
-            for phr in ("cued", "neutral", "nonliteral"):
-                f0 = base(a, cond, phr)
-                if a in ("Z", "O") or not any(f0(r) and "used_lookup" in r for r in cells.rows):
-                    continue
-                row = []
-                for p in POS:
-                    cs, ts = cells.vec(lambda r, p=p, f0=f0: f0(r) and r.get("position") == p, val=lambda r: bool(r.get("used_lookup")))
-                    row.append(fmt_cell(sum(cs), sum(ts), boot.one(cs, ts) if sum(ts) else (None, None)))
-                    t5["%s/%s/%s/%s" % (a, cond, phr, p)] = [sum(cs), sum(ts)]
-                md.append("| %s | %s | %s | %s |" % (NAMES[a], cond, phr, " | ".join(row)))
-    out["tables"]["search_rate"] = t5
-    md.append("")
+    t5, t5m, t5i = {}, {}, {}
+    for title, key, val, store, need_kinds in (
+            ("Table L5 model_search (H6 uses this): share of probe items whose fork searched by its own choice (recall.py call or an MCP tool call). "
+             "A row of an old run without search_kinds counts as `either`", "model_search", model_search_val, t5m, False),
+            ("Table L5 injected: share of probe items whose fork got an auto-recall injection in the probe turn (rows of old runs have no kinds: not shown)",
+             "injected", injected_val, t5i, True),
+            ("Table L5 either (the old column `searched`: recall.py call, MCP call or auto-recall injection)", "either", either_val, t5, False)):
+        md.append("### %s\n" % title)
+        md.append("| Arm | Condition | Phrasing | start | middle | end |")
+        md.append("|---|---|---|---|---|---|")
+        for a in arms:
+            for cond in ("compact", "nocompact"):
+                for phr in ("cued", "neutral", "nonliteral"):
+                    f0 = base(a, cond, phr)
+                    if a in ("Z", "O") or not any(f0(r) and ("used_lookup" in r) and (has_kinds(r) or not need_kinds) for r in cells.rows):
+                        continue
+                    row = []
+                    for p in POS:
+                        cs, ts = cells.vec(lambda r, p=p, f0=f0: f0(r) and r.get("position") == p and (has_kinds(r) or not need_kinds), val=val)
+                        row.append(fmt_cell(sum(cs), sum(ts), boot.one(cs, ts) if sum(ts) else (None, None)))
+                        store["%s/%s/%s/%s" % (a, cond, phr, p)] = [sum(cs), sum(ts)]
+                    md.append("| %s | %s | %s | %s |" % (NAMES[a], cond, phr, " | ".join(row)))
+        md.append("")
+    out["tables"]["search_rate"] = t5            # kept: the old key, now the `either` reading
+    out["tables"]["search_rate_model"] = t5m
+    out["tables"]["search_rate_injected"] = t5i
 
     # ---- null control
     md.append("### Table L6: NULL CONTROL, B minus A with no compaction (cued)\n")
@@ -331,10 +339,10 @@ def section(rows, sessions, th, draws, helpers=None):
         klabel = "K = R + MCP tool (the recall rule line was not in the K forks)"
     out["k_label"] = klabel
     # H6 and H7: do the recall levers (arm K) make the model search, and does it help? No compaction, neutral probes, K against B.
-    vk = cells.vec(lambda r: base("K", "nocompact", "neutral")(r), val=lambda r: bool(r.get("used_lookup")))
-    vb = cells.vec(lambda r: base("B", "nocompact", "neutral")(r), val=lambda r: bool(r.get("used_lookup")))
+    vk = cells.vec(lambda r: base("K", "nocompact", "neutral")(r), val=model_search_val)
+    vb = cells.vec(lambda r: base("B", "nocompact", "neutral")(r), val=model_search_val)
     d6 = boot.diff(*vk, *vb)
-    hyp("H6 search rate: K minus B, no compaction, neutral probes (%s; reanchor cannot fire here)" % klabel, "> 0 pts and CI lower bound > 0 (%s)" % lt.get("h6_note", "stop rule: if K does not search more than B in the pilot, stop and remove the levers"),
+    hyp("H6 search rate (model_search): K minus B, no compaction, neutral probes (%s; reanchor cannot fire here)" % klabel, "> 0 pts and CI lower bound > 0 (%s)" % lt.get("h6_note", "stop rule: if K does not search more than B in the pilot, stop and remove the levers"),
         fmt_diff(d6), "NO DATA" if d6[0] is None else ("SUPPORTED" if d6[0] > 0 and d6[1] > 0 else "NOT SUPPORTED"))
     d7 = boot.diff(*cells.vec(lambda r: base("K", "nocompact", "neutral")(r)), *cells.vec(lambda r: base("B", "nocompact", "neutral")(r)))
     p7 = lt.get("h7_k_minus_b_neutral_accuracy_min_points", 5)
@@ -357,6 +365,31 @@ def section(rows, sessions, th, draws, helpers=None):
                 md.append("- %s: %s" % (s_["name"], "; ".join(s_["nc_reasons"])))
         out["nc_invalid"] = [s["name"] for s in bad]
     return md, out
+
+
+MODEL_KINDS = ("bash", "mcp")
+
+
+def has_kinds(r):
+    return isinstance(r.get("search_kinds"), list)
+
+
+def injected_val(r):
+    """F76: auto-recall fired in the probe turn (an injection). None-like False for an old row without search_kinds (use has_kinds to tell)."""
+    return has_kinds(r) and "injection" in r["search_kinds"]
+
+
+def model_search_val(r):
+    """F76: the model searched itself (recall.py by Bash, or an mcp__lossless-recall__ call). H6 uses this. An old row without search_kinds has only
+    used_lookup (any of the three), so it falls back to used_lookup: the old reading, named `either`."""
+    if has_kinds(r):
+        return any(k in MODEL_KINDS for k in r["search_kinds"])
+    return bool(r.get("used_lookup"))
+
+
+def either_val(r):
+    """F76: the old column `searched`: the model searched or auto-recall fired (used_lookup)."""
+    return bool(r.get("used_lookup"))
 
 
 def mean_ends_diff(boot, mid, start, end):
