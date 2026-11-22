@@ -42,7 +42,20 @@ ENV_ALLOW = ("PATH", "HOME", "USER", "LOGNAME", "SHELL", "TMPDIR", "LANG", "LC_A
 MEMORY_ENV = "CLAUDE_CODE_DISABLE_AUTO_MEMORY"
 # Every variable the runner itself sets for a call (Session overrides). The preflight env check allows exactly these plus ENV_ALLOW.
 OVERRIDE_ENV = ("CLAUDE_CODE_AUTO_COMPACT_WINDOW", "RECALL_EMBED_URL", MEMORY_ENV, "DISABLE_AUTOUPDATER", "DISABLE_AUTO_COMPACT",
-                "HANDOFF_STATE_DIR", "HANDOFF_SUMMARY_MODEL", "HANDOFF_HOOKS_HOME")
+                "HANDOFF_STATE_DIR", "HANDOFF_SUMMARY_MODEL", "HANDOFF_HOOKS_HOME", "CLAUDE_CODE_MAX_OUTPUT_TOKENS")
+# Output cap of a probe fork. A probe answers in short JSON; the run 20261122T142851-preflight4 had a fork that wrote about 41,600 tokens and was
+# refused by a safety filter. CLAUDE_CODE_MAX_OUTPUT_TOKENS is read by claude 2.1.326 (found in the installed binary: the value is checked
+# against the model limit, `effective`). It is set for probe forks and for the arm Z probe only, never for the turns of a main session.
+PROBE_MAX_OUTPUT_ENV = "CLAUDE_CODE_MAX_OUTPUT_TOKENS"
+PROBE_MAX_OUTPUT_TOKENS = 8000
+FAILED_REPLY_CHARS = 4000
+
+
+def redact(text):
+    """Mask keys, bearer tokens and the home folder in a text that is kept in the run folder."""
+    t = re.sub(r"sk-[A-Za-z0-9_\-]{16,}", "sk-REDACTED", str(text))
+    t = re.sub(r"(?i)(bearer\s+)[A-Za-z0-9._\-]{16,}", r"\1REDACTED", t)
+    return t.replace(HOME, "~") if HOME else t
 # Big preflight turn (Sonnet). Measured in the first preflight run: 961706 characters of filler gave 467684 tokens in total, of which about
 # O_OVERHEAD_TOKENS were system prompt and tools, so the paste is about 0.46 tokens per character (random words). Target: 300k tokens in total.
 BIG_TOKENS_PER_CHAR = 0.46
@@ -112,6 +125,10 @@ class Fatal(Exception):
 
 class CallError(Exception):
     pass
+
+
+class SafetyRefusal(CallError):
+    """The API refused the content (a safety filter): not retried, class safety_refusal."""
 
 
 def slug(path):
@@ -431,10 +448,31 @@ class Session:
         return os.path.join(PROJECTS, slug(self.proj), sid + ".jsonl")
 
     # -- the call
-    def env(self):
+    def env(self, probe=False):
         env = {k: os.environ[k] for k in ENV_ALLOW if k in os.environ}
         env.update(self.overrides)
+        if probe:
+            env[PROBE_MAX_OUTPUT_ENV] = str(PROBE_MAX_OUTPUT_TOKENS)       # probe forks only, not the turns of a main session
         return env
+
+    def save_failed(self, o, out, err_txt, kind, fork_of, attempt):
+        """A failed call: keep the transcript and the reply text (redacted, cut) in failed/ of the run folder, to diagnose the next failure."""
+        try:
+            d = os.path.join(self.ctx.dir, "failed")
+            os.makedirs(d, exist_ok=True)
+            o = o if isinstance(o, dict) else {}
+            text = o.get("result") if isinstance(o.get("result"), str) else (out or "")
+            u = o.get("usage") if isinstance(o.get("usage"), dict) else {}
+            base = "%s-%s-a%d-%s" % (self.name, kind, attempt, time.strftime("%H%M%S"))
+            write_json(os.path.join(d, base + ".json"), {
+                "ts": now_iso(), "name": self.name, "kind": kind, "sid": o.get("session_id"), "fork_of": fork_of, "attempt": attempt,
+                "failure_class": gates.failure_class(text), "output_tokens": u.get("output_tokens"), "reply": redact(text)[:FAILED_REPLY_CHARS],
+                "reply_chars": len(text), "stderr": redact(str(err_txt))[:1000]})
+            sid = o.get("session_id")
+            if sid and os.path.isfile(self.transcript(sid)):
+                shutil.copyfile(self.transcript(sid), os.path.join(d, base + ".jsonl"))
+        except Exception:         # keeping the evidence must never hide the real failure
+            pass
 
     def recorded(self, sid, prompt):
         """(prompt already in the transcript of the session, text of its last assistant record). For an idempotent retry."""
@@ -479,7 +517,7 @@ class Session:
                     "--output-format", "json", "--permission-mode", "acceptEdits",
                     "--allowedTools", self.allowed_tools(), "--max-budget-usd", "%.2f" % (cap or (K_FORK_CAP_USD if (self.arm == "K" and fork_of) else cfg["call_cap_usd"]))] + ([] if big else [prompt])
             t0 = time.time()
-            p = subprocess.Popen(cmd, cwd=self.proj, env=self.env(), stdin=subprocess.PIPE if big else subprocess.DEVNULL, stdout=subprocess.PIPE,
+            p = subprocess.Popen(cmd, cwd=self.proj, env=self.env(probe=bool(fork_of) or kind == "z"), stdin=subprocess.PIPE if big else subprocess.DEVNULL, stdout=subprocess.PIPE,
                                  stderr=subprocess.PIPE, text=True, start_new_session=True)
             try:
                 out, err = p.communicate(input=prompt if big else None, timeout=cfg["turn_timeout_s"])
@@ -502,6 +540,7 @@ class Session:
                 if "not logged in" in low or "please run /login" in low:
                     raise Fatal("claude is not logged in")
                 if attempt == 2:
+                    self.save_failed(None, out, err_txt, kind, fork_of, attempt)
                     raise CallError("bad output: " + (out + err_txt)[:200].replace("\n", " "))
                 continue
             if o.get("is_error") and "not logged in" in str(o.get("result")).lower():
@@ -525,6 +564,12 @@ class Session:
                                        "is_error": o.get("is_error")})
             o["_delta"] = delta
             if o.get("is_error") or p.returncode != 0:
+                refusal = gates.failure_class(o.get("result")) == "safety_refusal"
+                if refusal or attempt == 2:
+                    self.save_failed(o, out, err_txt, kind, fork_of, attempt)
+                if refusal:         # a safety refusal is not retried: the retry gets the same refusal and costs the same
+                    self.st["safety_refusals"] = self.st.get("safety_refusals", 0) + 1
+                    raise SafetyRefusal("is_error: " + str(o.get("result"))[:200])
                 if attempt == 2:
                     raise CallError("is_error: " + str(o.get("result"))[:200])
                 continue
@@ -614,7 +659,7 @@ class Session:
                 "fork_sid": fsid, "raw": raw, "parsed": g["parsed"], "parse_ok": g["parse_ok"], "correct": g["correct"],
                 "abstained": g["abstained"],
                 "used_lookup": used, "search_kinds": kinds, "lookup_calls": calls_after, "tokens": {"in": u.get("input_tokens"), "out": u.get("output_tokens")},
-                "fork_cost_usd": round(o["_delta"], 6), "claude_version": cfg["claude_version"], "model": cfg["model"],
+                "output_tokens": u.get("output_tokens"), "fork_cost_usd": round(o["_delta"], 6), "claude_version": cfg["claude_version"], "model": cfg["model"],
                 "window": self.window, "commit": cfg["lh_commit"], "turn_index": st["turns"],
                 "condition": self.cond, "phrasing": phrasing, "position": posmap.get(g["id"]), "attempt": st.get("restarts", 0), **view_fields,
                 "auto_recall_fired": fired, "auto_recall_hits": hits, "auto_recall_timed_out": timed_out,
@@ -782,6 +827,11 @@ def nc_plan_steps(script):
     return steps
 
 
+def filler_prompt(script, k, lines):
+    """The filler turn of a script: design 4 has its own neutral words (see design4.SWAP_WORDS); design 3 uses gen.py."""
+    return (design4.filler_doc_prompt if script.get("design") == 4 else gen.filler_doc_prompt)(script, k, lines)
+
+
 def nc_types(cfg):
     """Probe types of the design-3 or design-4 no-compaction condition: the five types of design 3, or the levels of design 4."""
     return list(cfg.get("levels") or design4.D4_LEVELS) if cfg.get("probe_design", 1) >= 4 else list(gen.L3_TYPES)
@@ -799,7 +849,7 @@ def run_nc3_session(ctx, ss):
         ctx.check_budget()
         step = steps[st["nc_done"]]
         if step["kind"] == "fill":
-            prompt, expect = gen.filler_doc_prompt(script, step["k"], cfg["nc_lines"])
+            prompt, expect = filler_prompt(script, step["k"], cfg["nc_lines"])
             o = ss.turn(prompt)
             st["filler_task_total"] = st.get("filler_task_total", 0) + 1
             st["filler_task_ok"] = st.get("filler_task_ok", 0) + (1 if expect in str(o.get("result") or "") else 0)    # information only, not graded
@@ -906,8 +956,8 @@ def run_big_check(ctx):
     ss.prepare()
     lines, _ = nc3_plan(NC3_WINDOW, cfg.get("probe_design", 3))
     script = ctx.script3(seed)
-    docs = big_docs(len(gen.filler_doc_prompt(script, 0, lines)[0]))
-    prompt = "\n\n".join(gen.filler_doc_prompt(script, k, lines)[0] for k in range(docs)) + "\n\nReply with only the word OK."
+    docs = big_docs(len(filler_prompt(script, 0, lines)[0]))
+    prompt = "\n\n".join(filler_prompt(script, k, lines)[0] for k in range(docs)) + "\n\nReply with only the word OK."
     o = ss.call(prompt, "turn", sid=ss.st["sid"], first=True, model=cfg.get("big_model", "sonnet"), cap=cfg.get("big_cap_usd", BIG_CAP_USD))
     u = o.get("usage") if isinstance(o.get("usage"), dict) else {}
     i_, cr, cw, out = (u.get(k) or 0 for k in ("input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens", "output_tokens"))
@@ -994,7 +1044,7 @@ def session_summary(ctx, ss):
     st = ss.st
     out = {"name": ss.name, "seed": ss.seed, "arm": ss.arm, "condition": ss.cond, "nc_valid": st.get("nc_valid"), "nc_reasons": st.get("nc_reasons"), "status": st["status"], "turns": st["turns"],
            "boundaries": st["boundaries"], "precomputed": st.get("precomputed", 0), "missed": st["missed"],
-           "fork_leaks": st["fork_leaks"], "boundaries_at_plant_end": st.get("boundaries_at_plant_end"), "cost_usd": round(st.get("cost", 0.0), 4), "reason": st.get("reason"),
+           "fork_leaks": st["fork_leaks"], "boundaries_at_plant_end": st.get("boundaries_at_plant_end"), "cost_usd": round(st.get("cost", 0.0), 4), "reason": st.get("reason"), "failure_class": st.get("failure_class"), "safety_refusals": st.get("safety_refusals", 0),
            "filler_no_read_turns": st.get("filler_no_read_turns", 0), "filler_retries": st.get("filler_retries", 0),
            "filler_retry_no_read": st.get("filler_retry_no_read", 0)}
     out["restarts"] = st.get("restarts", 0)
@@ -1110,7 +1160,7 @@ def check_session_gates(ctx):
         if re.match(r"s\d+-[BRK]-nc$", n) and ctx.cfg.get("probe_design", 1) >= 3:
             del costs[n]
     versions = {n: st.get("claude_version") for n, st in sess.items() if st.get("claude_version")}
-    return gates.session_reasons(statuses, costs) + gates.version_reasons(ctx.cfg.get("claude_version"), versions)
+    return gates.session_reasons(statuses, costs, {n: st.get("failure_class") for n, st in sess.items() if st.get("failure_class")}) + gates.version_reasons(ctx.cfg.get("claude_version"), versions)
 
 
 def expected_forks(cfg, seeds=None):
@@ -1189,11 +1239,13 @@ def run_unit(ctx, seed, arm, cond="compact"):
         ctx.save()
     except CallError as e:
         st["status"], st["reason"] = "failed", str(e)
+        st["failure_class"] = gates.failure_class(st["reason"])
         ctx.save()
         ctx.append("sessions.jsonl", session_summary(ctx, ss))
         write_retention(ctx, ss)
     except Fatal as e:
         st["status"], st["reason"] = "failed", str(e)
+        st["failure_class"] = gates.failure_class(st["reason"])
         ctx.save()
         ctx.stop.set()
         raise

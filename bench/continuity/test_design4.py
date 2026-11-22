@@ -890,5 +890,220 @@ class AuditFixes(unittest.TestCase):
         self.assertGreater(it["lags"][it["values"][0]], g["lag"])         # an older value has a longer lag
 
 
+DENY = ("sample specimen culture strain assay vial pathogen virus viral dose dosage toxin toxic bacteria bacterial germ cell cells cellular dna rna gene genes genome "
+        "protein enzyme peptide plasmid antibody antigen vaccine disease infect infection outbreak epidemic pandemic lab laboratory reagent compound chemical "
+        "chemistry acid poison venom spore fungus fungal mold organism tissue blood serum patient clinical medical medicine drug pharma sequence sequencing "
+        "mutation mutant clone cloning incubate ferment biology biotech molecule isolate contagious cobalt orchid thistle willow walnut meadow canary health live").split()
+
+
+class NeutralLexicon(unittest.TestCase):
+    """The run 20261122T142851-preflight4 stopped with a safety filter refusal (`[bio]`). No bio, lab, medical or chemistry word may be in the text."""
+
+    def hits(self, text):
+        import re
+        low = text.lower()
+        return sorted({w for w in DENY if re.search(r"\b" + re.escape(w) + r"\b", low)})
+
+    def test_lexicon_has_no_deny_word(self):
+        texts = [b + " " + d for b, d in d4.BASES] + [m + " " + d for m, d in d4.MODS] + [d4.BASE_MEMBER, d4.FIELDS, " ".join(d4.FILLER_WORDS), " ".join(d4.gen.SENT3)]
+        for t in texts:
+            self.assertEqual(self.hits(t), [], t)
+        for old in ("cobalt", "orchid", "thistle", "willow", "walnut", "meadow"):
+            self.assertNotIn(old, d4.FILLER_WORDS)
+        self.assertEqual(len(d4.FILLER_WORDS), len(d4.gen.WORDS))
+
+    def test_scripts_probes_and_filler_of_100_seeds_have_no_deny_word(self):
+        for sd in range(1, 101):
+            sc = d4.build_litm4(sd)
+            for st in sc["plan"]:
+                if st["kind"] == "fact":
+                    self.assertEqual(self.hits(st["prompt"]), [], (sd, st["turn"]))
+            for lv in sc["items"]:
+                for ph in d4.PHRASINGS:
+                    self.assertEqual(self.hits(d4.probe_prompt(lv, sc, "PROBE-%d-A-0-%s" % (sd, lv), ph)), [], (sd, lv, ph))
+            if sd <= 20:
+                for k in (0, 17, 35):
+                    pr, _e = runner.filler_prompt(sc, k, 250)
+                    self.assertEqual(self.hits(pr), [], (sd, k))
+
+    def test_design_3_filler_is_unchanged(self):
+        sc3 = gen.build_litm3(1)
+        self.assertEqual(runner.filler_prompt(sc3, 3, 100), gen.filler_doc_prompt(sc3, 3, 100))
+        self.assertIn("cobalt", gen.filler_doc_prompt(sc3, 3, 300)[0])          # gen.py keeps its words: designs 2 and 3 are pinned
+        sc4 = d4.build_litm4(1)
+        self.assertNotEqual(runner.filler_prompt(sc4, 3, 100), gen.filler_doc_prompt(sc4, 3, 100))
+        self.assertEqual(runner.filler_prompt(sc4, 3, 100)[1].count(" "), 0)     # the expected token is a line number
+
+    def test_zero_overlap_and_unique_checks_still_hold(self):
+        for sd in range(1, 101):
+            self.assertEqual(d4.check_script(d4.build_litm4(sd)), [], sd)
+        self.assertEqual(d4.GEN_VERSION, "litm4-4")
+
+    def test_a_safety_refusal_is_its_own_failure_class(self):
+        msg = ("is_error: API Error: Haiku 5.5 can't help with this. Start a new session to continue.\n\nLearn more: https://www.anthropic.com/legal/aup\n\n"
+               "Details: `[bio]`\n\nRequest ID: req_x")
+        self.assertEqual(gates.failure_class(msg), "safety_refusal")
+        self.assertEqual(gates.failure_class("is_error: API Error: 529 overloaded"), "other")
+        self.assertEqual(gates.failure_class("timeout after 900 s"), "other")
+        self.assertEqual(gates.failure_class(None), "other")
+        why = gates.session_reasons({"a": "done", "b": "failed"}, {}, {"b": "safety_refusal"})
+        self.assertTrue(any("failed-session rate" in w and "safety_refusal" in w and "b" in w for w in why), why)
+        why = gates.session_reasons({"a": "done", "b": "failed"}, {}, {"b": "other"})
+        self.assertTrue(why and not any("safety_refusal" in w for w in why), why)
+        self.assertTrue(gates.session_reasons({"a": "done", "b": "failed"}, {}))           # the abort gate is as before
+
+    def test_runner_records_the_class_in_sessions_jsonl(self):
+        import types
+        rows, st = [], {"status": "pending", "boundaries": 0, "turns": 5}
+
+        class FakeSession:
+            def __init__(self, ctx, name, seed, arm, st_, cond):
+                self.st, self.name, self.seed, self.arm = st_, name, seed, arm
+
+            def prepare(self):
+                raise runner.CallError("is_error: API Error: Haiku 5.5 can't help with this. Details: `[bio]`")
+        ctx = types.SimpleNamespace(sess=lambda n: st, save=lambda: None, append=lambda f, r: rows.append((f, r)), cfg={})
+        keep = (runner.Session, runner.claude_version, runner.session_summary, runner.write_retention)
+        runner.Session, runner.claude_version = FakeSession, lambda: "x"
+        runner.session_summary = lambda c, ss: {"name": ss.name, "status": ss.st["status"], "reason": ss.st.get("reason"), "failure_class": ss.st.get("failure_class")}
+        runner.write_retention = lambda c, ss: None
+        try:
+            runner.run_unit(ctx, 1, "A", "nocompact")
+        finally:
+            runner.Session, runner.claude_version, runner.session_summary, runner.write_retention = keep
+        self.assertEqual(st["status"], "failed")
+        self.assertEqual(st["failure_class"], "safety_refusal")
+        self.assertEqual(rows[0][0], "sessions.jsonl")
+        self.assertEqual(rows[0][1]["failure_class"], "safety_refusal")
+        import inspect
+        self.assertIn('"failure_class": st.get("failure_class")', inspect.getsource(keep[2]))      # the real session summary carries the field
+
+
+class ProbeCapAndFailures(unittest.TestCase):
+    """Output cap of probe forks, kept evidence of failed calls, and no retry of a safety refusal."""
+    REFUSAL = "API Error: Haiku 5.5 can't help with this. Start a new session to continue. Details: `[bio]`"
+
+    def session(self, d):
+        ctx, cfg = test_litm.r4_cfg(d)
+        ss = runner.Session(ctx, "s1-A-nc", 1, "A", ctx.sess("s1-A-nc"), "nocompact")
+        ss.proj = os.path.join(d, "proj")
+        os.makedirs(os.path.join(runner.PROJECTS, runner.slug(ss.proj)), exist_ok=True)
+        return ctx, ss
+
+    def run_call(self, replies, kind="fork", fork_of="parent1"):
+        d = tempfile.mkdtemp()
+        old = (runner.PROJECTS, runner.subprocess.Popen)
+        runner.PROJECTS = os.path.join(d, "projects")
+        seen = []
+
+        class P:
+            def __init__(self, cmd, **k):
+                seen.append(k.get("env"))
+
+            def communicate(self, input=None, timeout=None):
+                n = len(seen) - 1
+                return json.dumps(replies[min(n, len(replies) - 1)]), ""
+            returncode = 0
+        runner.subprocess.Popen = P
+        try:
+            ctx, ss = self.session(d)
+            err = None
+            try:
+                ss.call("PROBE prompt", kind, sid=None, fork_of=fork_of if kind == "fork" else None, first=(kind != "fork"))
+            except runner.CallError as e:
+                err = e
+            return d, ctx, ss, seen, err
+        finally:
+            runner.PROJECTS, runner.subprocess.Popen = old
+
+    def test_cap_for_probe_forks_only(self):
+        ok = {"result": "{}", "session_id": "f1", "total_cost_usd": 0.01, "usage": {"output_tokens": 50}, "is_error": False}
+        d, ctx, ss, seen, err = self.run_call([ok], "fork")
+        try:
+            self.assertIsNone(err)
+            self.assertEqual(seen[0].get("CLAUDE_CODE_MAX_OUTPUT_TOKENS"), "8000")
+        finally:
+            shutil.rmtree(d)
+        d, ctx, ss, seen, err = self.run_call([ok], "turn")
+        try:
+            self.assertNotIn("CLAUDE_CODE_MAX_OUTPUT_TOKENS", seen[0])       # not for the turns of a main session
+        finally:
+            shutil.rmtree(d)
+        self.assertEqual(runner.PROBE_MAX_OUTPUT_TOKENS, 8000)
+        self.assertIn("CLAUDE_CODE_MAX_OUTPUT_TOKENS", runner.OVERRIDE_ENV)       # the preflight env check allows it
+        self.assertNotIn("CLAUDE_CODE_MAX_OUTPUT_TOKENS", runner.ENV_ALLOW)         # and it does not come from the user's environment
+
+    def test_safety_refusal_is_not_retried_and_the_evidence_is_kept(self):
+        key = "sk-ant-api03-" + "A" * 40
+        bad = {"result": self.REFUSAL + " " + key + " " + "x" * 9000, "session_id": "f2", "total_cost_usd": 0.1, "usage": {"output_tokens": 41000}, "is_error": True}
+        d, ctx, ss, seen, err = self.run_call([bad], "fork")
+        try:
+            self.assertIsInstance(err, runner.SafetyRefusal)
+            self.assertEqual(len(seen), 1)                                   # one call, no retry
+            self.assertEqual(ss.st["safety_refusals"], 1)
+            self.assertEqual(gates.failure_class(str(err)), "safety_refusal")
+            fd = os.path.join(ctx.dir, "failed")
+            js = [f for f in os.listdir(fd) if f.endswith(".json")]
+            self.assertEqual(len(js), 1)
+            rec = json.load(open(os.path.join(fd, js[0])))
+            self.assertEqual(rec["failure_class"], "safety_refusal")
+            self.assertEqual(rec["output_tokens"], 41000)
+            self.assertLessEqual(len(rec["reply"]), 4000)
+            self.assertEqual(rec["reply_chars"], len(bad["result"]))
+            self.assertNotIn(key, rec["reply"])                              # redacted
+            self.assertIn("can't help with this", rec["reply"])
+        finally:
+            shutil.rmtree(d)
+
+    def test_other_errors_are_retried_and_kept_once(self):
+        bad = {"result": "API Error: 529 overloaded", "session_id": "f3", "total_cost_usd": 0.0, "usage": {}, "is_error": True}
+        d, ctx, ss, seen, err = self.run_call([bad], "fork")
+        try:
+            self.assertIsInstance(err, runner.CallError)
+            self.assertNotIsInstance(err, runner.SafetyRefusal)
+            self.assertEqual(len(seen), 2)                                   # the normal retry: 2 attempts
+            self.assertEqual(len([f for f in os.listdir(os.path.join(ctx.dir, "failed")) if f.endswith(".json")]), 1)
+            self.assertEqual(ss.st.get("safety_refusals", 0), 0)
+        finally:
+            shutil.rmtree(d)
+
+    def test_failed_transcript_is_copied(self):
+        d = tempfile.mkdtemp()
+        old = runner.PROJECTS
+        runner.PROJECTS = os.path.join(d, "projects")
+        try:
+            ctx, ss = self.session(d)
+            with open(ss.transcript("fsid"), "w") as f:
+                f.write(json.dumps({"type": "user", "message": {"content": "q"}}) + "\n")
+            ss.save_failed({"result": "boom", "session_id": "fsid"}, "", "", "fork", "p", 2)
+            names = os.listdir(os.path.join(ctx.dir, "failed"))
+            self.assertEqual(sorted(x.rsplit(".", 1)[1] for x in names), ["json", "jsonl"])
+        finally:
+            runner.PROJECTS = old
+            shutil.rmtree(d)
+
+    def test_rows_have_output_tokens_and_preflight_has_the_lines(self):
+        import inspect
+        self.assertIn('"output_tokens": u.get("output_tokens")', inspect.getsource(runner.Session.probe))
+        d = tempfile.mkdtemp()
+        try:
+            import preflight
+            rd, projects = test_litm.make_pf_run(d, d4=True)
+            res = preflight.check(rd, projects, mcp=False)
+            names = [r[0] for r in res]
+            self.assertTrue(any(n.startswith("probe fork output at most 8000 tokens") for n in names), names)
+            self.assertIn("median probe output tokens", names)
+            old = runner.PROBE_MAX_OUTPUT_TOKENS
+            runner.PROBE_MAX_OUTPUT_TOKENS = 1
+            try:
+                res2 = preflight.check(rd, projects, mcp=False)
+            finally:
+                runner.PROBE_MAX_OUTPUT_TOKENS = old
+            st = [r[1] for r in res2 if r[0].startswith("probe fork output at most")][0]
+            self.assertIn(st, ("FAIL", "INFO"))        # FAIL when the fixture rows carry the output tokens
+        finally:
+            shutil.rmtree(d)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=1)
