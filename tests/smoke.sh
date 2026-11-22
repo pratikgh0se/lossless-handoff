@@ -1803,6 +1803,9 @@ for bad in ("ninety", "staging", "ghp_", "tangerine", "purple"):
 PY
   n0="$(wc -l < "$AL")"; ar "Please rotate the staging database credentials now" >/dev/null; ar "/x what did we decide earlier" >/dev/null
   [ "$(wc -l < "$AL")" = "$n0" ] || fail "F67.d: a run that did not pass the trigger was logged"
+  # an existing log with loose rights is tightened to 600 by the next run
+  chmod 644 "$AL"; ar "what did we decide earlier about the staging database rotation policy" >/dev/null
+  [ "$(python3 -c 'import os,sys; print(oct(os.stat(sys.argv[1]).st_mode & 0o777)[2:])' "$AL")" = 600 ] || fail "F67.d: an existing log kept loose rights"
   # a missing recall.py: no output, exit 0
   mkdir -p "$D/solo"; cp "$HK" "$D/solo/auto-recall.py"
   r=0; o="$(python3 -c 'import json; print(json.dumps({"prompt":"what did we decide earlier about the staging database rotation policy","cwd":"'"$W"'"}))' | HOME="$D/nohome" python3 "$D/solo/auto-recall.py")" || r=$?
@@ -1831,7 +1834,7 @@ PY
   t1=$(date +%s)
   [ "$r" = 0 ] && [ -z "$o" ] && [ $((t1 - t0)) -le 4 ] || fail "F67.c: timeout path: exit $r, output '$o', $((t1 - t0)) s"
   [ "$(wc -l < "$AL" | tr -d " ")" = "$(( $(echo "$nrows" | tr -d " ") + 1 ))" ] || fail "F67.d: the timeout run wrote $(wc -l < "$AL") rows after $nrows"
-  [ "$(stat -f %Lp "$AL" 2>/dev/null || stat -c %a "$AL")" = 600 ] || fail "F67.d: the log is not mode 600"
+  [ "$(python3 -c 'import os,sys; print(oct(os.stat(sys.argv[1]).st_mode & 0o777)[2:])' "$AL")" = 600 ] || fail "F67.d: the log is not mode 600"
   tail -n 1 "$AL" | python3 -c 'import json,sys; r=json.loads(sys.stdin.read()); assert r["timed_out"] is True and r["hits"] == 0 and 1500 <= r["ms"] <= 2500, r' || fail "F67.d: timeout row"
   ok "F67: cue, no cue, slash, quote, short query, no hits, current prompt, redaction, off switch, stub, timeout, health log"
 )
