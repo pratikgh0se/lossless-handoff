@@ -28,7 +28,7 @@ import gen        # noqa: E402
 import grade      # noqa: E402
 
 DESIGN = 4
-GEN_VERSION = "litm4-3"
+GEN_VERSION = "litm4-4"
 POSITIONS = gen.POSITIONS
 LEVELS = {
     "L1": {"k": 2, "fam": 1, "rejects": 0, "undo": False, "scoped": 0, "chains": 3, "prefix": False},
@@ -69,12 +69,12 @@ BASES = [
     ("chat-relay", "the forwarder that passes conversations between users"),
     ("stock-syncer", "the updater that keeps warehouse counts matching"),
     ("pdf-renderer", "the converter that draws documents as fixed pages"),
-    ("sms-notifier", "the sender of short alerts to cellular phones"),
+    ("sms-notifier", "the sender of short alerts to pocket phones"),
     ("token-refresher", "the renewer of expiring access passes"),
     ("data-exporter", "the extractor that hands records to partner companies"),
     ("billing-scheduler", "the planner of when customers are charged"),
     ("thumbnail-maker", "the generator of tiny previews for pictures"),
-    ("health-checker", "the watcher that pings servers to see if they live"),
+    ("uptime-monitor", "the watcher that pings servers to see if they respond"),
     ("geo-locator", "the finder of a place from coordinates"),
     ("spam-filter", "the screener that blocks unwanted messages"),
     ("session-store", "the keeper of who is currently signed in"),
@@ -89,7 +89,7 @@ MODS = [
     ("us", "in the North American region"),
     ("nightly", "that runs after dark"),
     ("staging", "for the practice environment"),
-    ("canary", "for the small early test group"),
+    ("pilot", "for the small early test group"),
     ("legacy", "for the old outdated version"),
     ("beta", "for volunteers trying new features"),
     ("bulk", "for very large batches"),
@@ -98,6 +98,47 @@ MODS = [
     ("internal", "for company employees only"),
     ("archive", "for long-term storage copies"),
 ]
+
+
+# ---- neutral words. The run 20261122T142851-preflight4 stopped with "[bio]" (a safety filter of the API, a false positive) in a probe fork of
+# the 300k-token session. The shared filler words of gen.py hold botany and chemistry words (cobalt, orchid, thistle, willow, walnut, meadow:
+# about 450 uses of each of the first four in one session). Design 4 has its own filler and prose words, and its lexicon holds no bio, lab,
+# medical or chemistry word (a test checks a deny list over the lexicon and the scripts of 100 seeds). gen.py is unchanged (designs 2 and 3).
+SWAP_WORDS = {"cobalt": "anchor", "orchid": "ribbon", "thistle": "button", "willow": "ladder", "walnut": "pencil", "meadow": "window"}
+FILLER_WORDS = [SWAP_WORDS.get(w, w) for w in gen.WORDS]
+
+
+def prose4(r, lo=600, hi=1200):
+    """gen.prose3 with the neutral words."""
+    out = ""
+    while len(out) < lo:
+        s_ = r.choice(gen.SENT3) % {"w": r.choice(FILLER_WORDS), "w2": r.choice(FILLER_WORDS)}
+        if out and len(out) + len(s_) + 1 > hi:
+            break
+        out += (" " if out else "") + s_
+    return out
+
+
+def filler_file(seed, t, j, lines):
+    """gen.filler_file with the neutral words (the same random stream; only the word list differs)."""
+    r = random.Random("lhbench-filler-%s-%d-%d-%d" % (gen.stream_version(gen.GEN_VERSION), seed, t, j))
+    out = []
+    for ln in range(1, lines + 1):
+        row = "%d.%04d " % (j + 1, ln) + " ".join(r.choice(FILLER_WORDS) for _ in range(8))
+        if r.random() < 0.03:
+            row += " ref-%s-%04d-%s" % ("".join(r.choice(gen.B32) for _ in range(4)), r.randrange(10000), "".join(r.choice(gen.B32) for _ in range(4)))
+        out.append(row)
+    return "pad-%03d-%d.txt" % (t, j), "\n".join(out) + "\n"
+
+
+def filler_doc_prompt(script, k, lines):
+    """gen.filler_doc_prompt with the neutral words. Returns (prompt, expected first token of the task)."""
+    name, text = filler_file(script["seed"], 1000 + k, 0, lines)
+    r = random.Random("lhbench-litm3-fill-%d-%d" % (script["seed"], k))
+    expect = text.splitlines()[-1].split()[0]
+    prompt = ("%s Here is a document to skim. It is pasted below between the markers.\n<<<DOC\n%sDOC>>>\n"
+              "Task: reply with only the number at the start of the last line of the document." % (prose4(r, 300, 500), text))
+    return prompt, expect
 
 
 def words_of(text):
@@ -293,7 +334,7 @@ def build_litm4(seed, levels=D4_LEVELS):
         turns = interleave(per_third[th], r)
         for i, group in enumerate(turns):
             body = " ".join(s for _it, s, _i in group)
-            plan.append({"kind": "fact", "third": th, "prompt": "%s Note for this project: %s Reply only `ok`." % (gen.prose3(pr, 300, 500), body),
+            plan.append({"kind": "fact", "third": th, "prompt": "%s Note for this project: %s Reply only `ok`." % (prose4(pr, 300, 500), body),
                          "keys": [it["key"] for it, _s, _i in group]})
             for it, _s, si in group:
                 it["_last"] = len(plan) - 1                         # the last statement (a lure may be last)

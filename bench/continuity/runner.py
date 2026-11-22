@@ -782,6 +782,11 @@ def nc_plan_steps(script):
     return steps
 
 
+def filler_prompt(script, k, lines):
+    """The filler turn of a script: design 4 has its own neutral words (see design4.SWAP_WORDS); design 3 uses gen.py."""
+    return (design4.filler_doc_prompt if script.get("design") == 4 else gen.filler_doc_prompt)(script, k, lines)
+
+
 def nc_types(cfg):
     """Probe types of the design-3 or design-4 no-compaction condition: the five types of design 3, or the levels of design 4."""
     return list(cfg.get("levels") or design4.D4_LEVELS) if cfg.get("probe_design", 1) >= 4 else list(gen.L3_TYPES)
@@ -799,7 +804,7 @@ def run_nc3_session(ctx, ss):
         ctx.check_budget()
         step = steps[st["nc_done"]]
         if step["kind"] == "fill":
-            prompt, expect = gen.filler_doc_prompt(script, step["k"], cfg["nc_lines"])
+            prompt, expect = filler_prompt(script, step["k"], cfg["nc_lines"])
             o = ss.turn(prompt)
             st["filler_task_total"] = st.get("filler_task_total", 0) + 1
             st["filler_task_ok"] = st.get("filler_task_ok", 0) + (1 if expect in str(o.get("result") or "") else 0)    # information only, not graded
@@ -906,8 +911,8 @@ def run_big_check(ctx):
     ss.prepare()
     lines, _ = nc3_plan(NC3_WINDOW, cfg.get("probe_design", 3))
     script = ctx.script3(seed)
-    docs = big_docs(len(gen.filler_doc_prompt(script, 0, lines)[0]))
-    prompt = "\n\n".join(gen.filler_doc_prompt(script, k, lines)[0] for k in range(docs)) + "\n\nReply with only the word OK."
+    docs = big_docs(len(filler_prompt(script, 0, lines)[0]))
+    prompt = "\n\n".join(filler_prompt(script, k, lines)[0] for k in range(docs)) + "\n\nReply with only the word OK."
     o = ss.call(prompt, "turn", sid=ss.st["sid"], first=True, model=cfg.get("big_model", "sonnet"), cap=cfg.get("big_cap_usd", BIG_CAP_USD))
     u = o.get("usage") if isinstance(o.get("usage"), dict) else {}
     i_, cr, cw, out = (u.get(k) or 0 for k in ("input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens", "output_tokens"))
@@ -994,7 +999,7 @@ def session_summary(ctx, ss):
     st = ss.st
     out = {"name": ss.name, "seed": ss.seed, "arm": ss.arm, "condition": ss.cond, "nc_valid": st.get("nc_valid"), "nc_reasons": st.get("nc_reasons"), "status": st["status"], "turns": st["turns"],
            "boundaries": st["boundaries"], "precomputed": st.get("precomputed", 0), "missed": st["missed"],
-           "fork_leaks": st["fork_leaks"], "boundaries_at_plant_end": st.get("boundaries_at_plant_end"), "cost_usd": round(st.get("cost", 0.0), 4), "reason": st.get("reason"),
+           "fork_leaks": st["fork_leaks"], "boundaries_at_plant_end": st.get("boundaries_at_plant_end"), "cost_usd": round(st.get("cost", 0.0), 4), "reason": st.get("reason"), "failure_class": st.get("failure_class"),
            "filler_no_read_turns": st.get("filler_no_read_turns", 0), "filler_retries": st.get("filler_retries", 0),
            "filler_retry_no_read": st.get("filler_retry_no_read", 0)}
     out["restarts"] = st.get("restarts", 0)
@@ -1110,7 +1115,7 @@ def check_session_gates(ctx):
         if re.match(r"s\d+-[BRK]-nc$", n) and ctx.cfg.get("probe_design", 1) >= 3:
             del costs[n]
     versions = {n: st.get("claude_version") for n, st in sess.items() if st.get("claude_version")}
-    return gates.session_reasons(statuses, costs) + gates.version_reasons(ctx.cfg.get("claude_version"), versions)
+    return gates.session_reasons(statuses, costs, {n: st.get("failure_class") for n, st in sess.items() if st.get("failure_class")}) + gates.version_reasons(ctx.cfg.get("claude_version"), versions)
 
 
 def expected_forks(cfg, seeds=None):
@@ -1189,11 +1194,13 @@ def run_unit(ctx, seed, arm, cond="compact"):
         ctx.save()
     except CallError as e:
         st["status"], st["reason"] = "failed", str(e)
+        st["failure_class"] = gates.failure_class(st["reason"])
         ctx.save()
         ctx.append("sessions.jsonl", session_summary(ctx, ss))
         write_retention(ctx, ss)
     except Fatal as e:
         st["status"], st["reason"] = "failed", str(e)
+        st["failure_class"] = gates.failure_class(st["reason"])
         ctx.save()
         ctx.stop.set()
         raise

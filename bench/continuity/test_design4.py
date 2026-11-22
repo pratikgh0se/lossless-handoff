@@ -890,5 +890,94 @@ class AuditFixes(unittest.TestCase):
         self.assertGreater(it["lags"][it["values"][0]], g["lag"])         # an older value has a longer lag
 
 
+DENY = ("sample specimen culture strain assay vial pathogen virus viral dose dosage toxin toxic bacteria bacterial germ cell cells cellular dna rna gene genes genome "
+        "protein enzyme peptide plasmid antibody antigen vaccine disease infect infection outbreak epidemic pandemic lab laboratory reagent compound chemical "
+        "chemistry acid poison venom spore fungus fungal mold organism tissue blood serum patient clinical medical medicine drug pharma sequence sequencing "
+        "mutation mutant clone cloning incubate ferment biology biotech molecule isolate contagious cobalt orchid thistle willow walnut meadow canary health live").split()
+
+
+class NeutralLexicon(unittest.TestCase):
+    """The run 20261122T142851-preflight4 stopped with a safety filter refusal (`[bio]`). No bio, lab, medical or chemistry word may be in the text."""
+
+    def hits(self, text):
+        import re
+        low = text.lower()
+        return sorted({w for w in DENY if re.search(r"\b" + re.escape(w) + r"\b", low)})
+
+    def test_lexicon_has_no_deny_word(self):
+        texts = [b + " " + d for b, d in d4.BASES] + [m + " " + d for m, d in d4.MODS] + [d4.BASE_MEMBER, d4.FIELDS, " ".join(d4.FILLER_WORDS), " ".join(d4.gen.SENT3)]
+        for t in texts:
+            self.assertEqual(self.hits(t), [], t)
+        for old in ("cobalt", "orchid", "thistle", "willow", "walnut", "meadow"):
+            self.assertNotIn(old, d4.FILLER_WORDS)
+        self.assertEqual(len(d4.FILLER_WORDS), len(d4.gen.WORDS))
+
+    def test_scripts_probes_and_filler_of_100_seeds_have_no_deny_word(self):
+        for sd in range(1, 101):
+            sc = d4.build_litm4(sd)
+            for st in sc["plan"]:
+                if st["kind"] == "fact":
+                    self.assertEqual(self.hits(st["prompt"]), [], (sd, st["turn"]))
+            for lv in sc["items"]:
+                for ph in d4.PHRASINGS:
+                    self.assertEqual(self.hits(d4.probe_prompt(lv, sc, "PROBE-%d-A-0-%s" % (sd, lv), ph)), [], (sd, lv, ph))
+            if sd <= 20:
+                for k in (0, 17, 35):
+                    pr, _e = runner.filler_prompt(sc, k, 250)
+                    self.assertEqual(self.hits(pr), [], (sd, k))
+
+    def test_design_3_filler_is_unchanged(self):
+        sc3 = gen.build_litm3(1)
+        self.assertEqual(runner.filler_prompt(sc3, 3, 100), gen.filler_doc_prompt(sc3, 3, 100))
+        self.assertIn("cobalt", gen.filler_doc_prompt(sc3, 3, 300)[0])          # gen.py keeps its words: designs 2 and 3 are pinned
+        sc4 = d4.build_litm4(1)
+        self.assertNotEqual(runner.filler_prompt(sc4, 3, 100), gen.filler_doc_prompt(sc4, 3, 100))
+        self.assertEqual(runner.filler_prompt(sc4, 3, 100)[1].count(" "), 0)     # the expected token is a line number
+
+    def test_zero_overlap_and_unique_checks_still_hold(self):
+        for sd in range(1, 101):
+            self.assertEqual(d4.check_script(d4.build_litm4(sd)), [], sd)
+        self.assertEqual(d4.GEN_VERSION, "litm4-4")
+
+    def test_a_safety_refusal_is_its_own_failure_class(self):
+        msg = ("is_error: API Error: Haiku 5.5 can't help with this. Start a new session to continue.\n\nLearn more: https://www.anthropic.com/legal/aup\n\n"
+               "Details: `[bio]`\n\nRequest ID: req_x")
+        self.assertEqual(gates.failure_class(msg), "safety_refusal")
+        self.assertEqual(gates.failure_class("is_error: API Error: 529 overloaded"), "other")
+        self.assertEqual(gates.failure_class("timeout after 900 s"), "other")
+        self.assertEqual(gates.failure_class(None), "other")
+        why = gates.session_reasons({"a": "done", "b": "failed"}, {}, {"b": "safety_refusal"})
+        self.assertTrue(any("failed-session rate" in w and "safety_refusal" in w and "b" in w for w in why), why)
+        why = gates.session_reasons({"a": "done", "b": "failed"}, {}, {"b": "other"})
+        self.assertTrue(why and not any("safety_refusal" in w for w in why), why)
+        self.assertTrue(gates.session_reasons({"a": "done", "b": "failed"}, {}))           # the abort gate is as before
+
+    def test_runner_records_the_class_in_sessions_jsonl(self):
+        import types
+        rows, st = [], {"status": "pending", "boundaries": 0, "turns": 5}
+
+        class FakeSession:
+            def __init__(self, ctx, name, seed, arm, st_, cond):
+                self.st, self.name, self.seed, self.arm = st_, name, seed, arm
+
+            def prepare(self):
+                raise runner.CallError("is_error: API Error: Haiku 5.5 can't help with this. Details: `[bio]`")
+        ctx = types.SimpleNamespace(sess=lambda n: st, save=lambda: None, append=lambda f, r: rows.append((f, r)), cfg={})
+        keep = (runner.Session, runner.claude_version, runner.session_summary, runner.write_retention)
+        runner.Session, runner.claude_version = FakeSession, lambda: "x"
+        runner.session_summary = lambda c, ss: {"name": ss.name, "status": ss.st["status"], "reason": ss.st.get("reason"), "failure_class": ss.st.get("failure_class")}
+        runner.write_retention = lambda c, ss: None
+        try:
+            runner.run_unit(ctx, 1, "A", "nocompact")
+        finally:
+            runner.Session, runner.claude_version, runner.session_summary, runner.write_retention = keep
+        self.assertEqual(st["status"], "failed")
+        self.assertEqual(st["failure_class"], "safety_refusal")
+        self.assertEqual(rows[0][0], "sessions.jsonl")
+        self.assertEqual(rows[0][1]["failure_class"], "safety_refusal")
+        import inspect
+        self.assertIn('"failure_class": st.get("failure_class")', inspect.getsource(keep[2]))      # the real session summary carries the field
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=1)

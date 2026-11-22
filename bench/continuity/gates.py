@@ -5,6 +5,7 @@ The run can resume from the last finished seed (run.sh resume <run-id>). To swit
 """
 import json
 import os
+import re
 
 INVALID_RATE_MAX = 0.10      # invalid sessions / finished sessions
 FAILED_RATE_MAX = 0.10       # failed sessions / finished sessions (done, invalid or failed). A failed session never finishes its seed.
@@ -50,13 +51,24 @@ def describe_missing(miss, limit=4):
     return "%d probe fork(s) have no row, for example: %s" % (len(miss), "; ".join(one(k) for k in miss[:limit]))
 
 
-def session_reasons(statuses, unit_costs):
+SAFETY_REFUSAL_RE = re.compile(r"API Error:.{0,80}can't help with this", re.I | re.S)
+
+
+def failure_class(reason):
+    """Class of a failed session: safety_refusal (the API refused the content: "API Error: ... can't help with this", for example Details `[bio]`,
+    a false positive of a safety filter) or other. A report uses it to tell this failure from a crash or a timeout."""
+    return "safety_refusal" if SAFETY_REFUSAL_RE.search(str(reason or "")) else "other"
+
+
+def session_reasons(statuses, unit_costs, classes=None):
     """Reasons to stop after any finished session. statuses: {name: status}. unit_costs: {name: (cost USD, estimate USD or None)}."""
     why = []
     fin = [s for s in statuses.values() if s in ("done", "invalid", "failed")]
     failed = sorted(n for n, s in statuses.items() if s == "failed")
     if fin and len(failed) / len(fin) > FAILED_RATE_MAX:
-        why.append("failed-session rate %.0f%% (%d of %d) is above %.0f%%: %s" % (100 * len(failed) / len(fin), len(failed), len(fin), 100 * FAILED_RATE_MAX, ", ".join(failed)))
+        refused = [n for n in failed if (classes or {}).get(n) == "safety_refusal"]
+        why.append("failed-session rate %.0f%% (%d of %d) is above %.0f%%: %s%s" % (100 * len(failed) / len(fin), len(failed), len(fin), 100 * FAILED_RATE_MAX, ", ".join(failed),
+                   "; safety_refusal (an API safety filter refused the content, not a crash): %s" % ", ".join(refused) if refused else ""))
     for n, (c, e) in sorted(unit_costs.items()):
         if e and c > max(UNIT_COST_FACTOR * e, e + UNIT_COST_FLOOR_USD):
             why.append("session %s cost $%.2f is above %.1f x its estimate $%.2f" % (n, c, UNIT_COST_FACTOR, e))
