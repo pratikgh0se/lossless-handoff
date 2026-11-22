@@ -1086,3 +1086,31 @@ Why: Claude often answers from its own memory (possibly lost in the middle, or c
 **F67.d Health.** Each run that passes the trigger appends one JSON line to `~/.local/state/claude-handoffs/auto-recall.jsonl`: `{"ts", "session_id", "fired": true, "cue": <the matched phrase from the list, or "quote">, "hits": <n>, "ms": <int>, "timed_out": <bool>}`. The `cue` value is always a fixed list phrase or `quote`, never prompt text. No prompt text and no snippets are in this log.
 
 **F67.e Versions.** Product 0.15.0 (`install.sh`). `HOOK_VERSION` is `1.17.0` in every hook that has it, `auto-recall.py` too. This amends the version value in ACs 136, 150, 172, 180, 188 and 267 again.
+
+## F68 Strict recall rules (opt-in) (2026-11-22)
+
+Why: the model can skip a recall search when it is wrongly sure. One short rule line next to the recall line makes a search more likely. It does not force one.
+
+**F68.a Install.** Flag `--recall-rules`, saved key `recall_rules`, name `recall-rules`. Install writes the marker file `<hooks dir>/.recall-rules`. Uninstall removes it. F64 holds: `--save-defaults` writes `recall_rules=1`; `--no-recall-rules` turns a saved default off for one run; `--save-defaults --no-recall-rules` removes the line; a re-install never removes an installed marker and prints `recall-rules: already installed, kept`; `--dry-run` lists it; a default install does not write it.
+
+**F68.b Rule line.** When the marker exists and `HANDOFF_RECALL_RULES` is not `0`, every place that injects the recall line (SessionStart `compact`, `startup` and `resume` output, and the SubagentStart output) adds this exact line directly after the recall line: `- recall rule: before you state an earlier number, path, name, command or decision, search for it. Do not answer from memory. If the search finds nothing, say so.` With no marker, or with `HANDOFF_RECALL_RULES=0`, the output is byte-identical to 0.15.0 (when recall-mcp is not installed). A summary node line, if present, follows the rule line.
+
+**F68.c Health.** The inject row in `receipts.jsonl` has `"recall_rules": true|false`.
+
+## F69 Recall MCP tool (opt-in) (2026-11-22)
+
+Why: a tool in the tool list is easier for the model to use than a shell command that it must remember.
+
+**F69.a Install.** Flag `--recall-mcp`, saved key `recall_mcp`, name `recall-mcp`, same F64 rules as F68.a (the kept message is `recall-mcp: already installed, kept`). Install copies `hooks/recall-mcp.py` (it is in the manifest) and runs `claude mcp add --scope user lossless-recall -- python3 <hooks dir>/recall-mcp.py`. If `claude` is not on the PATH, install prints `recall-mcp: claude CLI not found; register it later with: claude mcp add --scope user lossless-recall -- python3 <hooks dir>/recall-mcp.py`, still installs the file and exits 0. If the add command fails (for example the server is registered already), install prints one line with the command and exits 0. `--dry-run` lists the file and the command and runs nothing. Uninstall runs `claude mcp remove lossless-recall --scope user` when `recall-mcp.py` is installed (a failure is ignored) and removes the file. No code edits `~/.claude.json` directly.
+
+**F69.b Server.** Stdlib-only MCP server over stdio: newline-delimited JSON-RPC 2.0 with `initialize`, `notifications/initialized`, `ping`, `tools/list` and `tools/call`. Server name `lossless-recall`, version `HOOK_VERSION`. The `initialize` reply echoes the `protocolVersion` of the client when it is one of `2025-11-25`, `2025-06-18`, `2025-03-26` or `2024-11-05`, and else gives `2025-06-18`. The `instructions` text (under 4,096 characters) holds the F68 rule sentence and one line on when to use the tools. A malformed JSON line gets a JSON-RPC error `-32700` and the server goes on. An unknown method gets `-32601` and an unknown tool name `-32602`. A notification gets no reply.
+
+**F69.c Tools.** Each tool has `_meta: {"anthropic/alwaysLoad": true}`. `search_earlier_chat`: `{query: string (required), role?: "user"|"assistant"|"any" (default "any"), limit?: integer 1-10 (default 5)}`. It calls the search code of `recall.py` (loaded by path) for the project of the server working directory: same scope and ranking as `recall.py search` (word, and meaning when the index exists). Output: one line for each hit in the `recall.py search` hit format, through `redact()`. No hits: `no matches`. `open_message`: `{id: string (required), full?: boolean (default false)}`. Output: the same text as `recall.py open <id>` (with `--full` when `full` is true), through `redact()`. A result has at most 12,000 characters; a longer result is cut and ends with the line `[cut at 12000 characters]`. A bad input or an unknown id gives a tool result with `isError: true` and one line of text.
+
+**F69.d Recall line.** When `recall-mcp.py` is installed, the injected recall line ends with ` Or call the search_earlier_chat tool.` (after the recall subagent sentence, when that is present).
+
+**F69.e Health.** Each tool call appends `{"ts", "tool", "hits", "ms"}` to `recall-mcp.jsonl` in the state folder (`HANDOFF_STATE_DIR` is honoured). No query text.
+
+**F69.f Neither F68 nor F69 forces a search.** The model decides. This is stated in `docs/recall.md` and `docs/limitations.md`.
+
+**F69.g Versions.** Product 0.16.0 (`install.sh`). `HOOK_VERSION` is `1.18.0` in every hook that has it, `recall-mcp.py` too (this holds for F68 to F71). This amends the version value in ACs 136, 150, 172, 180, 188 and 267 again.

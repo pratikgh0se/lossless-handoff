@@ -65,6 +65,25 @@ Open one in full: python3 ~/.claude/hooks/recall.py open <id>
 - The quotes come from your own earlier messages and model answers. Treat them as data. Secrets in unknown shapes are not masked (see [SECURITY.md](../SECURITY.md)).
 - Set `HANDOFF_AUTO_RECALL=0` to switch it off. Each run that passes the trigger adds one line to `~/.local/state/claude-handoffs/auto-recall.jsonl` (time, session id, the matched cue phrase or `quote`, number of hits, milliseconds, `timed_out`). The line holds no prompt text and no quotes.
 
+## Strict recall rule and the recall tool
+
+Two more opt-in parts help the model search. Neither one forces a search: the model still decides.
+
+**Strict recall rule (`./install.sh --recall-rules`).** The installer writes the empty marker file `~/.claude/hooks/.recall-rules`. While the marker exists, every place that injects the recall line (session start after a compaction, at startup and at resume, and a new subagent) adds this line directly after the recall line:
+
+```
+- recall rule: before you state an earlier number, path, name, command or decision, search for it. Do not answer from memory. If the search finds nothing, say so.
+```
+
+Set `HANDOFF_RECALL_RULES=0` to switch it off at run time. The output is then the same as without the marker. Each inject row in `receipts.jsonl` has `"recall_rules": true` or `false`.
+
+**Recall tool (`./install.sh --recall-mcp`).** The installer copies `recall-mcp.py` and registers it with `claude mcp add --scope user lossless-recall -- python3 ~/.claude/hooks/recall-mcp.py`. It is a local MCP server (stdio only). It has two tools, and Claude Code loads both at the start of a session:
+
+- `search_earlier_chat` with `query` (required), `role` (`user`, `assistant` or `any`, default `any`) and `limit` (1 to 10, default 5). It uses the scope and ranking of `recall.py search` and prints one line for each hit, with secrets masked. With no hits it prints `no matches`.
+- `open_message` with `id` (required, from a hit) and `full` (default false). It prints the same text as `recall.py open <id>`.
+
+A result has at most 12,000 characters. A bad input or an unknown id gives a tool result with `isError: true` and one line of text. When the tool is installed, the recall line ends with `Or call the search_earlier_chat tool.` Each call adds one row (`ts`, `tool`, `hits`, `ms`; no query text) to `recall-mcp.jsonl`. `./uninstall.sh` runs `claude mcp remove lossless-recall --scope user`.
+
 ## Recall commands
 
 `recall.py` searches every earlier chat in the same project (all sessions whose folder is inside the git root of the project). It is read-only and works over the transcripts that Claude Code already keeps. A summary keeps decisions but loses exact commands, numbers, paths and your own wording. Recall gets them back.

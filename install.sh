@@ -2,7 +2,7 @@
 # Lossless Handoff installer (formerly claude-handoff): copies the hooks and merges them into ~/.claude/settings.json.
 set -euo pipefail
 
-VERSION="0.15.0"
+VERSION="0.16.0"
 usage() {
   cat <<EOF
 Lossless Handoff $VERSION (formerly claude-handoff)
@@ -10,13 +10,13 @@ Default install (F64): the core only. It copies the hooks (nudge, PreCompact han
 SessionStart check, SubagentStart rules, SessionEnd index) and the recall command into ~/.claude/hooks,
 merges them into ~/.claude/settings.json, installs the recall subagent (~/.claude/agents/recall.md, unless a
 file of that name that is not ours is there), keeps the decisions list, and starts a first recall index.
-Hooks 1.17.0 keep the chat store: handoff files live 365 days, and --keep-transcripts raises Claude Code's transcript retention.
-Hooks 1.17.0 also mask secrets in every file they write (see SECURITY.md).
+Hooks 1.18.0 keep the chat store: handoff files live 365 days, and --keep-transcripts raises Claude Code's transcript retention.
+Hooks 1.18.0 also mask secrets in every file they write (see SECURITY.md).
 The default does NOT set CLAUDE_CODE_AUTO_COMPACT_WINDOW, pull a model, or install nightly jobs.
 Add them with the opt-in flags below. A rerun never removes, turns off or changes a part that is already installed
 (window value, meaning search, nightly jobs): a --no-* flag only skips adding it. Use ./uninstall.sh to remove parts.
 
-Usage: ./install.sh [--dry-run] [--force] [--window N] [--nightly] [--semantic [--yes]] [--auto-recall] [--save-defaults] [--no-nudge] [--canary] [--managed-hooks] [--keep-transcripts[=DAYS]] [--version] [-h|--help]
+Usage: ./install.sh [--dry-run] [--force] [--window N] [--nightly] [--semantic [--yes]] [--auto-recall] [--recall-rules] [--recall-mcp] [--save-defaults] [--no-nudge] [--canary] [--managed-hooks] [--keep-transcripts[=DAYS]] [--version] [-h|--help]
 
   --dry-run     list exactly what the chosen options install (and which come from saved defaults), change nothing
   --window N    opt-in: set CLAUDE_CODE_AUTO_COMPACT_WINDOW to N tokens (for example 400000);
@@ -31,18 +31,25 @@ Usage: ./install.sh [--dry-run] [--force] [--window N] [--nightly] [--semantic [
                 the top 3 exact quotes (secrets masked) to the context. It takes at most 2 seconds, never blocks
                 a prompt, and writes only ~/.local/state/claude-handoffs/auto-recall.jsonl (no prompt text).
                 Set HANDOFF_AUTO_RECALL=0 to switch it off at run time. Off by default
+  --recall-rules
+                opt-in (F68): add one strict rule line after the recall line in every session start and subagent start:
+                search before you state an earlier number, path, name, command or decision. It writes the marker file
+                ~/.claude/hooks/.recall-rules. Set HANDOFF_RECALL_RULES=0 to switch it off at run time. Off by default
+  --recall-mcp  opt-in (F69): install hooks/recall-mcp.py, a local MCP server (stdio) with the tools search_earlier_chat and
+                open_message, and register it with: claude mcp add --scope user lossless-recall -- python3 <hooks dir>/recall-mcp.py
+                If the claude command is not on PATH, the command is printed and the file is still installed. Off by default
   --yes         with --semantic: answer yes to the model pull without asking
   --llm-map, --no-llm-map
                 no longer used. llm-map is now a separate project (https://github.com/pratikgh0se/llm-map).
                 The flags are accepted and print one line; they change nothing else
   --save-defaults
-                save the opt-in flags given in this run (--semantic, --nightly, --auto-recall, --window N) to
+                save the opt-in flags given in this run (--semantic, --nightly, --auto-recall, --recall-rules, --recall-mcp, --window N) to
                 ~/.config/lossless-handoff/install-defaults (key=value lines: semantic=1, nightly=1,
-                auto_recall=1, window=N). Every later ./install.sh run reads that file and applies those
+                auto_recall=1, recall_rules=1, recall_mcp=1, window=N). Every later ./install.sh run reads that file and applies those
                 options as if you gave them. A flag on the command line wins over the file.
                 With --save-defaults, a --no-* flag removes that saved default. Delete the file, or run
                 ./uninstall.sh --purge, to drop all saved defaults
-  --no-semantic, --no-nightly, --no-auto-recall, --no-window
+  --no-semantic, --no-nightly, --no-auto-recall, --no-recall-rules, --no-recall-mcp, --no-window
                 turn one opt-in off for this run, also when a saved default turns it on. They only skip
                 adding the part; they never uninstall one that is there
   --no-nudge    do not install the context nudge (handoff-nudge.py). Use it if another tool already
@@ -70,7 +77,7 @@ search still works (https://ollama.com/download). Ollama itself is never install
 EOF
 }
 
-DRY=0; FORCE=0; WINDOW=400000; SETWINDOW=0; YES=0; NIGHTLY=0; SEMANTIC=0; NOTE_LM=0; OLDFLAG=0; SAVE=0; C_WIN=""; C_NIGHT=""; C_SEM=""; C_AR=""; AUTORECALL=0; MANAGED=0; CANARY=0; NONUDGE=0; KEEP=""
+DRY=0; FORCE=0; WINDOW=400000; SETWINDOW=0; YES=0; NIGHTLY=0; SEMANTIC=0; NOTE_LM=0; OLDFLAG=0; SAVE=0; C_WIN=""; C_NIGHT=""; C_SEM=""; C_AR=""; C_RR=""; C_RM=""; AUTORECALL=0; RECALLRULES=0; RECALLMCP=0; MANAGED=0; CANARY=0; NONUDGE=0; KEEP=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --dry-run) DRY=1 ;;
@@ -86,6 +93,10 @@ while [ $# -gt 0 ]; do
     --no-semantic) C_SEM=0 ;;
     --auto-recall) C_AR=1 ;;
     --no-auto-recall) C_AR=0 ;;
+    --recall-rules) C_RR=1 ;;
+    --no-recall-rules) C_RR=0 ;;
+    --recall-mcp) C_RM=1 ;;
+    --no-recall-mcp) C_RM=0 ;;
     --llm-map|--no-llm-map) NOTE_LM=1 ;;
     --save-defaults) SAVE=1 ;;
     --no-nudge) NONUDGE=1 ;;
@@ -106,13 +117,15 @@ command -v python3 >/dev/null || { echo "python3 is required" >&2; exit 1; }
 say() { if [ "$DRY" = 1 ]; then echo "[dry-run] $*"; else echo "$*"; fi; }
 # saved defaults: read key=value lines (never sourced); a command-line flag wins over the file
 DEFAULTS_FILE="$HOME/.config/lossless-handoff/install-defaults"
-D_WIN=""; D_NIGHT=""; D_SEM=""; D_AR=""
+D_WIN=""; D_NIGHT=""; D_SEM=""; D_AR=""; D_RR=""; D_RM=""
 if [ -f "$DEFAULTS_FILE" ]; then
   while IFS= read -r line || [ -n "$line" ]; do
     case "$line" in
       semantic=1) D_SEM=1 ;;
       nightly=1) D_NIGHT=1 ;;
       auto_recall=1) D_AR=1 ;;
+      recall_rules=1) D_RR=1 ;;
+      recall_mcp=1) D_RM=1 ;;
       llm_map=1) NOTE_LM=1 ;;
       window=*) v="${line#window=}"; case "$v" in ''|*[!0-9]*) ;; *) if [ "${#v}" -le 12 ] && [ "$((10#$v))" -gt 0 ]; then D_WIN="$v"; fi ;; esac ;;
     esac
@@ -126,11 +139,13 @@ pick window "$C_WIN" "$D_WIN"; case "$P" in ''|off) SETWINDOW=0 ;; *) SETWINDOW=
 pick nightly "$C_NIGHT" "$D_NIGHT"; [ "$P" = 1 ] && NIGHTLY=1 || NIGHTLY=0
 pick semantic "$C_SEM" "$D_SEM"; [ "$P" = 1 ] && SEMANTIC=1 || SEMANTIC=0
 pick auto_recall "$C_AR" "$D_AR"; [ "$P" = 1 ] && AUTORECALL=1 || AUTORECALL=0
+pick recall_rules "$C_RR" "$D_RR"; [ "$P" = 1 ] && RECALLRULES=1 || RECALLRULES=0
+pick recall_mcp "$C_RM" "$D_RM"; [ "$P" = 1 ] && RECALLMCP=1 || RECALLMCP=0
 if [ "$NOTE_LM" = 1 ]; then echo "llm-map is now a separate project: https://github.com/pratikgh0se/llm-map"; fi
 if [ -n "$FROM_SAVED" ]; then say "options from saved defaults ($DEFAULTS_FILE):$FROM_SAVED"; fi
 if [ "$SAVE" = 1 ]; then
   if [ "$DRY" = 1 ]; then say "would save the opt-in flags of this run to $DEFAULTS_FILE"; else
-    HC_DF="$DEFAULTS_FILE" HC_CWIN="$C_WIN" HC_CN="$C_NIGHT" HC_CS="$C_SEM" HC_CA="$C_AR" python3 - <<'PY'
+    HC_DF="$DEFAULTS_FILE" HC_CWIN="$C_WIN" HC_CN="$C_NIGHT" HC_CS="$C_SEM" HC_CA="$C_AR" HC_CRR="$C_RR" HC_CRM="$C_RM" python3 - <<'PY'
 import os
 p = os.environ["HC_DF"]
 cur = {}
@@ -151,6 +166,8 @@ def setk(k, v, on):
 setk("semantic", os.environ["HC_CS"], "1")
 setk("nightly", os.environ["HC_CN"], "1")
 setk("auto_recall", os.environ["HC_CA"], "1")
+setk("recall_rules", os.environ["HC_CRR"], "1")
+setk("recall_mcp", os.environ["HC_CRM"], "1")
 cur.pop("llm_map", None)
 w = os.environ["HC_CWIN"]
 if w == "off":
@@ -186,6 +203,10 @@ if [ "$NONUDGE" = 1 ]; then FILES="precompact-handoff.py postcompact-inject.py r
 # F67: auto-recall.py is opt-in. A copy that is already installed is kept up to date and stays in the manifest.
 AR_THERE=0; [ -e "$HOOKS_DIR/auto-recall.py" ] && AR_THERE=1
 if [ "$AUTORECALL" = 1 ] || [ "$AR_THERE" = 1 ]; then FILES="$FILES auto-recall.py"; fi
+# F69: recall-mcp.py is opt-in, the same way. F68: the marker file .recall-rules is the whole F68 install.
+RM_THERE=0; [ -e "$HOOKS_DIR/recall-mcp.py" ] && RM_THERE=1
+if [ "$RECALLMCP" = 1 ] || [ "$RM_THERE" = 1 ]; then FILES="$FILES recall-mcp.py"; fi
+RR_THERE=0; [ -e "$HOOKS_DIR/.recall-rules" ] && RR_THERE=1
 # The PreCompact hook keeps its code in the folder hooks/lossless_handoff/. It is part of the install and of the manifest.
 PKG_FILES="$(cd "$SRC/hooks" 2>/dev/null && ls lossless_handoff/*.py 2>/dev/null | tr '\n' ' ')"
 if [ -z "$PKG_FILES" ]; then echo "error: hooks/lossless_handoff/ is missing from this copy; get a full copy of the repo" >&2; exit 1; fi
@@ -643,6 +664,30 @@ fi
 # F67: auto-recall is opt-in. An installed copy is never removed by a rerun.
 if [ "$AUTORECALL" = 0 ] && [ "$AR_THERE" = 1 ]; then
   say "auto-recall: already installed, kept"
+fi
+
+# F68: strict recall rules are opt-in. The marker file is the install. An installed marker is never removed by a rerun.
+if [ "$RECALLRULES" = 1 ] && [ "$RR_THERE" = 0 ]; then
+  say "install recall rules marker: $HOOKS_DIR/.recall-rules"
+  if [ "$DRY" = 0 ]; then mkdir -p "$HOOKS_DIR"; : > "$HOOKS_DIR/.recall-rules"; chmod 644 "$HOOKS_DIR/.recall-rules"; fi
+elif [ "$RR_THERE" = 1 ]; then
+  say "recall-rules: already installed, kept"
+fi
+
+# F69: recall-mcp is opt-in. Register it through the claude command; never edit ~/.claude.json directly.
+MCP_CMD="claude mcp add --scope user lossless-recall -- python3 $HOOKS_DIR/recall-mcp.py"
+if [ "$RECALLMCP" = 1 ]; then
+  if ! command -v claude >/dev/null 2>&1; then
+    say "recall-mcp: claude CLI not found; register it later with: $MCP_CMD"
+  elif [ "$DRY" = 1 ]; then
+    say "would run: $MCP_CMD"
+  elif claude mcp add --scope user lossless-recall -- python3 "$HOOKS_DIR/recall-mcp.py" >/dev/null 2>&1; then
+    say "recall-mcp: registered with: $MCP_CMD"
+  else
+    say "recall-mcp: claude mcp add did not succeed (it may be registered already); to register it by hand: $MCP_CMD"
+  fi
+elif [ "$RM_THERE" = 1 ]; then
+  say "recall-mcp: already installed, kept"
 fi
 
 # --no-nudge: remove a nudge file left by an earlier install

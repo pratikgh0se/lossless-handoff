@@ -75,7 +75,7 @@ python3 - "$H" <<'PY'
 import hashlib, json, sys
 h = sys.argv[1]
 m = json.load(open(h + "/.handoff-manifest.json"))
-assert m["version"] == "1.17.0" and m["installed_at"], m
+assert m["version"] == "1.18.0" and m["installed_at"], m
 pkg = ["lossless_handoff/%s.py" % n for n in "__init__ transcript summary ledger handoff runtime redaction pipeline reconcile prove claims".split()]
 assert sorted(m["files"]) == sorted(["claims.json", "handoff-nudge.py", "postcompact-inject.py", "precompact-handoff.py", "recall.py"] + pkg), m
 for n, want in m["files"].items():
@@ -857,8 +857,8 @@ PY
   [ ! -e "$F/precompact-handoff.py" ] || fail "F66.a: uninstall did not finish its other work"
   rm "$F/llm_map.py" "$SK"; rmdir "$(dirname "$SK")"; o="$("$ROOT/uninstall.sh")"; ! grep -q "llm-map: kept" <<<"$o" || fail "F66.a: kept line without llm-map files"
   # F66.d versions
-  [ "$("$ROOT/install.sh" --version)" = "Lossless Handoff 0.15.0" ] || fail "F66.d: product version"
-  [ "$(grep -c '^HOOK_VERSION = "1.17.0"$' "$ROOT/hooks/precompact-handoff.py" "$ROOT/hooks/postcompact-inject.py" | grep -c ':1$')" = 2 ] || fail "F66.d: HOOK_VERSION"
+  [ "$("$ROOT/install.sh" --version)" = "Lossless Handoff 0.16.0" ] || fail "F66.d: product version"
+  [ "$(grep -c '^HOOK_VERSION = "1.18.0"$' "$ROOT/hooks/precompact-handoff.py" "$ROOT/hooks/postcompact-inject.py" | grep -c ':1$')" = 2 ] || fail "F66.d: HOOK_VERSION"
   # F66.c: README holds no claim markers; evidence page does; claims-lint default path
   ! grep -qE '\[C[1-8]\]' "$ROOT/README.md" && ! grep -qiE '^#+ .*proof|\*\*proof' "$ROOT/README.md" || fail "F66.c: README holds Proof or claim markers"
   grep -qE '\[C1\]' "$ROOT/docs/evidence.md" || fail "F66.c: docs/evidence.md has no markers"
@@ -905,7 +905,7 @@ rows = {json.loads(x)["sid"]: json.loads(x) for x in open(sys.argv[1]) if x.stri
 a, b = rows["f56a"], rows["f56b"]
 assert a["excerpt_chars"] > 0 and a["excerpt_dropped"] == 0, a
 assert b["excerpt_dropped"] > 0 and 0 < b["excerpt_chars"] <= 120000, b
-assert a["hook_version"] == "1.17.0"
+assert a["hook_version"] == "1.18.0"
 PY
   p="$(python3 "$ROOT/hooks/precompact-handoff.py" --prove --days 1; echo "rc=$?")"
   grep -qE "^excerpt cut: 1 of 2 compactions, median dropped [0-9]+ chars$" <<<"$p" || fail "F56.b: prove line: $p"
@@ -1071,7 +1071,7 @@ PY
 import json, sys
 rows = [json.loads(x) for x in open(sys.argv[1]) if x.strip()]
 r = [x for x in rows if x.get("event") == "subagent_start"][-1]
-assert r["rules"] == 2 and r["chars"] > 0 and r["hook_version"] == "1.17.0" and r["agent_type"] == "general-purpose", r
+assert r["rules"] == 2 and r["chars"] > 0 and r["hook_version"] == "1.18.0" and r["agent_type"] == "general-purpose", r
 PY
   # AC 262: no handoff text, no agent notes
   printf '# Handoff\n- cwd: %s\nLATESTTOKEN\n' "$PROJ" > "$STF/s58-latest.md"; printf 'AGENTTOKEN\n' > "$STF/s58-agent.md"
@@ -1809,7 +1809,7 @@ PY
   CMD="python3 $F/auto-recall.py"
   echo '{"model": "opus"}' > "$FS"
   grep -q -- "--auto-recall" <<<"$("$ROOT/install.sh" --help)" || fail "F67.a: --help lacks --auto-recall"
-  [ "$(grep -c '^HOOK_VERSION = "1.17.0"$' "$ROOT/hooks/auto-recall.py")" = 1 ] || fail "F67.e: auto-recall HOOK_VERSION"
+  [ "$(grep -c '^HOOK_VERSION = "1.18.0"$' "$ROOT/hooks/auto-recall.py")" = 1 ] || fail "F67.e: auto-recall HOOK_VERSION"
   # default install: not installed, not registered
   "$ROOT/install.sh" >/dev/null
   [ ! -e "$F/auto-recall.py" ] && ! grep -q "auto-recall" "$FS" && ! grep -q "auto-recall" "$F/.handoff-manifest.json" || fail "F67.a: default install holds auto-recall"
@@ -1855,6 +1855,251 @@ PY
   "$ROOT/install.sh" --save-defaults --no-auto-recall >/dev/null
   ! grep -q "auto_recall" "$DF" && [ ! -e "$F/auto-recall.py" ] || fail "F67.a: --save-defaults --no-auto-recall"
   ok "F67: install, default off, dry-run, backup, upgrade message, uninstall, saved defaults"
+)
+
+# F68: strict recall rules (marker file, one extra line after the recall line, run-time off switch, health flag)
+(
+  set -e
+  export HOME="$T/f68"; mkdir -p "$HOME/.claude"; F="$HOME/.claude/hooks"; DF="$HOME/.config/lossless-handoff/install-defaults"
+  export HANDOFF_STATE_DIR="$HOME/.local/state/claude-handoffs"; STF="$HANDOFF_STATE_DIR"; mkdir -p "$STF"
+  POST="$ROOT/hooks/postcompact-inject.py"
+  RULE='- recall rule: before you state an earlier number, path, name, command or decision, search for it. Do not answer from memory. If the search finds nothing, say so.'
+  PROJ="$HOME/proj"; mkdir -p "$PROJ"; git -C "$PROJ" init -q; PROJ="$(cd "$PROJ" && pwd -P)"
+  python3 - "$PROJ" "$STF" <<'PY'
+import hashlib, os, re, sys
+proj, stf = sys.argv[1:3]
+key = re.sub(r"[^A-Za-z0-9._-]", "_", os.path.basename(proj))[:40] + "-" + hashlib.sha1(proj.encode()).hexdigest()[:8]
+d = os.path.join(stf, "projects", key); os.makedirs(d)
+open(os.path.join(d, "decisions.md"), "w").write("# Decisions\n\n- D1 [2026-11-01] [rule] RULEONE be brief | why: user said so\n- D2 [2026-11-02] [decision] DEC use sqlite | why: simple\n")
+PY
+  printf '# Handoff\n- authority: x\n- recall: old line\n## Goal\nhi\n' > "$STF/s68-latest.md"
+  echo "{\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"trigger\":\"auto\",\"degraded\":false,\"status\":\"ok\"}" > "$STF/s68-last-health.json"
+  run_start() { printf '{"session_id":"s68","cwd":"%s","source":"compact"}' "$PROJ" | python3 "$POST" --part 1; }
+  run_led() { printf '{"cwd":"%s"}' "$PROJ" | python3 "$POST" --ledger --part 1; }
+  run_sub() { printf '{"session_id":"s68","cwd":"%s","agent_id":"agx","agent_type":"general-purpose"}' "$PROJ" | python3 "$POST" --subagent-start; }
+  ctx() { python3 -c "import sys,json; print(json.load(sys.stdin)['hookSpecificOutput']['additionalContext'])"; }
+  # no flag: install has no marker, and the outputs hold no rule line
+  "$ROOT/install.sh" >/dev/null
+  [ ! -e "$F/.recall-rules" ] || fail "F68: default install wrote the marker"
+  ! grep -q "recall-rules" <<<"$("$ROOT/install.sh" --dry-run)" || fail "F68: default dry-run mentions recall-rules"
+  S0="$(run_start | ctx)"; L0="$(run_led | ctx)"; B0="$(run_sub | ctx)"
+  ! grep -qF "recall rule:" <<<"$S0$L0$B0" || fail "F68: rule line without the marker"
+  grep -q "^- recall: " <<<"$S0" && grep -q "^- recall: " <<<"$L0" && grep -q "^- recall: " <<<"$B0" || fail "F68: a baseline output has no recall line"
+  # dry-run with the flag lists the marker and changes nothing
+  o="$("$ROOT/install.sh" --recall-rules --dry-run)"
+  grep -q "recall rules marker" <<<"$o" && [ ! -e "$F/.recall-rules" ] || fail "F68: dry-run: $o"
+  # install with the flag
+  "$ROOT/install.sh" --recall-rules >/dev/null
+  [ -e "$F/.recall-rules" ] || fail "F68: marker not written"
+  for w in start led sub; do
+    if [ "$w" = start ]; then o="$(run_start | ctx)"; b="$S0"; fi
+    if [ "$w" = led ]; then o="$(run_led | ctx)"; b="$L0"; fi
+    if [ "$w" = sub ]; then o="$(run_sub | ctx)"; b="$B0"; fi
+    [ "$(grep -cxF -- "$RULE" <<<"$o")" = 1 ] || fail "F68: $w: the rule line is missing or doubled: $o"
+    n="$(grep -n '^- recall: ' <<<"$o" | cut -d: -f1)"
+    [ "$(sed -n "$((n + 1))p" <<<"$o")" = "$RULE" ] || fail "F68: $w: the rule line is not directly after the recall line"
+    [ "$(grep -vxF -- "$RULE" <<<"$o")" = "$b" ] || fail "F68: $w: output differs from the baseline in more than the rule line"
+    # the off switch: byte-identical to the output without the marker
+    case "$w" in start) o2="$(HANDOFF_RECALL_RULES=0 run_start | ctx)" ;; led) o2="$(HANDOFF_RECALL_RULES=0 run_led | ctx)" ;; sub) o2="$(HANDOFF_RECALL_RULES=0 run_sub | ctx)" ;; esac
+    [ "$o2" = "$b" ] || fail "F68: $w: HANDOFF_RECALL_RULES=0 changed the output"
+  done
+  # the receipt flag
+  run_start >/dev/null; HANDOFF_RECALL_RULES=0 run_start >/dev/null
+  python3 - "$STF/receipts.jsonl" <<'PY'
+import json, sys
+rows = [json.loads(x) for x in open(sys.argv[1]) if x.strip()]
+assert rows[-2]["recall_rules"] is True and rows[-1]["recall_rules"] is False, rows[-2:]
+PY
+  # a rerun keeps it; --no-recall-rules keeps it
+  o="$("$ROOT/install.sh")"; grep -qx "recall-rules: already installed, kept" <<<"$o" || fail "F68: kept message: $o"
+  o="$("$ROOT/install.sh" --no-recall-rules)"; grep -qx "recall-rules: already installed, kept" <<<"$o" && [ -e "$F/.recall-rules" ] || fail "F68: --no-recall-rules removed it"
+  # uninstall: dry-run lists, real run removes
+  o="$("$ROOT/uninstall.sh" --dry-run)"; grep -q "\.recall-rules" <<<"$o" && [ -e "$F/.recall-rules" ] || fail "F68: uninstall dry-run"
+  "$ROOT/uninstall.sh" >/dev/null; [ ! -e "$F/.recall-rules" ] || fail "F68: uninstall left the marker"
+  # saved defaults
+  "$ROOT/install.sh" --save-defaults --recall-rules >/dev/null
+  grep -qx "recall_rules=1" "$DF" && [ -e "$F/.recall-rules" ] || fail "F68: --save-defaults --recall-rules"
+  "$ROOT/uninstall.sh" >/dev/null
+  o="$("$ROOT/install.sh" --dry-run)"; grep -q "saved defaults.*recall_rules" <<<"$o" && grep -q "recall rules marker" <<<"$o" || fail "F68: saved default not applied: $o"
+  "$ROOT/install.sh" >/dev/null; [ -e "$F/.recall-rules" ] || fail "F68: saved default did not install it"
+  "$ROOT/uninstall.sh" >/dev/null
+  "$ROOT/install.sh" --no-recall-rules >/dev/null
+  [ ! -e "$F/.recall-rules" ] && grep -qx "recall_rules=1" "$DF" || fail "F68: --no-recall-rules did not skip it, or touched the saved default"
+  "$ROOT/install.sh" --save-defaults --no-recall-rules >/dev/null
+  ! grep -q "recall_rules" "$DF" && [ ! -e "$F/.recall-rules" ] || fail "F68: --save-defaults --no-recall-rules"
+  grep -q -- "--recall-rules" <<<"$("$ROOT/install.sh" --help)" || fail "F68: --help lacks --recall-rules"
+  "$ROOT/uninstall.sh" >/dev/null
+  ok "F68: marker, rule line after the recall line (start, ledger, subagent), off switch, receipt flag, install, saved defaults, uninstall"
+)
+
+# F69: recall MCP tool (install, registration through the claude command, protocol, tools, limits, health)
+(
+  set -e
+  D="$T/f69"; mkdir -p "$D"; export HOME="$D/home"; W="$D/work"; mkdir -p "$HOME/.claude" "$W" "$D/fakebin"
+  F="$HOME/.claude/hooks"; DF="$HOME/.config/lossless-handoff/install-defaults"; MC="python3 $F/recall-mcp.py"
+  export HANDOFF_STATE_DIR="$D/state"
+  cat > "$D/fakebin/claude" <<'SH'
+#!/bin/sh
+echo "$*" >> "$FAKE_CLAUDE_LOG"
+exit 0
+SH
+  chmod +x "$D/fakebin/claude"; export FAKE_CLAUDE_LOG="$D/claude.args"; : > "$FAKE_CLAUDE_LOG"
+  # a PATH without any claude command (the real one may sit next to python3)
+  NC=""; IFS=: read -ra _pd <<<"$PATH"
+  for d in "${_pd[@]}"; do [ -x "$d/claude" ] || NC="${NC:+$NC:}$d"; done
+  command -v python3 >/dev/null || true
+  if ! PATH="$NC" command -v python3 >/dev/null 2>&1; then mkdir -p "$D/pybin"; ln -sf "$(command -v python3)" "$D/pybin/python3"; NC="$NC:$D/pybin"; fi
+  ! PATH="$NC" command -v claude >/dev/null 2>&1 || fail "F69: test setup: claude is still on PATH"
+  # default install: no file, no manifest entry, no claude call
+  PATH="$D/fakebin:$PATH" "$ROOT/install.sh" >/dev/null
+  [ ! -e "$F/recall-mcp.py" ] && ! grep -q "recall-mcp" "$F/.handoff-manifest.json" && [ ! -s "$FAKE_CLAUDE_LOG" ] || fail "F69: default install holds recall-mcp or called claude"
+  ! grep -q "recall-mcp" <<<"$(PATH="$D/fakebin:$PATH" "$ROOT/install.sh" --dry-run)" || fail "F69: default dry-run mentions recall-mcp"
+  grep -q -- "--recall-mcp" <<<"$("$ROOT/install.sh" --help)" || fail "F69: --help lacks --recall-mcp"
+  [ "$(grep -c '^HOOK_VERSION = "1.18.0"$' "$ROOT/hooks/recall-mcp.py")" = 1 ] || fail "F69: HOOK_VERSION"
+  # dry-run lists the file and the command; runs nothing
+  o="$(PATH="$D/fakebin:$PATH" "$ROOT/install.sh" --recall-mcp --dry-run)"
+  grep -q "install hook: .*/recall-mcp.py" <<<"$o" && grep -qF "claude mcp add --scope user lossless-recall -- $MC" <<<"$o" || fail "F69: dry-run: $o"
+  [ ! -e "$F/recall-mcp.py" ] && [ ! -s "$FAKE_CLAUDE_LOG" ] || fail "F69: dry-run changed something"
+  # install with the flag: the file, the manifest, the exact claude call, no direct edit of ~/.claude.json
+  PATH="$D/fakebin:$PATH" "$ROOT/install.sh" --recall-mcp >/dev/null
+  [ -x "$F/recall-mcp.py" ] && grep -q '"recall-mcp.py"' "$F/.handoff-manifest.json" || fail "F69: file or manifest entry missing"
+  [ "$(cat "$FAKE_CLAUDE_LOG")" = "mcp add --scope user lossless-recall -- python3 $F/recall-mcp.py" ] || fail "F69: claude args: $(cat "$FAKE_CLAUDE_LOG")"
+  [ ! -e "$HOME/.claude.json" ] || fail "F69: the installer wrote ~/.claude.json"
+  # kept message
+  o="$(PATH="$D/fakebin:$PATH" "$ROOT/install.sh")"; grep -qx "recall-mcp: already installed, kept" <<<"$o" || fail "F69: kept message: $o"
+  o="$(PATH="$D/fakebin:$PATH" "$ROOT/install.sh" --no-recall-mcp)"; grep -qx "recall-mcp: already installed, kept" <<<"$o" && [ -e "$F/recall-mcp.py" ] || fail "F69: --no-recall-mcp removed it"
+  # the recall line names the tool, only when installed
+  printf '# Handoff\n- authority: x\n- recall: old line\n## Goal\nhi\n' > "$D/h.md"
+  mkdir -p "$HANDOFF_STATE_DIR"; cp "$D/h.md" "$HANDOFF_STATE_DIR/s69-latest.md"
+  echo "{\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"trigger\":\"auto\",\"degraded\":false,\"status\":\"ok\"}" > "$HANDOFF_STATE_DIR/s69-last-health.json"
+  o="$(printf '{"session_id":"s69","cwd":"/tmp","source":"compact"}' | python3 "$ROOT/hooks/postcompact-inject.py" --part 1)"
+  python3 - "$o" <<'PY'
+import json, sys
+c = json.loads(sys.argv[1])["hookSpecificOutput"]["additionalContext"]
+l = [x for x in c.split("\n") if x.startswith("- recall:")][0]
+assert l.endswith(" Or call the search_earlier_chat tool."), l
+PY
+  # uninstall: no claude on PATH still exits 0; with claude it runs the remove command
+  : > "$FAKE_CLAUDE_LOG"
+  o="$(PATH="$D/fakebin:$PATH" "$ROOT/uninstall.sh" --dry-run)"; grep -q "recall-mcp.py" <<<"$o" && [ ! -s "$FAKE_CLAUDE_LOG" ] || fail "F69: uninstall dry-run"
+  PATH="$D/fakebin:$PATH" "$ROOT/uninstall.sh" >/dev/null
+  [ ! -e "$F/recall-mcp.py" ] || fail "F69: uninstall left the file"
+  [ "$(cat "$FAKE_CLAUDE_LOG")" = "mcp remove lossless-recall --scope user" ] || fail "F69: uninstall claude args: $(cat "$FAKE_CLAUDE_LOG")"
+  o="$(printf '{"session_id":"s69","cwd":"/tmp","source":"compact"}' | python3 "$ROOT/hooks/postcompact-inject.py" --part 1)"
+  ! grep -q "search_earlier_chat" <<<"$o" || fail "F69: tool sentence without recall-mcp.py installed"
+  # no claude on PATH: the install prints the register command, installs the file, exits 0
+  r=0; o="$(PATH="$NC" "$ROOT/install.sh" --recall-mcp)" || r=$?
+  [ "$r" = 0 ] && [ -x "$F/recall-mcp.py" ] || fail "F69: install without claude: exit $r"
+  grep -qxF "recall-mcp: claude CLI not found; register it later with: claude mcp add --scope user lossless-recall -- $MC" <<<"$o" || fail "F69: no-claude message: $o"
+  r=0; PATH="$NC" "$ROOT/uninstall.sh" >/dev/null || r=$?
+  [ "$r" = 0 ] && [ ! -e "$F/recall-mcp.py" ] || fail "F69: uninstall without claude: exit $r"
+  # saved defaults
+  PATH="$D/fakebin:$PATH" "$ROOT/install.sh" --save-defaults --recall-mcp >/dev/null
+  grep -qx "recall_mcp=1" "$DF" && [ -x "$F/recall-mcp.py" ] || fail "F69: --save-defaults --recall-mcp"
+  PATH="$D/fakebin:$PATH" "$ROOT/uninstall.sh" >/dev/null
+  o="$(PATH="$D/fakebin:$PATH" "$ROOT/install.sh" --dry-run)"; grep -q "saved defaults.*recall_mcp" <<<"$o" && grep -q "recall-mcp.py" <<<"$o" || fail "F69: saved default not applied: $o"
+  PATH="$D/fakebin:$PATH" "$ROOT/install.sh" >/dev/null; [ -x "$F/recall-mcp.py" ] || fail "F69: saved default did not install it"
+  PATH="$D/fakebin:$PATH" "$ROOT/uninstall.sh" >/dev/null
+  PATH="$D/fakebin:$PATH" "$ROOT/install.sh" --no-recall-mcp >/dev/null
+  [ ! -e "$F/recall-mcp.py" ] && grep -qx "recall_mcp=1" "$DF" || fail "F69: --no-recall-mcp did not skip it, or touched the saved default"
+  PATH="$D/fakebin:$PATH" "$ROOT/install.sh" --save-defaults --no-recall-mcp >/dev/null
+  ! grep -q "recall_mcp" "$DF" && [ ! -e "$F/recall-mcp.py" ] || fail "F69: --save-defaults --no-recall-mcp"
+  ok "F69: install, registration command, no-claude message, kept message, recall line sentence, uninstall, saved defaults"
+)
+(
+  set -e
+  D="$T/f69p"; mkdir -p "$D"; export HOME="$D/home"; W="$D/work"; mkdir -p "$HOME/.claude" "$W"
+  export HANDOFF_STATE_DIR="$D/state"; MS="$ROOT/hooks/recall-mcp.py"
+  python3 - "$HOME" "$W" <<'PY'
+import json, os, re, sys
+home, w = sys.argv[1:3]
+real = os.path.realpath(w)
+pd = os.path.join(home, ".claude", "projects", re.sub(r"[^A-Za-z0-9]", "-", real))
+os.makedirs(pd)
+def rec(t, ts, text, n):
+    return {"type": t, "timestamp": ts, "cwd": real, "sessionId": "f69sess", "uuid": "u%d" % n,
+            "message": {"role": t, "content": text if t == "user" else [{"type": "text", "text": text}]}}
+rows = [rec("user", "2026-11-19T10:00:00Z", "Our staging database rotation policy is every ninety days for all credentials", 1),
+        rec("assistant", "2026-11-19T10:00:05Z", "Noted: the staging database rotation policy is every ninety days.", 2),
+        rec("user", "2026-11-19T10:01:00Z", "The deploy pipeline token is ghp_abcdefghijklmnopqrstuvwxyz0123456789 for the staging pipeline", 3),
+        rec("user", "2026-11-19T10:02:00Z", "LONGMARK " + ("lorem ipsum dolor " * 3000), 4)]
+open(os.path.join(pd, "f69sess.jsonl"), "w").write("".join(json.dumps(r) + "\n" for r in rows))
+PY
+  cat > "$D/drive.py" <<'PY'
+import json, subprocess, sys
+ms, cwd = sys.argv[1:3]
+def run(lines):
+    p = subprocess.run([sys.executable, ms], input="".join(l + "\n" for l in lines), capture_output=True, text=True, cwd=cwd, timeout=60)
+    assert p.returncode == 0, p.stderr
+    return [json.loads(x) for x in p.stdout.splitlines()], p.stdout
+def req(i, m, p=None):
+    return json.dumps({"jsonrpc": "2.0", "id": i, "method": m, **({"params": p} if p is not None else {})})
+def call(i, name, args):
+    return req(i, "tools/call", {"name": name, "arguments": args})
+txt = lambda r: r["result"]["content"][0]["text"]
+out, raw = run([
+    req(1, "initialize", {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "t", "version": "1"}}),
+    json.dumps({"jsonrpc": "2.0", "method": "notifications/initialized"}),
+    req(2, "ping"), req(3, "tools/list"),
+    call(4, "search_earlier_chat", {"query": "staging database rotation"}),
+    call(5, "search_earlier_chat", {"query": "staging", "role": "assistant", "limit": 1}),
+    call(6, "search_earlier_chat", {"query": "quantumunicorntelemetry"}),
+    call(7, "search_earlier_chat", {"query": "pipeline token"}),
+    call(8, "search_earlier_chat", {"query": ""}),
+    call(9, "search_earlier_chat", {"query": "x", "limit": 11}),
+    call(10, "search_earlier_chat", {"query": "x", "role": "tool"}),
+    call(11, "open_message", {"id": "f69sess:1"}),
+    call(12, "open_message", {"id": "zzzzzzzz:1"}),
+    call(13, "open_message", {"id": "f69sess:4", "full": True}),
+    call(14, "open_message", {}),
+    call(15, "nosuchtool", {}),
+    req(16, "nosuch/method"),
+    "this is not json",
+    req(17, "ping"),
+    call(18, "open_message", {"id": "f69sess:3"}),
+])
+by = {o.get("id"): o for o in out}
+assert [o.get("id") for o in out].count(2) == 1 and 99 not in by
+init = by[1]["result"]
+assert init["protocolVersion"] == "2025-06-18" and init["serverInfo"] == {"name": "lossless-recall", "version": "1.18.0"}, init
+ins = init["instructions"]
+assert len(ins) < 4096 and "recall rule: before you state an earlier number, path, name, command or decision, search for it. Do not answer from memory. If the search finds nothing, say so." in ins, ins
+assert by[2]["result"] == {}
+tools = {t["name"]: t for t in by[3]["result"]["tools"]}
+assert set(tools) == {"search_earlier_chat", "open_message"}
+assert all(t["_meta"] == {"anthropic/alwaysLoad": True} for t in tools.values())
+assert tools["search_earlier_chat"]["inputSchema"]["required"] == ["query"] and tools["open_message"]["inputSchema"]["required"] == ["id"]
+t = txt(by[4]); assert "isError" not in by[4]["result"] or by[4]["result"]["isError"] is False
+ls = t.splitlines(); assert 1 <= len(ls) <= 5 and all(x.startswith("f69sess") for x in ls) and "ninety days" in t, t
+assert len(txt(by[5]).splitlines()) == 1 and " assistant " in txt(by[5]), txt(by[5])
+assert txt(by[6]) == "no matches", txt(by[6])
+assert "ghp_abcdefghijklmnopqrstuvwxyz" not in txt(by[7]) and "[REDACTED:github]" in txt(by[7]), txt(by[7])
+for i in (8, 9, 10, 12, 14):
+    r = by[i]["result"]; assert r["isError"] is True and "\n" not in r["content"][0]["text"] and r["content"][0]["text"], (i, r)
+assert "ninety days" in txt(by[11]) and txt(by[11]).startswith("--- "), txt(by[11])
+assert len(txt(by[13])) <= 12000 + 40 and txt(by[13]).endswith("[cut at 12000 characters]"), (len(txt(by[13])), txt(by[13])[-60:])
+assert by[15].get("error", {}).get("code") == -32602 or by[15]["result"]["isError"] is True
+assert by[16]["error"]["code"] == -32601
+pe = [o for o in out if o.get("id") is None and "error" in o]
+assert len(pe) == 1 and pe[0]["error"]["code"] == -32700, pe
+assert 17 in by and "ghp_abcdefghijklmnopqrstuvwxyz" not in txt(by[18]) and "[REDACTED:github]" in txt(by[18]), by.get(18)
+# an unsupported client version gets the default; a supported older one is echoed
+o2, _ = run([req(1, "initialize", {"protocolVersion": "1999-01-01"}), req(2, "initialize", {"protocolVersion": "2025-03-26"})])
+assert o2[0]["result"]["protocolVersion"] == "2025-06-18" and o2[1]["result"]["protocolVersion"] == "2025-03-26", o2
+PY
+  python3 "$D/drive.py" "$MS" "$W" || fail "F69: scripted MCP session"
+  python3 - "$HANDOFF_STATE_DIR/recall-mcp.jsonl" <<'PY'
+import json, sys
+raw = open(sys.argv[1]).read()
+rows = [json.loads(x) for x in raw.splitlines() if x.strip()]
+assert len(rows) >= 10 and all(set(r) == {"ts", "tool", "hits", "ms"} and r["tool"] in ("search_earlier_chat", "open_message") for r in rows), rows[:3]
+assert all(isinstance(r["hits"], int) and isinstance(r["ms"], int) for r in rows)
+for bad in ("staging", "ninety", "ghp_", "quantum", "pipeline"):
+    assert bad not in raw, bad
+PY
+  # the server keeps running after bad input: a closed stdin ends it with exit 0
+  r=0; python3 "$MS" </dev/null || r=$?; [ "$r" = 0 ] || fail "F69: exit $r on empty stdin"
+  ok "F69: MCP protocol, both tools, limits, redaction, errors, parse error, version echo, health log without query text"
 )
 
 "$ROOT/uninstall.sh" >"$T/un.out"

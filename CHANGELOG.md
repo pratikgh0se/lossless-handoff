@@ -2,6 +2,24 @@
 
 Lossless Handoff, formerly claude-handoff.
 
+## [0.16.0] - 2026-11-22
+
+Two opt-in search levers: a strict recall rule line and a recall MCP tool (hooks 1.18.0). New F68 and F69 in `docs/spec.md`.
+
+### Upgrade notes
+
+- The default install is the same as before. Both parts are off. Add them with `./install.sh --recall-rules` and `./install.sh --recall-mcp` (or save them with `--save-defaults`).
+- `--no-recall-rules` and `--no-recall-mcp` skip a part for one run. A rerun never removes an installed part. The installer prints `recall-rules: already installed, kept` or `recall-mcp: already installed, kept`.
+- `--recall-mcp` runs `claude mcp add --scope user lossless-recall -- python3 <hooks dir>/recall-mcp.py`. If `claude` is not on the PATH, the installer prints the command and still installs the file. `./uninstall.sh` runs `claude mcp remove lossless-recall --scope user`.
+- Neither part forces a search.
+- Restart open Claude Code sessions after the install.
+
+### Changes
+
+- F68: with the marker file `~/.claude/hooks/.recall-rules`, the recall line is followed by one rule line in every session start and subagent start. `HANDOFF_RECALL_RULES=0` switches it off. Inject rows in `receipts.jsonl` have `recall_rules`.
+- F69: new `hooks/recall-mcp.py`, a stdio MCP server (name `lossless-recall`) with the tools `search_earlier_chat` and `open_message`. Secrets are masked, a result has at most 12,000 characters, and `recall-mcp.jsonl` holds no query text. The recall line names the tool when it is installed.
+- All hook versions are 1.18.0. Product version 0.16.0.
+
 ## [0.15.0] - 2026-11-20
 
 Auto-recall: an opt-in hook that searches the earlier chats when your prompt refers to the past (hooks 1.17.0). New F67 in `docs/spec.md`.

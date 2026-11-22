@@ -10,7 +10,7 @@ Off switch: HANDOFF_AUTO_RECALL=0. The health log (auto-recall.jsonl) holds no p
 """
 import json, os, re, sys, threading, time
 
-HOOK_VERSION = "1.17.0"
+HOOK_VERSION = "1.18.0"
 HOME = os.path.expanduser("~")
 STATE_DIR = (os.environ.get("HANDOFF_STATE_DIR") or "").strip() or os.path.join(HOME, ".local", "state", "claude-handoffs")
 BUDGET_S = 2.0

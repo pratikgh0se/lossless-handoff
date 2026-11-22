@@ -184,7 +184,17 @@ if [ -e "$HOOKS_DIR/handoff-canary" ] || [ -e "$HOOKS_DIR/handoff-canary.sh" ]; 
   fi
 fi
 
-for f in precompact-handoff.py postcompact-inject.py handoff-nudge.py auto-recall.py recall.py claims.json .handoff-manifest.json .claude-handoff-install.json; do
+# F69: unregister the MCP server first (needs the claude command; a failure is ignored). Never edit ~/.claude.json directly.
+if [ -e "$HOOKS_DIR/recall-mcp.py" ]; then
+  if command -v claude >/dev/null 2>&1; then
+    say "run: claude mcp remove lossless-recall --scope user"
+    [ "$DRY" = 1 ] || claude mcp remove lossless-recall --scope user >/dev/null 2>&1 || true
+  else
+    echo "recall-mcp: claude CLI not found; unregister it yourself with: claude mcp remove lossless-recall --scope user"
+  fi
+fi
+
+for f in precompact-handoff.py postcompact-inject.py handoff-nudge.py auto-recall.py recall-mcp.py .recall-rules recall.py claims.json .handoff-manifest.json .claude-handoff-install.json; do
   if [ -e "$HOOKS_DIR/$f" ]; then
     say "remove $HOOKS_DIR/$f"
     [ "$DRY" = 1 ] || rm "$HOOKS_DIR/$f"

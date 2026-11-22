@@ -77,7 +77,7 @@ HARD_MAX = 9900    # each part's total output (warning + header + content + cont
 INLINE_MAX = 9700  # content target per part
 NAMES_MAX = 150    # the section-name list in a continuation line is cut to this many chars
 MAX_PARTS = 3      # F37.6
-HOOK_VERSION = "1.17.0"
+HOOK_VERSION = "1.18.0"
 _SID = ["unknown"]
 
 
@@ -212,11 +212,35 @@ def recall_path():
     return None
 
 
+RECALL_RULE_LINE = ("- recall rule: before you state an earlier number, path, name, command or decision, search for it. "
+                    "Do not answer from memory. If the search finds nothing, say so.")
+RECALL_MCP_SENTENCE = "Or call the search_earlier_chat tool."
+
+
+def _hooks_dir():
+    return os.path.join(os.path.expanduser("~"), ".claude", "hooks")  # HOME from the environment, like recall_agent_ours()
+
+
+def recall_rules_on():
+    """F68: the marker file ~/.claude/hooks/.recall-rules exists and HANDOFF_RECALL_RULES is not 0."""
+    if (os.environ.get("HANDOFF_RECALL_RULES") or "").strip() == "0":
+        return False
+    return os.path.isfile(os.path.join(_hooks_dir(), ".recall-rules"))
+
+
+def recall_mcp_ours():
+    """F69: recall-mcp.py is installed in ~/.claude/hooks."""
+    return os.path.isfile(os.path.join(_hooks_dir(), "recall-mcp.py"))
+
+
 def recall_line():
     """F44.11(a): the F44.6 line, only when recall.py exists in ~/.claude/hooks (HOME from the environment) or next to this hook.
-    F55.c: ends with one more sentence when the recall subagent file is installed."""
+    F55.c: ends with one more sentence when the recall subagent file is installed. F69: and one more when recall-mcp.py is
+    installed. F68: the strict rule line follows the recall line when the marker is there."""
     if recall_path():
-        return RECALL_LINE[:-1] + (" " + RECALL_AGENT_SENTENCE if recall_agent_ours() else "") + "\n"
+        return (RECALL_LINE[:-1] + (" " + RECALL_AGENT_SENTENCE if recall_agent_ours() else "")
+                + (" " + RECALL_MCP_SENTENCE if recall_mcp_ours() else "") + "\n"
+                + (RECALL_RULE_LINE + "\n" if recall_rules_on() else ""))
     return ""
 
 
@@ -263,7 +287,9 @@ def decorate(txt):
     try:
         node = _NODE_LINE[0]
         agent = recall_agent_ours()
-        if not txt or not (node or agent):
+        mcp = recall_mcp_ours()
+        rules = recall_rules_on()
+        if not txt or not (node or agent or mcp or rules):
             return txt
         lines = txt.split("\n")
         ri = next((i for i, x in enumerate(lines) if x.startswith("- recall:")), None)
@@ -275,10 +301,18 @@ def decorate(txt):
                 at = ai + 1 if ai is not None else min(1, len(lines))
                 lines.insert(at, recall_line().rstrip("\n"))
                 ri = at
-        elif agent and RECALL_AGENT_SENTENCE not in lines[ri]:
-            lines[ri] = lines[ri].rstrip() + " " + RECALL_AGENT_SENTENCE
+        else:
+            if agent and RECALL_AGENT_SENTENCE not in lines[ri]:
+                lines[ri] = lines[ri].rstrip() + " " + RECALL_AGENT_SENTENCE
+            if mcp and RECALL_MCP_SENTENCE not in lines[ri]:
+                lines[ri] = lines[ri].rstrip() + " " + RECALL_MCP_SENTENCE
+            if rules and RECALL_RULE_LINE not in lines:
+                lines.insert(ri + 1, RECALL_RULE_LINE)
         if node:
-            lines.insert((ri + 1) if ri is not None else min(1, len(lines)), node.rstrip("\n"))
+            at = min(1, len(lines)) if ri is None else ri + 1
+            if ri is not None and at < len(lines) and lines[at] == RECALL_RULE_LINE:
+                at += 1  # the node line goes after the rule line, which follows the recall line
+            lines.insert(at, node.rstrip("\n"))
         return "\n".join(lines)
     except Exception as e:
         log_error(e)
@@ -681,7 +715,7 @@ def write_receipt(d, key, kind, text):
             hsha = hashlib.sha256(f.read()).hexdigest()
         row = {"ts": utc_now(), "sid": psid[:8], "agent_id": aid, "key": key, "transcript": tp, "boundary_ts": bts,
                "kind": kind, "handoff_sha256": hsha, "part1_sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(),
-               "part1_head": text[:300]}
+               "part1_head": text[:300], "recall_rules": bool(recall_rules_on())}
         with open(os.path.join(HANDOFFS_DIR, "receipts.jsonl"), "a", encoding="utf-8") as f:
             f.write(json.dumps(row) + "\n")
     except BaseException as e:
