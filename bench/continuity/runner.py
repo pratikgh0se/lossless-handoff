@@ -883,6 +883,7 @@ def run_big_check(ctx):
     ctx.state["big"] = {"cost_usd": round(o["_delta"], 4), "tokens": i_ + cr + cw, "standard_price_usd": round(std, 4),
                         "price_ratio": round(o["_delta"] / std, 2) if std else None, "call_cap_usd": cfg.get("big_cap_usd", BIG_CAP_USD),
                         "over_call_cap": o["_delta"] > cfg.get("big_cap_usd", BIG_CAP_USD), "docs": docs, "chars": len(prompt)}
+    ss.st["status"] = "done"        # the call finished and its numbers are recorded: the session is done (the preflight checks the numbers)
     ctx.save()
 
 
