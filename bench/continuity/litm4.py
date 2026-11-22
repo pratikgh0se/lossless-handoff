@@ -71,7 +71,7 @@ def section4(rows_all, sessions, th, draws):
     d4t = lt.get("design4", {})
     V = Vec(rows)
     boot = Boot(max(1, len(V.seeds)), draws or th["bootstrap_draws"], th["bootstrap_rng_seed"], th["ci_level"])
-    arms = [a for a in ("A", "B", "R", "K", "Z", "O") if any(r["arm"] == a for r in rows)]
+    arms = [a for a in ("A", "B", "R", "K", "G", "P", "Z", "O") if any(r["arm"] == a for r in rows)]
     (metric, level), committed = pick_cell(th)
     md = ["### Design 4: update chains with interference (no-compaction condition)", "",
           "Levels L1 to L4 are in one session. A chain is tight: all its statements are in one third, so the position is that third. "
@@ -85,7 +85,7 @@ def section4(rows_all, sessions, th, draws):
         for lv in design4.D4_LEVELS + ("L5",):
             if not any(r["arm"] == arm and r["type"] == lv for r in rows):
                 continue
-            for ph in design4.PHRASINGS:
+            for ph in design4.ALL_PHRASINGS:
                 parts = []
                 for pos in ("start", "middle", "end", None):
                     sel = [r for r in rows if r["arm"] == arm and r["type"] == lv and r.get("phrasing") == ph and (pos is None or r.get("position") == pos)]
@@ -127,7 +127,7 @@ def section4(rows_all, sessions, th, draws):
             cols.append("%d/%d" % (b, n) if n else "no data")
             rw[(arm, lv)] = (b, n)
         md.append("| %s | %s |" % (arm, " | ".join(cols)))
-    md += ["", "By phrasing (all arms, all levels): " + ", ".join("%s %d/%d" % ((ph,) + gates_runaway([r for r in rows if r.get("phrasing") == ph])) for ph in design4.PHRASINGS) + "."]
+    md += ["", "By phrasing (all arms, all levels): " + ", ".join("%s %d/%d" % ((ph,) + gates_runaway([r for r in rows if r.get("phrasing") == ph])) for ph in design4.ALL_PHRASINGS) + "."]
     out["runaway"] = {"%s|%s" % (k[0], k[1]): list(v) for k, v in rw.items()}
     # table D4-7: refused probe forks (a safety filter refused the fork: an outcome, items left out of the accuracy)
     md += ["", "#### Table D4-7: refused probe forks (a safety filter refused the fork; its items are left out of the accuracy) as refused forks / forks (refused items / items)", "",
@@ -140,7 +140,7 @@ def section4(rows_all, sessions, th, draws):
             cols.append("%d/%d (%d/%d)" % t if t[1] else "no data")
             rf[(arm, lv)] = t
         md.append("| %s | %s |" % (arm, " | ".join(cols)))
-    md += ["", "By phrasing (all arms, all levels): " + ", ".join("%s %d/%d" % ((ph,) + design4.refused_forks(rows_d4, None, None, ph)[:2]) for ph in design4.PHRASINGS) + "."]
+    md += ["", "By phrasing (all arms, all levels): " + ", ".join("%s %d/%d" % ((ph,) + design4.refused_forks(rows_d4, None, None, ph)[:2]) for ph in design4.ALL_PHRASINGS) + "."]
     out["refused"] = {"%s|%s" % (k[0], k[1]): list(v) for k, v in rf.items()}
     # place of the last update inside a third (what part of the context H1 can test)
     pt = design4.place_table(scripts) if scripts else {}
@@ -235,6 +235,79 @@ def section4(rows_all, sessions, th, draws):
             add("H11 harm guard: R minus B stale-plus-lure error rate, cued (primary level), paired by seed",
                 "HARM if the interval lower bound > 0 (auto-recall injects old values)", fmt_diff(d),
                 "HARM: auto-recall injects old values" if d[1] is not None and d[1] > 0 else "OK: no harm shown (%d seeds)" % d[3])
+        # F79: H12-H17 and the P leak check (arms G and P; thresholds registered before any data)
+        if any(r["arm"] in ("G", "P") for r in rows):
+            from litm import model_search_val
+
+            def got_history(r):
+                ks = r.get("search_kinds") or []
+                return "guard" in ks or any(k in ("bash", "mcp") for k in ks)
+
+            def share(flt, fn):
+                c, t = V.vecf(flt, fn)
+                return (sum(c) / float(sum(t))) if sum(t) else None
+
+            def cell(arm, ph, typ=None):
+                return lambda r: r["arm"] == arm and r["type"] == (typ or level) and r.get("phrasing") == ph
+
+            def diff_cell(a, b, ph, met="m1"):
+                return boot.diff(*V.vec(cell(a, ph), met), *V.vec(cell(b, ph), met))
+
+            def k_acc(ph):
+                return share(cell("K", ph), lambda r: r.get("m1") is True)
+
+            easy = d4t.get("h13_too_easy_k_max", 0.95)
+            min13 = d4t.get("h13_min_points", 10) / 100.0
+            fr = {ph: share(cell("G", ph), got_history) for ph in d4t.get("h12_phrasings", ["nonliteral", "neutral"])}
+            add("H12 trigger (arm G): share of items that got the history (guard fired or model search)", ">= %s%% for each of %s" % (int(100 * d4t.get("h12_min_share", 0.9)), ", ".join(fr)),
+                ", ".join("%s %s" % (ph, "no data" if x is None else pc(x)) for ph, x in fr.items()),
+                "no data" if all(x is None for x in fr.values()) else ("SUPPORTED" if all(x is not None and x >= d4t.get("h12_min_share", 0.9) for x in fr.values()) else "NOT SUPPORTED"))
+            for name, ph in (("H13 gain, primary (action probes): G minus K", "action"), ("H13n gain, secondary (non-literal probes): G minus K", "nonliteral")):
+                d = diff_cell("G", "K", ph)
+                ka = k_acc(ph)
+                if d[0] is None:
+                    res = "no data"
+                elif ka is not None and ka > easy:
+                    res = "TOO EASY: no claim (K is at %s)" % pc(ka)
+                else:
+                    res = "SUPPORTED" if d[0] >= min13 and d[1] is not None and d[1] > 0 else "NOT SUPPORTED"
+                add(name, ">= +%d pts and CI lower bound > 0; TOO EASY if K > %s" % (int(100 * min13), pc(easy)), fmt_diff(d), res)
+            d = diff_cell("G", "K", "cued")
+            lim14 = d4t.get("h14_cued_min_points", -2) / 100.0
+            add("H14 harm: G minus K on cued probes (the share of right answers that became wrong needs the first reply: not measured)", ">= %d pts" % d4t.get("h14_cued_min_points", -2), fmt_diff(d),
+                "no data" if d[0] is None else ("SUPPORTED: no harm shown" if d[0] >= lim14 else "HARM: G is below K on cued probes"))
+            ctl = share(lambda r: r["arm"] == "G" and r["type"] == "CT", lambda r: bool(r.get("guard_fired")))
+            add("H15 false fire (arm G): share of control items (facts stated one time) whose fork fired the guard", "<= %s%%; the replay of real transcripts <= %s%% of the stops (run.sh retrieval-gate --replay)" % (
+                int(100 * d4t.get("h15_control_fire_max", 0.10)), int(100 * d4t.get("h15_replay_fire_max", 0.05))),
+                "no control rows" if ctl is None else pc(ctl), "no data" if ctl is None else ("SUPPORTED" if ctl <= d4t.get("h15_control_fire_max", 0.10) else "NOT SUPPORTED"))
+            ff = lambda flag: (lambda r: r["arm"] == "G" and r["type"] == level and bool(r.get("free_form")) is flag and r.get("phrasing") in ("nonliteral", "neutral", "action"))
+            f_free, f_fixed = share(ff(True), lambda r: bool(r.get("guard_fired"))), share(ff(False), lambda r: bool(r.get("guard_fired")))
+            gain_free = boot.diff(*V.vec(lambda r: r["arm"] == "G" and r["type"] == level and r.get("phrasing") == "action" and bool(r.get("free_form")), "m1"),
+                                  *V.vec(lambda r: r["arm"] == "K" and r["type"] == level and r.get("phrasing") == "action" and bool(r.get("free_form")), "m1"))
+            gain_main = diff_cell("G", "K", "action")
+            if f_free is None or not f_fixed:
+                res16, meas16 = "no data", "no free-form rows" if f_free is None else "no fixed-form fire rate"
+            else:
+                ok_fire = f_free >= d4t.get("h16_fire_ratio_min", 0.8) * f_fixed
+                ok_gain = gain_free[0] is not None and gain_main[0] is not None and gain_free[0] >= d4t.get("h16_gain_ratio_min", 0.5) * gain_main[0]
+                res16 = "SUPPORTED" if (ok_fire and ok_gain) else "NOT SUPPORTED"
+                meas16 = "fire free-form %s, fixed-form %s; gain free-form %s" % (pc(f_free), pc(f_fixed), fmt_diff(gain_free))
+            add("H16 not fitted (free-form cell, no backticks, some statements in assistant text, arm G)", "fire rate >= %s%% of the fixed-form rate and gain >= %s of H13" % (
+                int(100 * d4t.get("h16_fire_ratio_min", 0.8)), d4t.get("h16_gain_ratio_min", 0.5)), meas16, res16)
+            d = diff_cell("G", "K", "action")
+            gshare = share(cell("G", "action"), lambda r: bool(r.get("guard_fired")))
+            if d[0] is None:
+                res17 = "no data"
+            elif k_acc("action") is not None and k_acc("action") > easy:
+                res17 = "TOO EASY: no claim"
+            else:
+                res17 = "SUPPORTED" if (d[0] >= d4t.get("h17_min_points", 10) / 100.0 and d[1] is not None and d[1] > 0 and (gshare or 0) >= d4t.get("h17_guard_fired_min_share", 0.5)) else "NOT SUPPORTED"
+            add("H17 autonomous action (the owner's main case): G minus K on action probes, and the guard fired in G action items",
+                ">= +%d pts, CI lower bound > 0, guard fired >= %s%%" % (d4t.get("h17_min_points", 10), int(100 * d4t.get("h17_guard_fired_min_share", 0.5))),
+                "%s; guard fired %s" % (fmt_diff(d), "no data" if gshare is None else pc(gshare)), res17)
+            d = diff_cell("P", "K", "nonliteral")
+            add("P equals K on non-literal probes (leak check): P minus K", "CI lower bound not above 0", fmt_diff(d),
+                "no data" if d[0] is None else ("HARNESS LEAK: P gains over K without a trigger" if d[1] is not None and d[1] > 0 else "OK"))
     hyps(rows, V, boot, add)
     refused_n = sum(1 for r in rows_d4 if r.get("refused"))
     if refused_n:

@@ -1162,7 +1162,7 @@ class SmallProbes(unittest.TestCase):
         ss.script, ss.d4, ss.d3 = d4.build_litm4(1), True, True
         prompts = []
 
-        def call(prompt, kind, sid=None, fork_of=None, first=False, model=None, cap=None):
+        def call(prompt, kind, sid=None, fork_of=None, first=False, model=None, cap=None, action_dir=None):
             prompts.append(prompt)
             r = replies(len(prompts) - 1, prompt)
             return dict(r, _delta=0.01, usage={"output_tokens": 10})
@@ -1436,6 +1436,89 @@ class PreflightEstimates4(unittest.TestCase):
         finally:
             runner.RESULTS, runner.Ctx, runner.execute = old
             shutil.rmtree(d)
+
+
+class ActionProbes(unittest.TestCase):
+    """F79: action probes, arms G and P, controls, free-form cell, trigger gate without the hook."""
+
+    def setUp(self):
+        self.script = d4.build_litm4(3)
+        self.items = self.script["items"]["L2"][:3]
+
+    def test_action_prompt_has_task_no_question_and_both_naming_forms(self):
+        p = d4.action_prompt("L2", self.script, "PROBE-x", self.items, "probe-out/x")
+        self.assertIn("probe-out/x/services.conf", p)
+        self.assertNotIn("?", p)
+        self.assertIn("`%s`" % self.items[0]["key"], p)          # odd number: named by key
+        self.assertIn(self.items[1]["desc"], p)                  # even number: non-literal description
+        self.assertNotIn("`%s`" % self.items[1]["key"], p)
+
+    def test_action_grade_reads_file_lines_with_m1_only(self):
+        txt = "\n".join("%d %s=%s" % (i + 1, it["attr"], it["current"] if i == 0 else "WRONG-1") for i, it in enumerate(self.items))
+        g = d4.grade_action(self.items, txt, self.script)
+        self.assertTrue(g[0]["m1"])
+        self.assertFalse(g[1]["m1"])
+        self.assertIsNone(g[0]["m2"])
+        g = d4.grade_action(self.items, "", self.script)
+        self.assertEqual(g[0]["error_class"], "unreadable")
+
+    def test_arms_g_and_p_settings(self):
+        self.assertIn("G", runner.FORK_CAPABLE)
+        self.assertIn("P", runner.FORK_CAPABLE)
+        self.assertEqual(runner.GUARD_ENV, ("HANDOFF_HISTORY_GUARD", "HANDOFF_ACTION_GUARD"))
+        self.assertIn("HANDOFF_HISTORY_GUARD", runner.OVERRIDE_ENV)
+        self.assertIn("HANDOFF_ACTION_GUARD", runner.OVERRIDE_ENV)
+
+    def test_guard_kind_is_found_in_a_hook_record(self):
+        recs = [{"type": "user", "message": {"content": "PROBE-m go"}}, {"type": "user", "message": {"content": "Lossless Handoff history check: look at the history of x."}}]
+        self.assertIn("guard", grade.search_used(recs, "PROBE-m")[1])
+
+    def test_controls_state_each_fact_one_time(self):
+        c = d4.add_controls(self.script, 3)
+        ct = c["items"]["CT"]
+        self.assertEqual(len(ct), 4)
+        for it in ct:
+            self.assertEqual(len(it["stmts"]), 1)
+            n = sum(t.get("prompt", "").count(it["stmts"][0]) for t in c["plan"])
+            self.assertEqual(n, 1)
+
+    def test_free_form_has_no_backticks_and_30_percent_assistant_text(self):
+        f = d4.free_form(self.script, 3)
+        facts = [t for t in f["plan"] if t["kind"] == "fact"]
+        for it in [i for lv in f["items"].values() for i in lv]:
+            self.assertNotIn("`", "".join(it["stmts"]))
+        n_ast = sum(len(t.get("assistant_text", [])) for t in facts)
+        total = sum(len(i["stmts"]) for lv in f["items"].values() for i in lv)
+        self.assertAlmostEqual(n_ast / float(total), 0.30, delta=0.02)
+
+    def test_cost_counts_four_phrasings_and_g_p_factors(self):
+        three = cost.estimate3(1, ["A", "O", "Z"], [1], ["nocompact"], ["cued", "neutral", "nonliteral"], design=4)[0]
+        four = cost.estimate3(1, ["A", "O", "Z"], [1], ["nocompact"], ["cued", "neutral", "nonliteral", "action"], design=4)[0]
+        self.assertGreater(four, three)
+        self.assertGreater(cost.ARM_FACTOR["G"], cost.ARM_FACTOR["K"])
+        self.assertGreater(cost.ARM_FACTOR["P"], cost.ARM_FACTOR["K"])
+
+    def test_thresholds_register_h12_to_h17_before_data(self):
+        d = json.load(open(os.path.join(HERE, "thresholds.json")))["litm"]["design4"]
+        for k in ("h12_min_share", "h13_min_points", "h14_cued_min_points", "h15_control_fire_max", "h15_replay_fire_max", "h16_fire_ratio_min", "h17_min_points"):
+            self.assertIn(k, d)
+        self.assertEqual(d["h13_primary"], "action")
+
+    def test_trigger_gate_and_replay_report_not_available_without_the_hook(self):
+        import retrieval_gate as rg
+        with tempfile.TemporaryDirectory() as hd:
+            _r, line, ok = rg.trigger_gate([3], "L2", hd)
+            self.assertIsNone(ok)
+            self.assertIn("NOT AVAILABLE", line)
+            self.assertIsNone(rg.replay(hd, hd))
+
+    def test_oracle_replies_have_four_kinds(self):
+        import retrieval_gate as rg
+        its = self.script["items"]["L4"]
+        kinds = set()
+        for it in its:
+            kinds |= set(rg.oracle_replies(it, its, self.script))
+        self.assertEqual(kinds, set(rg.REPLY_KINDS))
 
 
 if __name__ == "__main__":

@@ -10,6 +10,7 @@
 #   run.sh litm-smoke [options]   1 dev seed, arms A and R, no compaction only (about $12)
 #   run.sh litm-pilot [options]   lost-in-the-middle pilot: 2 dev seeds, arms A,B,R, both conditions, both phrasings (add --dry-run to only print the cost)
 #   run.sh litm-full  [options]   same design, 20 report seeds, arms A,B,R,Z,O
+#   run.sh retrieval-gate --trigger | --replay [--project DIR]            F79 ($0): F77 trigger gate with oracle replies; replay on real transcripts (counts only)
 #   run.sh retrieval-gate [--level L] [--seeds FILE] [--hooks-dir DIR]   offline retrieval gate (F76, $0): the hooks of a folder on synthetic transcripts
 #   run.sh estimate               print the pilot cost and the full cost of the lost-in-the-middle design (no model call)
 #   run.sh resume  <run-id> [--budget-usd X] [--jobs N]

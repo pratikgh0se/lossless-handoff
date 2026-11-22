@@ -137,7 +137,7 @@ def abort_reasons(sessions, rows, est_per_seed, finished_seeds, session_costs=No
         if all_f and bad_f / float(all_f) > REFUSED_SEED_MAX:
             why.append("seed %s: refused rate %.0f%% (%d of %d probe forks refused by a safety filter) is above %.0f%%" % (
                 sd, 100.0 * bad_f / all_f, bad_f, all_f, 100 * REFUSED_SEED_MAX))
-    nofire = [r for r in sel if r.get("arm") in ("R", "K") and r.get("phrasing", "cued") == "cued" and r.get("auto_recall_fired") is False]
+    nofire = [r for r in sel if r.get("arm") in ("R", "K", "G", "P") and r.get("phrasing", "cued") == "cued" and r.get("auto_recall_fired") is False]
     if nofire:
         forks = sorted({(r["seed"], r["arm"], r["type"], r["fork_sid"]) for r in nofire})
         why.append("arm R or K: %d cued probe fork(s) had no auto-recall fire, for example seed %s arm %s type %s" % (len(forks), forks[0][0], forks[0][1], forks[0][2]))

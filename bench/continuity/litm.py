@@ -14,7 +14,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 SCORED = ["R", "D", "X", "S", "E", "C"]      # scored types that have one plant turn, so a position tag. M has no position.
 POS = ["start", "middle", "end"]
 PHR = ("cued", "neutral", "nonliteral")
-NAMES = {"A": "A plain", "B": "B Lossless Handoff", "R": "R auto-recall", "K": "K recall levers", "Z": "Z no history", "O": "O no compaction"}
+NAMES = {"A": "A plain", "B": "B Lossless Handoff", "R": "R auto-recall", "K": "K recall levers", "G": "G guards", "P": "P size trigger", "Z": "Z no history", "O": "O no compaction"}
 
 
 def cond_of(r):
