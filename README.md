@@ -6,7 +6,7 @@
 
 This documentation uses ASD-STE100 Simplified Technical English.
 
-Current versions: product 0.16.0 (`install.sh`), hooks 1.18.0 (`HOOK_VERSION` in `hooks/precompact-handoff.py`, `hooks/postcompact-inject.py`, `hooks/auto-recall.py`, `hooks/recall-mcp.py`, `hooks/reanchor.py` and `hooks/claim-guard.py`).
+Current versions: product 0.17.0 (`install.sh`), hooks 1.19.0 (`HOOK_VERSION` in `hooks/precompact-handoff.py`, `hooks/postcompact-inject.py`, `hooks/auto-recall.py`, `hooks/recall-mcp.py`, `hooks/reanchor.py` and `hooks/claim-guard.py`).
 
 [![CI](https://github.com/pratikgh0se/lossless-handoff/actions/workflows/ci.yml/badge.svg)](https://github.com/pratikgh0se/lossless-handoff/actions/workflows/ci.yml) [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE) [![Release](https://img.shields.io/github/v/release/pratikgh0se/lossless-handoff)](https://github.com/pratikgh0se/lossless-handoff/releases/latest)
 
@@ -71,6 +71,7 @@ To check the install without a model call, run `python3 ~/.claude/hooks/postcomp
 - **No silent misses.** A hook cannot force Claude Code to run it. So the hooks write a handoff early, rebuild it after the fact if it is still missing, and, with `--nightly`, count the misses every night. See [docs/hooks-in-detail.md](docs/hooks-in-detail.md#when-a-compaction-is-missed).
 - **Re-anchor** (opt-in, `--reanchor`) and **claim guard** (opt-in, `--claim-guard`, shadow mode by default). See [docs/recall.md](docs/recall.md#re-anchor-and-claim-guard).
 - **Auto-recall** (opt-in, `--auto-recall`). When your prompt refers to the past, a hook runs the recall search for the model and adds the top 3 exact quotes. See [docs/recall.md](docs/recall.md#auto-recall).
+- **Key history** (0.17.0). `recall.py history <identifier>` and the MCP tool `key_history` list every mention of one key, oldest first. Auto-recall uses it when the prompt names an identifier. See [docs/recall.md](docs/recall.md#key-history).
 - **Strict recall rule and recall tool** (opt-in, `--recall-rules` and `--recall-mcp`). One rule line tells the model to search before it states an earlier fact. An MCP tool lets the model search in one call. Neither forces a search. See [docs/recall.md](docs/recall.md#strict-recall-rule-and-the-recall-tool).
 - **Subagents** get their own handoff and, at start, the rules of the project.
 - **The hook always exits 0** and never blocks compaction. If anything fails, it still writes a minimal handoff.
