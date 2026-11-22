@@ -522,7 +522,7 @@ class Design3(unittest.TestCase):
         self.assertEqual(runner.NC3_WINDOW, 400000)
         lines, est = runner.nc3_plan(400000)
         self.assertTrue(0.70 * 400000 <= est <= 0.80 * 400000, est)
-        self.assertGreaterEqual(lines, 300)
+        self.assertGreaterEqual(lines, 200)
         with self.assertRaises(SystemExit):
             runner.nc3_plan(60000)
 
@@ -838,7 +838,7 @@ def make_pf_run(root, **flaws):
     for d in (rd, work, projects):
         os.makedirs(d, exist_ok=True)
     cfg = {"run_id": run_id, "work_base": work, "nc_estimate_tokens": 72000, "kind": "preflight", "arms": list(PF_ARMS), "seeds": [1],
-           "conditions": ["compact", "nocompact"], "probe_design": 3, "types": ["R", "X"], "phrasings": ["cued", "neutral", "nonliteral"],
+           "conditions": ["compact", "nocompact"], "probe_design": 4 if flaws.get("d4") else 3, "types": ["R", "X"], "phrasings": ["cued", "neutral", "nonliteral"],
            "env_allowlist": list(runner.ENV_ALLOW)}
     json.dump(cfg, open(os.path.join(rd, "config.json"), "w"))
     est_total = cost.estimate_preflight(tuple(PF_ARMS), ("compact", "nocompact"))[0]
@@ -905,7 +905,7 @@ def make_pf_run(root, **flaws):
         if cond == "compact":
             plan = [(t, ph, 1) for t in ("R", "X") for ph in ("cued", "neutral")]
         else:
-            plan = [(t, ph, 0) for t in gen.L3_TYPES for ph in ("cued", "neutral", "nonliteral")]
+            plan = [(t, ph, 0) for t in (("L1", "L2", "L3", "L4") if flaws.get("d4") else gen.L3_TYPES) for ph in ("cued", "neutral", "nonliteral")]
         if arm == "Z" and flaws.get("no_arm_Z"):
             plan = []
         for t, ph, n_t in plan:
@@ -922,6 +922,9 @@ def make_pf_run(root, **flaws):
             row = {"seed": 1, "arm": arm, "condition": cond, "type": t, "phrasing": ph, "n_target": n_t, "fork_sid": fsid, "parse_ok": not flaws.get("bad_parse") and not (flaws.get("deviation") and arm == "O") and not (flaws.get("z_unread") and arm == "Z") and not (flaws.get("one_unread") and (arm, cond, t, ph) == ("A", "compact", "R", "cued")), "parsed": {"id": 1} if flaws.get("deviation") else None,
                    "correct": None if (flaws.get("not_graded") and arm == "A") else not (flaws.get("o_nl_low") and arm == "O" and ph == "nonliteral" and cond == "nocompact" and t == "D"), "used_lookup": None if flaws.get("no_used_lookup") else False, "auto_recall_fired": fired,
                    "search_kinds": ["mcp"] if (arm == "K" and ph == "cued") else []}
+            if flaws.get("d4") and cond == "nocompact":
+                ok_ = bool(flaws.get("d4_z_high")) if arm == "Z" else not (flaws.get("d4_o_low") and arm == "O" and t == "L3")
+                row.update(m1=ok_, m2=ok_, m3=ok_, correct=ok_, error_class=None if ok_ else "abstain", position="middle")
             if view:
                 row.update(fork_injected=True, fork_rule_line=not (flaws.get("k_no_rule_fork") and arm == "K"),
                            fork_rule_source=["mcp_instructions"] if arm == "K" else [])

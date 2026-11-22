@@ -18,7 +18,7 @@ import sys, tempfile, threading, time, uuid
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
-import cost, gates, gen, grade  # noqa: E402
+import cost, design4, gates, gen, grade  # noqa: E402
 import math  # noqa: E402
 
 REPO = os.path.realpath(os.path.join(HERE, "..", ".."))
@@ -80,6 +80,23 @@ KINDS = {
                       "seed_file": "seeds-report.txt", "conditions": "compact,nocompact", "phrasings": "cued,neutral,nonliteral", "probe_design": 3},
     "litm-full": {"model": "sonnet", "window": 400000, "n": [1, 3, 10], "arms": "A,B,R,Z,O", "seeds": 20, "seed_file": "seeds-report.txt",
                   "conditions": "compact,nocompact", "phrasings": "cued,neutral", "probe_design": 2},
+    # Probe design 4 (update chains with interference, no-compaction condition). The compaction condition stays as in design 3.
+    # Calibration: arms A, O, Z on Sonnet, no compaction only. One dev seed; `design4.py decide <run-id>` says if a second seed (seeds-dev-2.txt) is needed.
+    "litm4-calibrate": {"model": "sonnet", "window": 400000, "n": [1], "arms": "A,O,Z", "seeds": 1, "seed_file": "seeds-dev.txt",
+                        "conditions": "nocompact", "phrasings": "cued,neutral,nonliteral", "probe_design": 4},
+    # The L5 escalation (only if `decide` says add_l5): the whole calibration again with levels L1 to L5 in one session of 165 turns. It replaces all cells.
+    "litm4-calibrate-l5": {"model": "sonnet", "window": 400000, "n": [1], "arms": "A,O,Z", "seeds": 1, "seed_file": "seeds-dev.txt", "levels": "L1,L2,L3,L4,L5",
+                           "conditions": "nocompact", "phrasings": "cued,neutral,nonliteral", "probe_design": 4},
+    "litm4-smoke": {"model": "sonnet", "window": 400000, "n": [1, 3], "arms": "A,B,R,K", "seeds": 1, "seed_file": "seeds-dev.txt",
+                    "conditions": "compact,nocompact", "phrasings": "cued,neutral,nonliteral", "probe_design": 4},
+    # The pilot seeds (3 and 4) are dev seeds that the calibration did not use (seeds 1 and 2): the pick is checked on new seeds.
+    "litm4-pilot": {"model": "sonnet", "window": 400000, "n": [1, 3, 10], "arms": "A,B,R,K", "seeds": 2, "seed_file": "seeds-pilot.txt",
+                    "conditions": "compact,nocompact", "phrasings": "cued,neutral,nonliteral", "probe_design": 4},
+    "litm4-full-v3": {"model": "sonnet", "window": 400000, "n": [1, 3, 10, 30], "n_by_arm": {"R": [1, 3, 10], "K": [1, 3, 10]}, "arms": "A,B,R,K,Z,O", "seeds": 23,
+                      "seed_file": "seeds-report.txt", "conditions": "compact,nocompact", "phrasings": "cued,neutral,nonliteral", "probe_design": 4},
+    "preflight4": {"model": "haiku", "window": 30000, "n": [1], "arms": "A,B,R,K,Z,O", "seeds": 1, "seed_file": "seeds-dev.txt", "types": "R,X",
+                   "conditions": "compact,nocompact", "phrasings": "cued,neutral,nonliteral", "probe_design": 4, "nc_window": 120000,
+                   "mcp_check": True, "selfcheck": True, "big_check": True},
 }
 NC_SESSION_WINDOW = 200000      # window of the no-compaction condition
 AUTO_RECALL_LOG = "auto-recall.jsonl"
@@ -262,13 +279,16 @@ class Ctx:
             raise Pause()
 
     def script3(self, seed):
-        key = ("litm3", seed)
+        """Script of the no-compaction condition: design 3, or design 4 (update chains) when the run has probe design 4."""
+        d4 = self.cfg.get("probe_design", 1) >= 4
+        tag = "litm4" if d4 else "litm3"
+        key = (tag, seed)
         with self.lock:
             if key not in self.scripts:
-                s = gen.build_litm3(seed)
+                s = design4.build_litm4(seed, tuple(self.cfg.get("levels") or design4.D4_LEVELS)) if d4 else gen.build_litm3(seed)
                 self.scripts[key] = s
                 os.makedirs(os.path.join(self.dir, "scripts"), exist_ok=True)
-                write_json(os.path.join(self.dir, "scripts", "%d-litm3.json" % seed), s)
+                write_json(os.path.join(self.dir, "scripts", "%d-%s.json" % (seed, tag)), s)
             return self.scripts[key]
 
     def script(self, seed):
@@ -326,7 +346,8 @@ class Session:
         self.statedir = os.path.join(base, stem + "-state")
         self.window = cfg["o_window"] if arm == "O" else (cfg.get("nc_window", NC_SESSION_WINDOW) if cond == "nocompact" else cfg["window"])
         self.script = ctx.script3(seed) if (cond == "nocompact" and cfg.get("probe_design", 1) >= 3) else ctx.script(seed)
-        self.d3 = self.script.get("design") == 3
+        self.d3 = self.script.get("design") in (3, 4)
+        self.d4 = self.script.get("design") == 4
         self.view_of = None     # design 3, no compaction, arms B R K: the main session of arm A, which this arm forks
         ov = {"CLAUDE_CODE_AUTO_COMPACT_WINDOW": str(self.window), "RECALL_EMBED_URL": "http://127.0.0.1:9", MEMORY_ENV: "1", "DISABLE_AUTOUPDATER": "1"}
         if cond == "nocompact":
@@ -538,6 +559,8 @@ class Session:
         marker = "PROBE-%d-%s-%d-%s%s" % (self.seed, self.arm, ckpt, ptype, {"neutral": "n", "nonliteral": "l"}.get(phrasing, ""))
         if ptype == "F":
             items = script["fresh"][str(ckpt)]
+        elif self.d4:
+            items = script["items"][ptype]      # design 4: a level of update chains, all planted at the probe point
         else:
             em = None if (self.arm == "Z" or self.cond == "nocompact") else need_epoch(cfg, self.arm, ckpt)
             items = gen.select(script, ptype, em)      # planted so far, oldest first
@@ -545,14 +568,17 @@ class Session:
             return      # nothing of this type is planted yet (M needs 3 epochs)
         if self.d3 and ptype != "F":
             items = gen.shuffle3(items, self.seed, ptype, phrasing)     # question order is not position
-        prompt = gen.probe_prompt(ptype, script, marker, ckpt, items=items, phrasing=phrasing, cue=cfg.get("probe_design", 1) >= 2)
+        if self.d4:
+            prompt = design4.probe_prompt(ptype, script, marker, phrasing, items=items)
+        else:
+            prompt = gen.probe_prompt(ptype, script, marker, ckpt, items=items, phrasing=phrasing, cue=cfg.get("probe_design", 1) >= 2)
         if fork_of:
             o = self.call(prompt, "fork", fork_of=fork_of)
         else:
             o = self.call(prompt, "z", sid=z_sid, first=True)
         raw = o.get("result") if isinstance(o.get("result"), str) else ""
         fsid = o.get("session_id")
-        graded = grade.grade(ptype, items, raw)
+        graded = design4.grade_level(items, raw, script) if self.d4 else grade.grade(ptype, items, raw)
         epochs = {x["id"]: x.get("epoch") for x in items}
         frecs = read_jsonl(self.transcript(fsid)) if fsid else []
         used = grade.lookup_used(frecs, marker) if fsid else False
@@ -577,7 +603,7 @@ class Session:
         if self.arm in ("R", "K") and phrasing == "cued" and cfg.get("probe_design", 1) >= 2 and fsid and not fired:
             raise Fatal("arm %s: a cued probe left no line in %s for session %s. The hook did not run, or it logs elsewhere. "
                         "Stop. Check hooks/auto-recall.py in --lh-path." % (self.arm, os.path.join(self.statedir, AUTO_RECALL_LOG), fsid))
-        posmap = {x["id"]: (x.get("position") or gen.position_of(script, ptype, x)) for x in items}
+        posmap = {x["id"]: (x.get("position") or (None if self.d4 else gen.position_of(script, ptype, x))) for x in items}
         u = o.get("usage") if isinstance(o.get("usage"), dict) else {}
         n_actual, pre = (st["boundaries"], st.get("precomputed", 0)) if self.arm != "Z" else (0, 0)
         for g in graded:
@@ -591,7 +617,8 @@ class Session:
                 "fork_cost_usd": round(o["_delta"], 6), "claude_version": cfg["claude_version"], "model": cfg["model"],
                 "window": self.window, "commit": cfg["lh_commit"], "turn_index": st["turns"],
                 "condition": self.cond, "phrasing": phrasing, "position": posmap.get(g["id"]), "attempt": st.get("restarts", 0), **view_fields,
-                "auto_recall_fired": fired, "auto_recall_hits": hits, "auto_recall_timed_out": timed_out})
+                "auto_recall_fired": fired, "auto_recall_hits": hits, "auto_recall_timed_out": timed_out,
+                **({k_: g[k_] for k_ in ("m1", "m2", "m3", "error_class", "lag", "alt_ok", "undo_last")} if self.d4 else {})})
         if self.view_of is not None:
             st.setdefault("first_fork_cost_usd", round(o["_delta"], 6))      # K: the cache-miss check of the preflight
         st["done_forks"].append(fork_key(ckpt, ptype, phrasing))
@@ -605,7 +632,7 @@ def fork_key(ckpt, ptype, phrasing="cued"):
 
 def probe_plan(cfg, ptype, d3=False):
     """Phrasings to ask for a probe type. Neutral exists for R D X S E only. Old runs have cued only."""
-    ph = [p for p in cfg.get("phrasings", ["cued"]) if p == "cued" or (ptype in gen.NEUTRAL_TYPES and (p == "neutral" or d3))]
+    ph = [p for p in cfg.get("phrasings", ["cued"]) if p == "cued" or ((ptype in gen.NEUTRAL_TYPES or ptype in design4.LEVELS) and (p == "neutral" or d3))]
     return ph or ["cued"]
 
 
@@ -755,6 +782,11 @@ def nc_plan_steps(script):
     return steps
 
 
+def nc_types(cfg):
+    """Probe types of the design-3 or design-4 no-compaction condition: the five types of design 3, or the levels of design 4."""
+    return list(cfg.get("levels") or design4.D4_LEVELS) if cfg.get("probe_design", 1) >= 4 else list(gen.L3_TYPES)
+
+
 def run_nc3_session(ctx, ss):
     """Design 3 no-compaction session. ONE main session for each seed, run as arm A (no Lossless Handoff hooks). Every turn is a user turn
     (plant turns, and filler turns with a pasted document and one small task). No file reads, so the binary has no old tool result to clear.
@@ -785,7 +817,7 @@ def run_nc3_session(ctx, ss):
     if not ok:
         st["status"], st["reason"] = "invalid", "no-compaction session is not valid: " + "; ".join(why)
     else:
-        for t in gen.L3_TYPES:
+        for t in nc_types(cfg):
             for ph in probe_plan(cfg, t, d3=True):
                 if fork_key(0, t, ph) in st["done_forks"]:
                     continue
@@ -821,7 +853,7 @@ def run_fork_view(ctx, main, arm, valid=True):
                "claude_version": main.st.get("claude_version")})
     ctx.save()
     if valid:
-        for t in gen.L3_TYPES:
+        for t in nc_types(cfg):
             for ph in probe_plan(cfg, t, d3=True):
                 if fork_key(0, t, ph) not in st["done_forks"]:
                     v.probe(t, 0, fork_of=main.st["sid"], phrasing=ph)
@@ -872,7 +904,7 @@ def run_big_check(ctx):
     seed = 9999
     ss = Session(ctx, "big", seed, "A", ctx.sess("big"), "nocompact")
     ss.prepare()
-    lines, _ = nc3_plan(NC3_WINDOW)
+    lines, _ = nc3_plan(NC3_WINDOW, cfg.get("probe_design", 3))
     script = ctx.script3(seed)
     docs = big_docs(len(gen.filler_doc_prompt(script, 0, lines)[0]))
     prompt = "\n\n".join(gen.filler_doc_prompt(script, k, lines)[0] for k in range(docs)) + "\n\nReply with only the word OK."
@@ -950,7 +982,7 @@ def checkpoint(ctx, ss, target):
 
 def run_z(ctx, ss):
     st = ss.st
-    for t in (gen.L3_TYPES if ss.d3 else ctx.cfg["types"]):
+    for t in (nc_types(ctx.cfg) if ss.d3 else ctx.cfg["types"]):
         for ph in probe_plan(ctx.cfg, t, d3=ss.d3):
             if fork_key(0, t, ph) in st["done_forks"]:
                 continue
@@ -1094,7 +1126,7 @@ def expected_forks(cfg, seeds=None):
             cs.append("nocompact")
         for cond in cs:
             if cond == "nocompact" and d3:
-                exact += [(s, arm, cond, ph, t, 0) for s in seeds for t in gen.L3_TYPES for ph in probe_plan(cfg, t, d3=True)]
+                exact += [(s, arm, cond, ph, t, 0) for s in seeds for t in nc_types(cfg) for ph in probe_plan(cfg, t, d3=True)]
             else:
                 phs = sorted({ph for t in cfg["types"] for ph in probe_plan(cfg, t)})
                 classes += [(s, arm, cond, ph) for s in seeds for ph in phs]
@@ -1184,6 +1216,7 @@ def parse_common(ap):
     ap.add_argument("--nc-window", type=int, default=None, help="window of the no-compaction condition (default 200000)")
     ap.add_argument("--dry-run", action="store_true", help="print the plan and the cost estimate, then stop. No model call")
     ap.add_argument("--types", help="comma list from R,D,X,S,E,U,C,F (default all)")
+    ap.add_argument("--levels", help="design 4: comma list of levels (default L1,L2,L3,L4; the L5 escalation: L1,L2,L3,L4,L5 as its own run)")
     ap.add_argument("--seeds", type=int, help="how many seeds to take from the seed list")
     ap.add_argument("--seed-file", help="seed list file (default: seeds-dev.txt for slice, seeds-report.txt for full)")
     ap.add_argument("--lh-path", help="pinned checkout of Lossless Handoff for arm B (default: this repo)")
@@ -1243,17 +1276,32 @@ NC3_TARGET_FRACTION = 0.75      # design 3 aims at about 300k tokens in a 400k w
 NC3_FAIL_FRACTION = 0.90
 
 
-def nc3_plan(window):
-    """Design 3: lines of each pasted filler document, so that the whole session holds about 75% of the window. Fails above 90%.
-    Planted text is measured from a real script. Returns (lines, estimated tokens)."""
-    sc = gen.build_litm3(1)
-    planted = int(sum(len(st.get("prompt", "")) for st in sc["plan"] if st["kind"] != "fill") / CHARS_PER_TOKEN)
+# Measured rate of design 3 and 4. The smoke (run 20261122T123857-litm3-smoke) aimed at 299,860 tokens with 19.7 tokens per line
+# (6500 tokens per 330 lines) and reached 393,352 tokens at the last turn of s1-A-nc: 362 lines in 36 filler turns, so 26.6 tokens per
+# line (the planted prose counted at 0.46 tokens per character, random words). The model below reproduces that figure within 1%.
+NC_TOKENS_PER_LINE = 26.6
+PLANT_TOKENS_PER_CHAR = 0.46
+NC3_TOLERANCE = 0.10            # the estimate must be inside the target, plus or minus 10%
+
+
+def nc3_estimate(sc, lines):
+    """Estimated tokens at the last turn of a design 3 or 4 no-compaction session with `lines` lines in each filler document."""
+    planted = sum(len(st.get("prompt", "")) for st in sc["plan"] if st["kind"] != "fill") * PLANT_TOKENS_PER_CHAR
+    n_fill = sum(1 for st in sc["plan"] if st["kind"] == "fill")
+    return int(O_OVERHEAD_TOKENS + planted + O_PROBE_TOKENS + n_fill * lines * NC_TOKENS_PER_LINE)
+
+
+def nc3_plan(window, design=3, levels=None):
+    """Design 3 or 4: lines of each pasted filler document, so that the whole session holds about 75% of the window. Fails above 90%.
+    Planted text is measured from a real script; the rate of a filler line is the measured one (NC_TOKENS_PER_LINE). Returns (lines, estimated tokens)."""
+    sc = design4.build_litm4(1, tuple(levels or design4.D4_LEVELS)) if design >= 4 else gen.build_litm3(1)
+    planted = sum(len(st.get("prompt", "")) for st in sc["plan"] if st["kind"] != "fill") * PLANT_TOKENS_PER_CHAR
     n_fill = sum(1 for st in sc["plan"] if st["kind"] == "fill")
     room = NC3_TARGET_FRACTION * window - O_OVERHEAD_TOKENS - planted - O_PROBE_TOKENS
-    lines = int(room / n_fill / (TOKENS_PER_FILE / 330.0))
+    lines = int(room / n_fill / NC_TOKENS_PER_LINE)
     if lines < 20:
         raise SystemExit("design 3 no-compaction session too large for --nc-window %d: only %d lines per filler document." % (window, lines))
-    est = int(O_OVERHEAD_TOKENS + planted + O_PROBE_TOKENS + n_fill * lines * TOKENS_PER_FILE / 330.0)
+    est = nc3_estimate(sc, lines)
     if est > NC3_FAIL_FRACTION * window:
         raise SystemExit("design 3 no-compaction session estimate %d tokens is above %d%% of --nc-window %d" % (est, int(NC3_FAIL_FRACTION * 100), window))
     return lines, est
@@ -1295,9 +1343,14 @@ def build_cfg(kind, a):
     design = k.get("probe_design", 1)
     if design >= 3 and "nocompact" in conds and "A" not in arms:
         raise SystemExit("design 3, no compaction: arm A runs the main session and arms B, R and K fork it. Add arm A to --arms.")
+    levels = None
+    if design >= 4:       # the levels of the update chains. L5 is the escalation: its own session (165 turns), it replaces all cells of the L1-L4 run.
+        levels = [x for x in (a.levels or k.get("levels") or ",".join(design4.D4_LEVELS)).split(",") if x]
+        if any(x not in design4.LEVELS for x in levels) or levels != sorted(set(levels)):
+            raise SystemExit("--levels: a comma list of levels in order from %s, for example L1,L2,L3,L4,L5" % ",".join(design4.LEVELS))
     nc_window = a.nc_window or k.get("nc_window") or (NC3_WINDOW if design >= 3 else NC_SESSION_WINDOW)
     if "nocompact" in conds and any(x in arms for x in ("A", "B", "R", "K")):
-        nc_lines, nc_est = nc3_plan(nc_window) if design >= 3 else nc_plan(nc_window, o_planted_tokens(seeds))
+        nc_lines, nc_est = nc3_plan(nc_window, design, levels) if design >= 3 else nc_plan(nc_window, o_planted_tokens(seeds))
     else:
         nc_lines, nc_est = None, None
     dirty = bool(sh(["git", "status", "--porcelain", "--", "hooks"], cwd=lh))
@@ -1318,7 +1371,7 @@ def build_cfg(kind, a):
         "live_recall_sha256": sha256_file(os.path.join(HOME, ".claude", "hooks", "recall.py")),      # the injected text still names ~/.claude/hooks/recall.py
         "pinned_recall_sha256": sha256_file(os.path.join(lh, "hooks", "recall.py")),
         "env_allowlist": list(ENV_ALLOW), "env_overrides": list(OVERRIDE_ENV), "auto_memory": "off (%s=1 and autoMemoryEnabled=false)" % MEMORY_ENV,
-        "nc_window": nc_window, "nc_lines": nc_lines, "nc_estimate_tokens": nc_est,
+        "nc_window": nc_window, "nc_lines": nc_lines, "nc_estimate_tokens": nc_est, "levels": levels,
         "work_base": work_base(a.work_base), "call_cap_usd": a.call_cap_usd or 1.50,
         "turn_timeout_s": a.turn_timeout_s or (420 if "haiku" in (a.model or k["model"]) else 900),
         "jobs": a.jobs or 2, "budget_usd": a.budget_usd, "claude_version": sh(["claude", "--version"]),
@@ -1328,7 +1381,7 @@ def build_cfg(kind, a):
     if cfg["budget_usd"] is None:       # default budget: 1.5 x the estimate of the whole run (none for the slice preset)
         est = cost.estimate_per_seed(cfg)
         if est:
-            cfg["budget_usd"] = round(gates.DEFAULT_BUDGET_FACTOR * est * (1 if cfg["kind"] == "preflight" else len(cfg["seeds"])), 2)
+            cfg["budget_usd"] = round(gates.DEFAULT_BUDGET_FACTOR * est * (1 if cfg["kind"].startswith("preflight") else len(cfg["seeds"])), 2)
             cfg["budget_default"] = True
     return cfg
 
@@ -1420,8 +1473,8 @@ def cmd_run(a):
             cfg["run_id"], cfg["kind"], cfg["model"], cfg["window"], cfg["nc_window"], cfg["nc_lines"]))
         print("units (seed, arm, condition):", len(units), "; conditions", cfg["conditions"], "; phrasings", cfg["phrasings"], "; probe design", cfg["probe_design"])
         print("budget_usd: %s%s" % (cfg["budget_usd"], " (default: %.1f x the estimate of the whole run; the run pauses there, exit code 3)" % gates.DEFAULT_BUDGET_FACTOR if cfg.get("budget_default") else ""))
-        c_ = {"seeds": len(cfg["seeds"]), "arms": cfg["arms"], "n": cfg["n"], "conditions": cfg["conditions"], "phrasings": cfg["phrasings"]}
-        if cfg["kind"] == "preflight":
+        c_ = {"levels": cfg.get("levels"), "seeds": len(cfg["seeds"]), "arms": cfg["arms"], "n": cfg["n"], "conditions": cfg["conditions"], "phrasings": cfg["phrasings"], "n_by_arm": cfg.get("n_by_arm"), "design": cfg["probe_design"]}
+        if cfg["kind"].startswith("preflight"):
             tot, ln = cost.estimate_preflight(cfg["arms"], cfg["conditions"])
             print("ESTIMATE FOR THIS RUN (Haiku, assumptions in cost.py):\n" + "\n".join("  " + x for x in ln) + "\n  total about $%.2f (target: under $3)" % tot)
             return 0

@@ -1,5 +1,5 @@
 {
-  "version": 6,
+  "version": 7,
   "registered": "2026-11-18",
   "note": "Pass thresholds. They come from the verification plan. v2 adds the headroom gate for generator v4. Committed before any v4 run. Do not change after a run to make a result pass. v3 adds the litm block (lost in the middle, phrasing, auto-recall), committed before any run of probe design 2. v4 adds H1n, H6, H7 and the design-3 settings, committed before any run of probe design 3. v5 adds the audit fixes (null-control margin, H7 ceiling, design-3 controls, pilot stop rule as fork counts), committed before any run of probe design 3. v6 (round 5): the K label depends on the data (fork_rule_line), the full run is V3, DISABLE_AUTOUPDATER is set.",
   "amnesia_max_accuracy": 0.02,
@@ -96,6 +96,114 @@
       "invalid_session_rate_max": 0.1
     },
     "k_label_rule": "If every K no-compaction fork has the recall rule line in its transcript (fork_rule_line true): K = R + recall rule line + MCP tool. Otherwise: K = R + MCP tool. The report prints the label from the data (out k_label).",
-    "full_run": "litm3-full-v3 is the default full run (23 seeds; compaction: A and B to N=30, R and K to N=10). litm3-full-v5 (no R, K at N=10 only) and litm3-full (V1, as designed) stay available."
+    "full_run": "litm3-full-v3 is the default full run (23 seeds; compaction: A and B to N=30, R and K to N=10). litm3-full-v5 (no R, K at N=10 only) and litm3-full (V1, as designed) stay available.",
+    "registered_design4": "2026-11-22",
+    "design4": {
+      "registered": "2026-11-22",
+      "note": "Pre-registered before any design-4 data. Design 4 changes only the no-compaction condition. Do not change after a run, except the pick, which is committed after the calibration and before the full run.",
+      "levels": {
+        "L1": {
+          "k": 2,
+          "family": 1,
+          "lures": "none",
+          "chains_per_third": 3
+        },
+        "L2": {
+          "k": 4,
+          "family": 2,
+          "lures": "1 reject after the last update",
+          "chains_per_third": 4
+        },
+        "L3": {
+          "k": 6,
+          "family": 3,
+          "lures": "1 reject after the last update, 1 undo",
+          "chains_per_third": 3
+        },
+        "L4": {
+          "k": 10,
+          "family": 3,
+          "lures": "2 rejects, 1 undo, 1 scoped after the last update; family values share the first 9 characters",
+          "chains_per_third": 3
+        },
+        "L5": {
+          "k": 16,
+          "family": 4,
+          "note": "calibration escalation, once"
+        }
+      },
+      "chains_per_seed": 39,
+      "statements_per_seed": 276,
+      "stmts_per_turn": 4,
+      "plant_turns_per_third": 23,
+      "filler_turns_per_third": 12,
+      "nc_target_fraction": 0.75,
+      "nc_max_fraction": 0.95,
+      "position": "the third that holds the chain (tight chains)",
+      "metrics": {
+        "M1": "current exact",
+        "M2": "M1 and previous exact",
+        "M3": "M2 and replaced as an exact set"
+      },
+      "abstain": "null current: wrong, counted apart",
+      "error_classes": [
+        "stale",
+        "lure",
+        "sibling",
+        "other_chain",
+        "abstain",
+        "novel"
+      ],
+      "gates": {
+        "o_min_accuracy": 0.95,
+        "z_max_accuracy": 0.02,
+        "solver_max_accuracy_l3_l4": 0.5,
+        "ceiling_max_accuracy": 0.95,
+        "floor_min_accuracy": 0.3,
+        "note": "O: at least o_min_accuracy for each level, phrasing and metric. Z: at most z_max_accuracy. The offline 'last mention wins' solver: at most solver_max_accuracy_l3_l4 on M1 at L3 and L4, applied to the mean over the seeds of the run, for each level (not for each seed). Arm A above the ceiling is TOO EASY, below the floor TOO HARD."
+      },
+      "calibration": {
+        "preset": "litm4-calibrate",
+        "arms": [
+          "A",
+          "O",
+          "Z"
+        ],
+        "model": "sonnet",
+        "dev_seeds": 2,
+        "seed2_if_arm_a_cell_between": [
+          0.45,
+          0.9
+        ],
+        "pick_band_arm_a": [
+          0.55,
+          0.8
+        ],
+        "pick_o_min": 0.95,
+        "pick_z_max": 0.02,
+        "pick_order": "metrics M1, M2, M3; for each metric levels from L1 up; the first (metric, level) with arm A (phrasings pooled) in the band, O at least pick_o_min and Z at most pick_z_max",
+        "escalation": "if arm A is above 80% in every cell, add L5 (k 16, family 4) once; if still above 80%, stop: Sonnet has no loss here. Report it.",
+        "o_below_note": "If O is below 95% where A is in the band, the loss is interference at zero distance. Report it, but not as lost in the middle.",
+        "record": "record the thinking setting of the run"
+      },
+      "pick": {
+        "metric": null,
+        "level": null,
+        "note": "committed after the calibration (design4.py decide <run-id>) and before the full run"
+      },
+      "h1_ceiling_max_accuracy": 0.95,
+      "h8_dose_min_points": 15,
+      "h8_note": "H8: arm A, L1 minus L4, M1, at least +15 points, CI lower bound above 0.",
+      "h9_interference_min_share": 0.6,
+      "h9_note": "H9: at least 60% of the wrong answers of arm A (abstains excluded) are stale, lure or sibling values.",
+      "h10_length_min_points": 15,
+      "h10_note": "H10: O minus A at least headroom_min_points (15).",
+      "h11_note": "H11 harm guard: R minus B stale-plus-lure error rate on cued probes, paired by seed (same bootstrap draws). HARM if the lower bound of the interval is above 0. Else OK.",
+      "h1_primary_note": "H1 primary pools the three phrasings (the rule and the ceiling are unchanged). H1c (cued), H1s (neutral) and H1n (non-literal) are secondary.",
+      "pick_rules_note": "The pick needs arm A at 45% to 90% in the picked cell for each phrasing, Z rows (no rows is NO DATA), and for M2 and M3 an alt rate below 10%.",
+      "k_note": "K's gain is an upper bound: fixed sentence forms with the key in backticks make a search by key almost an oracle.",
+      "kept": "H1 and its secondary forms use the primary cell. H6 and H7 and the null control are kept.",
+      "compaction_condition": "as in design 3"
+    }
   }
 }
