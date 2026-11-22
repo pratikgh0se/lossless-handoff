@@ -28,7 +28,7 @@ import gen        # noqa: E402
 import grade      # noqa: E402
 
 DESIGN = 4
-GEN_VERSION = "litm4-4"
+GEN_VERSION = "litm4-5"
 POSITIONS = gen.POSITIONS
 LEVELS = {
     "L1": {"k": 2, "fam": 1, "rejects": 0, "undo": False, "scoped": 0, "chains": 3, "prefix": False},
@@ -42,7 +42,8 @@ PLANT_TURNS_PER_THIRD = 23
 FILL_TURNS_PER_THIRD = 12
 STMTS_PER_TURN = 4
 PHRASINGS = ("cued", "neutral", "nonliteral")
-ERROR_CLASSES = ("stale", "lure", "sibling", "other_chain", "abstain", "novel", "unreadable")
+ERROR_CLASSES = ("stale", "lure", "sibling", "other_chain", "abstain", "runaway", "novel", "unreadable")
+MAX_ITEMS_PER_PROBE = 4      # a probe fork answers at most this many chains (12 items made a fork think for 8,000 tokens, 4 times, in preflight4 runs 1 and 2)
 FORM = '{"answers":[{"id":1,"current":"...","previous":"...","replaced":["..."]}]}'
 FIELDS = ("In each answer, `current` is the value in force now. `previous` is the value that `current` took the place of; "
           "if the last update was an undo, `previous` is the value that the undo took out. "
@@ -468,6 +469,39 @@ def probe_prompt(level, script, marker, phrasing, items=None):
         marker, FIELDS, gen.CUED_HEAD_TAIL if phrasing == "cued" else "")
     body = "\n".join("%d. %s" % (x["id"], question(phrasing, x)) for x in items)
     return head + body + "\nReply with JSON only, in this form: " + FORM
+
+
+def chunks(items, seed, level):
+    """Split the chains of one level into probe forks of at most MAX_ITEMS_PER_PROBE items, the same for every arm and phrasing.
+    Deterministic by seed and level. The positions are balanced: the chains are ordered by third, shuffled inside a third by the seed, and
+    dealt round-robin to the chunks (the counter goes on from one third to the next), so each chunk holds each third within one chain."""
+    n = -(-len(items) // MAX_ITEMS_PER_PROBE)
+    if n <= 1:
+        return [list(items)]
+    r = random.Random("lhbench-chunks4-%d-%s" % (seed, level))
+    out, k = [[] for _ in range(n)], r.randrange(n)
+    for th in range(3):
+        mine = [it for it in items if it.get("third") == th]
+        r.shuffle(mine)
+        for it in mine:
+            out[k % n].append(it)
+            k += 1
+    rest = [it for it in items if it.get("third") not in (0, 1, 2)]
+    for it in rest:
+        out[k % n].append(it)
+        k += 1
+    return out
+
+
+def n_probe_forks(levels=D4_LEVELS, phrasings=3):
+    """Probe forks of one arm in a run: the chunks of each level, for each phrasing."""
+    return phrasings * sum(-(-LEVELS[lv]["chains"] * 3 // MAX_ITEMS_PER_PROBE) for lv in levels)
+
+
+def runaway_rows(items):
+    """The grade of a probe fork that hit the output cap (a probe outcome, not a session failure): every item is wrong, class runaway."""
+    return [{"id": it["id"], "parse_ok": False, "parsed": None, "abstained": False, "m1": False, "m2": False, "m3": False, "correct": False,
+             "error_class": "runaway", "lag": None, "alt_ok": False, "undo_last": bool(it.get("undo_last"))} for it in items]
 
 
 def strip_tag(a):

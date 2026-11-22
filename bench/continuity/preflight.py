@@ -12,6 +12,7 @@ import cost, design4, gates, runner  # noqa: E402
 
 COST_CAP_USD = 5.0
 COST_RATIO_MAX = 1.3
+RUNAWAY_ARM_MAX = 0.05
 REANCHOR_TOKENS = 50000
 NL_ORACLE_MIN = 0.80      # non-literal probes: the oracle must answer at least this share of every type
 BIG_MIN_TOKENS = 250000
@@ -188,6 +189,18 @@ def check(rd, projects=None, mcp=True):
     over = sorted(v for v in outs if v > runner.PROBE_MAX_OUTPUT_TOKENS)
     add("probe fork output at most %d tokens (the cap %s is set for probe forks)" % (runner.PROBE_MAX_OUTPUT_TOKENS, runner.PROBE_MAX_OUTPUT_ENV), None if not outs else not over,
         "no output token data" if not outs else "%d fork(s), above the limit: %s" % (len(outs), over[:5] or "none"))
+    # runaway forks: a probe that hit the output cap is an outcome (class runaway), at most 5% of the forks of each arm
+    rw_arm = {}
+    for a_ in sorted({r.get("arm") for r in R.rows}):
+        rw_arm[a_] = gates.runaway_rate([r for r in R.rows if r.get("arm") == a_])
+    rw_bad = {a_: v for a_, v in rw_arm.items() if v[1] and v[0] / float(v[1]) > RUNAWAY_ARM_MAX}
+    add("runaway rate at most %d%% of the probe forks of each arm (a fork that hit the output cap)" % int(100 * RUNAWAY_ARM_MAX), None if not any(v[1] and True for v in rw_arm.values()) else not rw_bad,
+        "above the limit: %s" % ({a_: "%d/%d" % v for a_, v in rw_bad.items()} or "none"))
+    lv_rw = {}
+    for r in R.rows:
+        if str(r.get("type", "")).startswith("L"):
+            lv_rw.setdefault(r["type"], []).append(r)
+    add("runaway forks per level (counts)", None, ", ".join("%s %d/%d" % ((lv,) + gates.runaway_rate(v)) for lv, v in sorted(lv_rw.items())) or "no design-4 rows")
     add("median probe output tokens", None, "no data" if not outs else "median %d, max %d (%d fork(s))" % (outs[len(outs) // 2], outs[-1], len(outs)))
     # 8. parse and grade
     # Parse policy (one threshold, gates.PARSE_ERROR_RATE_MAX, the same as the abort gate): a reply that cannot be read counts as wrong for every arm.

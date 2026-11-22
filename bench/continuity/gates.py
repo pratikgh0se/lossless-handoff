@@ -54,9 +54,14 @@ def describe_missing(miss, limit=4):
 SAFETY_REFUSAL_RE = re.compile(r"API Error:.{0,80}can't help with this", re.I | re.S)
 
 
+RUNAWAY_RE = re.compile(r"exceeded the \d+ output token maximum", re.I)
+
+
 def failure_class(reason):
     """Class of a failed session: safety_refusal (the API refused the content: "API Error: ... can't help with this", for example Details `[bio]`,
     a false positive of a safety filter) or other. A report uses it to tell this failure from a crash or a timeout."""
+    if RUNAWAY_RE.search(str(reason or "")):
+        return "runaway"        # a reply that hit the output cap ("exceeded the N output token maximum"): a probe outcome, not a crash
     return "safety_refusal" if SAFETY_REFUSAL_RE.search(str(reason or "")) else "other"
 
 
@@ -73,6 +78,22 @@ def session_reasons(statuses, unit_costs, classes=None):
         if e and c > max(UNIT_COST_FACTOR * e, e + UNIT_COST_FLOOR_USD):
             why.append("session %s cost $%.2f is above %.1f x its estimate $%.2f" % (n, c, UNIT_COST_FACTOR, e))
     return why
+
+
+RUNAWAY_SEED_MAX = 0.10      # runaway probe forks / probe forks of one seed (a runaway fork wastes money)
+
+
+def fork_id(r):
+    return (r.get("seed"), r.get("arm"), r.get("condition"), r.get("type"), r.get("phrasing"), r.get("chunk"), r.get("fork_sid") if r.get("chunk") is None else None)
+
+
+def runaway_rate(rows):
+    """(runaway forks, forks) of rows. A fork is one (seed, arm, condition, type, phrasing, chunk); its rows all carry the same runaway flag."""
+    forks = {}
+    for r in rows:
+        if "runaway" in r:
+            forks[fork_id(r)] = bool(r.get("runaway")) or forks.get(fork_id(r), False)
+    return sum(1 for v in forks.values() if v), len(forks)
 
 
 def abort_reasons(sessions, rows, est_per_seed, finished_seeds, session_costs=None, expected=None):
@@ -95,6 +116,11 @@ def abort_reasons(sessions, rows, est_per_seed, finished_seeds, session_costs=No
         if spent > COST_RATIO_MAX * est:
             why.append("cost $%.2f is above %.1f x the estimate so far ($%.2f for %d seed(s))" % (spent, COST_RATIO_MAX, est, len(fin)))
     sel = [r for r in rows if r.get("seed") in fin]
+    for sd in sorted(fin):
+        bad_f, all_f = runaway_rate([r for r in sel if r.get("seed") == sd])
+        if all_f and bad_f / float(all_f) > RUNAWAY_SEED_MAX:
+            why.append("seed %s: runaway rate %.0f%% (%d of %d probe forks hit the output cap) is above %.0f%%: a runaway fork wastes money" % (
+                sd, 100.0 * bad_f / all_f, bad_f, all_f, 100 * RUNAWAY_SEED_MAX))
     nofire = [r for r in sel if r.get("arm") in ("R", "K") and r.get("phrasing", "cued") == "cued" and r.get("auto_recall_fired") is False]
     if nofire:
         forks = sorted({(r["seed"], r["arm"], r["type"], r["fork_sid"]) for r in nofire})

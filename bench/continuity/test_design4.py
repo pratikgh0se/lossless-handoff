@@ -433,9 +433,9 @@ class Plumbing(unittest.TestCase):
         self.assertAlmostEqual(cost.SMOKE_REAL["forks_15"]["A"], 0.671)
         self.assertAlmostEqual(cost.d4_nc_main(), 4.28, delta=0.05)
         tot, _l, per = cost.estimate3(2, ["A", "O", "Z"], [1], ["nocompact"], design=4)
-        self.assertTrue(9 < tot < 14, tot)
-        self.assertTrue(5.5 < per < 6.5, per)
-        self.assertEqual(cost.D4_CONTROL_USD["O"], 0.90)       # arm O at about $0.9
+        self.assertTrue(13 < tot < 19, tot)
+        self.assertTrue(7.0 < per < 9.0, per)
+        self.assertEqual(cost.D4_CONTROL_USD["O"], 1.40)       # arm O: $0.9 plus the extra forks
         smoke = cost.estimate3(1, ["A", "B", "R", "K"], [1, 3], ["compact", "nocompact"], design=4)[0]
         smoke3 = cost.estimate3(1, ["A", "B", "R", "K"], [1, 3], ["compact", "nocompact"], design=3)[0]
         self.assertGreater(smoke, smoke3)
@@ -937,7 +937,7 @@ class NeutralLexicon(unittest.TestCase):
     def test_zero_overlap_and_unique_checks_still_hold(self):
         for sd in range(1, 101):
             self.assertEqual(d4.check_script(d4.build_litm4(sd)), [], sd)
-        self.assertEqual(d4.GEN_VERSION, "litm4-4")
+        self.assertEqual(d4.GEN_VERSION, "litm4-5")
 
     def test_a_safety_refusal_is_its_own_failure_class(self):
         msg = ("is_error: API Error: Haiku 5.5 can't help with this. Start a new session to continue.\n\nLearn more: https://www.anthropic.com/legal/aup\n\n"
@@ -1010,6 +1010,33 @@ class ProbeCapAndFailures(unittest.TestCase):
             err = None
             try:
                 ss.call("PROBE prompt", kind, sid=None, fork_of=fork_of if kind == "fork" else None, first=(kind != "fork"))
+            except runner.CallError as e:
+                err = e
+            return d, ctx, ss, seen, err
+        finally:
+            runner.PROJECTS, runner.subprocess.Popen = old
+
+    def run_call_d4(self, replies, kind="fork", fork_of="parent1"):
+        d = tempfile.mkdtemp()
+        old = (runner.PROJECTS, runner.subprocess.Popen)
+        runner.PROJECTS = os.path.join(d, "projects")
+        seen = []
+
+        class P:
+            def __init__(self, cmd, **k):
+                seen.append(k.get("env"))
+
+            def communicate(self, input=None, timeout=None):
+                return json.dumps(replies[min(len(seen) - 1, len(replies) - 1)]), ""
+            returncode = 0
+        runner.subprocess.Popen = P
+        try:
+            ctx, ss = self.session(d)
+            ss.d4 = True
+            err = None
+            try:
+                o = ss.call("PROBE prompt", kind, sid=None, fork_of=fork_of if kind == "fork" else None, first=(kind != "fork"))
+                self.last = o
             except runner.CallError as e:
                 err = e
             return d, ctx, ss, seen, err
@@ -1103,6 +1130,142 @@ class ProbeCapAndFailures(unittest.TestCase):
             self.assertIn(st, ("FAIL", "INFO"))        # FAIL when the fixture rows carry the output tokens
         finally:
             shutil.rmtree(d)
+
+
+class SmallProbes(unittest.TestCase):
+    """Probe forks of at most 4 chains, and the runaway class (a probe that hit the output cap is an outcome, not a session failure)."""
+
+    def test_chunks_have_at_most_4_items_and_cover_every_chain_once(self):
+        for sd in range(1, 41):
+            sc = script(sd)
+            for lv, its in sc["items"].items():
+                ch = d4.chunks(its, sd, lv)
+                self.assertTrue(all(0 < len(c) <= 4 for c in ch), (sd, lv, [len(c) for c in ch]))
+                self.assertEqual(sorted(i["id"] for c in ch for i in c), sorted(i["id"] for i in its))
+                self.assertEqual(ch, d4.chunks(its, sd, lv))                         # deterministic by seed
+                for th in range(3):                                                  # positions balanced: each chunk holds each third within 1 chain
+                    cnt = [sum(1 for i in c if i["third"] == th) for c in ch]
+                    self.assertLessEqual(max(cnt) - min(cnt), 1, (sd, lv, th, cnt))
+        self.assertNotEqual(d4.chunks(script(1)["items"]["L2"], 1, "L2"), d4.chunks(script(2)["items"]["L2"], 2, "L2"))
+
+    def test_fork_counts(self):
+        self.assertEqual([len(d4.chunks(script(1)["items"][lv], 1, lv)) for lv in d4.D4_LEVELS], [3, 3, 3, 3])
+        self.assertEqual(d4.n_probe_forks(), 36)                                     # was 12
+        self.assertEqual(d4.n_probe_forks(d4.D4_LEVELS + ("L5",)), 45)
+        self.assertEqual(cost.D4_FORKS, 36)
+        self.assertAlmostEqual(cost.D4_A_FORKS, cost.SMOKE_REAL["forks_15"]["A"] / 15.0 * 36)
+
+    def make_session(self, d, replies):
+        ctx, cfg = test_litm.r4_cfg(d)
+        cfg.update(probe_design=4, levels=list(d4.D4_LEVELS), phrasings=["cued", "neutral", "nonliteral"])
+        ss = runner.Session(ctx, "s1-A-nc", 1, "A", ctx.sess("s1-A-nc"), "nocompact")
+        ss.script, ss.d4, ss.d3 = d4.build_litm4(1), True, True
+        prompts = []
+
+        def call(prompt, kind, sid=None, fork_of=None, first=False, model=None, cap=None):
+            prompts.append(prompt)
+            r = replies(len(prompts) - 1, prompt)
+            return dict(r, _delta=0.01, usage={"output_tokens": 10})
+        ss.call = call
+        return ctx, ss, prompts
+
+    def test_probe_runs_one_fork_per_chunk_and_marks_them_done(self):
+        d = tempfile.mkdtemp()
+        try:
+            ctx, ss, prompts = self.make_session(d, lambda n, p: {"result": "{}", "session_id": None})
+            ss.probe("L2", 0, fork_of="p1", phrasing="cued")
+            self.assertEqual(len(prompts), 3)
+            self.assertEqual(len({re.search(r"PROBE-1-A-0-L2c\d", p).group(0) for p in prompts}), 3)      # a marker for each chunk
+            self.assertTrue(all(p.count("\n") >= 3 and len(re.findall(r"^\d+\. ", p, re.M)) <= 4 for p in prompts))
+            self.assertEqual(ss.st["done_forks"], ["0:L2:c0", "0:L2:c1", "0:L2:c2", "0:L2"])
+            ss.probe("L2", 0, fork_of="p1", phrasing="cued")           # resume: nothing is run twice for the finished chunks
+            self.assertEqual(len(prompts), 3)
+            rows = [json.loads(l) for l in open(os.path.join(ctx.dir, "results.jsonl"))]
+            self.assertEqual(len(rows), 12)
+            self.assertEqual(sorted({r["chunk"] for r in rows}), [0, 1, 2])
+            self.assertTrue(all(r["runaway"] is False for r in rows))
+        finally:
+            shutil.rmtree(d)
+
+    def test_a_runaway_fork_is_an_outcome_with_every_item_wrong(self):
+        d = tempfile.mkdtemp()
+        try:
+            ctx, ss, prompts = self.make_session(d, lambda n, p: {"result": "API Error: exceeded the 8000 output token maximum", "session_id": None, "_runaway": n == 1})
+            ss.probe("L2", 0, fork_of="p1", phrasing="cued")
+            rows = [json.loads(l) for l in open(os.path.join(ctx.dir, "results.jsonl"))]
+            rw = [r for r in rows if r["runaway"]]
+            self.assertEqual({r["chunk"] for r in rw}, {1})
+            self.assertEqual(len(rw), 4)
+            self.assertTrue(all(r["error_class"] == "runaway" and r["m1"] is False and r["correct"] is False and r["abstained"] is False for r in rw))
+            self.assertEqual(ss.st.get("status"), ss.st.get("status"))
+            self.assertNotEqual(ss.st.get("status"), "failed")
+            self.assertEqual(ss.st["done_forks"][-1], "0:L2")
+        finally:
+            shutil.rmtree(d)
+
+    def test_call_returns_a_runaway_probe_and_raises_for_a_main_turn(self):
+        bad = {"result": "API Error: Claude's response exceeded the 8000 output token maximum. To configure this behavior, set the CLAUDE_CODE_MAX_OUTPUT_TOKENS environment variable.",
+               "session_id": "f9", "total_cost_usd": 0.2, "usage": {"output_tokens": 32000}, "is_error": True}
+        d, ctx, ss, seen, err = ProbeCapAndFailures().run_call_d4([bad], "fork")
+        try:
+            self.assertIsNone(err)
+            self.assertEqual(len(seen), 1)                                           # no retry
+            self.assertEqual(len([f for f in os.listdir(os.path.join(ctx.dir, "failed")) if f.endswith(".json")]), 1)       # the evidence is kept
+        finally:
+            shutil.rmtree(d)
+        d, ctx, ss, seen, err = ProbeCapAndFailures().run_call_d4([bad], "turn")
+        try:
+            self.assertIsInstance(err, runner.CallError)                              # a main turn that runs away is a failure
+        finally:
+            shutil.rmtree(d)
+
+    def test_failure_class_maps_the_cap_text_to_runaway(self):
+        self.assertEqual(gates.failure_class("is_error: API Error: Claude's response exceeded the 8000 output token maximum."), "runaway")
+        self.assertEqual(gates.failure_class("exceeded the 32000 output token maximum"), "runaway")
+        self.assertEqual(gates.failure_class("is_error: API Error: Haiku 5.5 can't help with this."), "safety_refusal")
+        self.assertEqual(gates.failure_class("timeout"), "other")
+        self.assertIn("runaway", d4.ERROR_CLASSES)
+
+    def rows(self, seed, n, bad, arm="A"):
+        out = []
+        for i in range(n):
+            out.append({"seed": seed, "arm": arm, "condition": "nocompact", "type": "L2", "phrasing": "cued", "chunk": i, "fork_sid": "f%d-%d" % (seed, i),
+                        "item": 1, "runaway": i < bad})
+        return out
+
+    def test_runaway_rate_and_the_abort_gate(self):
+        self.assertEqual(gates.runaway_rate(self.rows(1, 36, 3)), (3, 36))
+        r = self.rows(1, 36, 3) + [dict(x, item=2) for x in self.rows(1, 36, 3)]     # two items of the same fork count once
+        self.assertEqual(gates.runaway_rate(r), (3, 36))
+        ok = gates.abort_reasons([], self.rows(1, 36, 3), None, [1])                 # 8.3%
+        self.assertFalse([w for w in ok if "runaway" in w], ok)
+        bad = gates.abort_reasons([], self.rows(1, 36, 4), None, [1])                # 11%
+        self.assertTrue([w for w in bad if "runaway rate 11%" in w and "seed 1" in w], bad)
+        self.assertFalse([w for w in gates.abort_reasons([], self.rows(2, 36, 9), None, [1]) if "runaway" in w])      # a seed that is not finished is not judged
+
+    def test_runaway_is_not_a_failed_session(self):
+        self.assertFalse(gates.session_reasons({"a": "done", "b": "done"}, {}))
+        self.assertEqual(gates.failure_class("exceeded the 8000 output token maximum"), "runaway")
+
+    def test_preflight_lines_and_report_table(self):
+        import preflight
+        d = tempfile.mkdtemp()
+        try:
+            rd, projects = test_litm.make_pf_run(d, d4=True)
+            names = [r[0] for r in preflight.check(rd, projects, mcp=False)]
+            self.assertTrue(any(n.startswith("runaway rate at most 5%") for n in names), names)
+            self.assertIn("runaway forks per level (counts)", names)
+        finally:
+            shutil.rmtree(d)
+        self.assertEqual(preflight.RUNAWAY_ARM_MAX, 0.05)
+        th = json.load(open(os.path.join(HERE, "thresholds.json")))
+        rows = ReportAndPreflight().synth_rows()
+        for i, r in enumerate(rows):
+            r["chunk"], r["fork_sid"], r["runaway"] = i % 3, "f%d" % (i // 3), (r["arm"] == "K" and r["type"] == "L2" and i % 3 == 0)
+        md, out = litm4.section4(rows, {}, th, 100)
+        self.assertIn("Table D4-6", "\n".join(md))
+        self.assertTrue(out["runaway"]["K|L2"][0] > 0)
+        self.assertEqual(out["runaway"]["A|L2"][0], 0)
 
 
 if __name__ == "__main__":

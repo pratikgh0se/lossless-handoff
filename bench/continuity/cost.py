@@ -7,7 +7,10 @@ not from list prices. Each constant says where it comes from. A pilot gives bett
 Usage: cost.py [--seeds N] [--arms A,B,R] [--n 1,3,10] [--conditions compact,nocompact] [--phrasings cued,neutral]
        cost.py            (no option: print the pilot and the full run of the lost-in-the-middle design)
 """
-import argparse, math
+import argparse, math, os, sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import design4  # noqa: E402
 
 # Sonnet, window 400000, probe design 1 (cued only), measured.
 WAVE1_PER_SEED_4ARMS = 38.0     # USD for one seed, arms A+B+Z+O, N up to 10 (Wave 1: about $38 per seed)
@@ -93,20 +96,23 @@ D3_CONTROL_USD = {"Z": round(0.15 * CAL_PF_Z_NC, 3), "O": round(0.30 * CAL_PF_O_
 # ---- design 4 (2026-11-22). Real figures of the Sonnet smoke run 20261122T123857-litm3-smoke (calls.jsonl, design 3, 75 turns, 15 forks):
 #   main no-compaction session of arm A: $3.055; its 15 forks: $0.671 (A), $0.671 (B), $0.683 (R), $1.405 (K, 45 turns).
 #   compaction units (N up to 3, with their forks): A $6.56, B $6.63, R $6.49, K $6.73. Total of the run: $32.90.
-# Design 4: 105 turns (x1.4 of the main session), 12 forks per arm (3 phrasings x 4 levels). The compaction condition is as in design 3.
+# Design 4: 105 turns (x1.4 of the main session), 36 forks per arm (3 phrasings x 12 chunks of at most 4 chains). The compaction condition is as in design 3.
 SMOKE_REAL = {"main_nc_75_turns": 3.055, "forks_15": {"A": 0.671, "B": 0.671, "R": 0.683, "K": 1.405}, "total": 32.90}
-D4_TURNS, D4_FORKS = 105, 12
+# Probe forks hold at most 4 chains each (design4.MAX_ITEMS_PER_PROBE): 36 forks for each arm (L1-L4, 3 phrasings), 45 with L5. Before: 12 and 15.
+D4_TURNS = 105
+D4_FORKS = design4.n_probe_forks()
 D4_MAIN = SMOKE_REAL["main_nc_75_turns"] * D4_TURNS / 75.0            # about $4.28 (the design pass says about $4.30)
-D4_A_FORKS = 0.70                                                      # design pass figure, scaled from the real $0.671 for 15 forks
+D4_A_FORK_UNIT = SMOKE_REAL["forks_15"]["A"] / 15.0                    # real: $0.0447 for one fork (the smoke: 15 forks cost $0.671)
+D4_A_FORKS = D4_A_FORK_UNIT * D4_FORKS                                 # about $1.61 for 36 forks (was $0.70 for 12)
 D4_FORK_FACTOR = {a: v / SMOKE_REAL["forks_15"]["A"] for a, v in SMOKE_REAL["forks_15"].items()}    # real: B 1.00, R 1.02, K 2.09
 # Arm O at about $0.9 (audit of PR #35: its short session holds the 69 plant turns, 3 phrasings of 4 levels of forks); the per-session cost gate
 # (gates.session_reasons: above 2 x the estimate and above the estimate plus $0.25) then allows up to $1.80, so a $0.9 session does not trip it.
-D4_CONTROL_USD = {"Z": 0.25, "O": 0.90}
-D4_TURNS_L5, D4_FORKS_L5 = 165, 15                                      # the L5 escalation: 4 levels plus L5, one session of 165 turns
+D4_CONTROL_USD = {"Z": 0.75, "O": 1.40}      # Z and O forks are small (short context), 3 times as many: Z 0.25 x 3; O 0.9 plus 24 forks at about $0.02
+D4_TURNS_L5, D4_FORKS_L5 = 165, design4.n_probe_forks(design4.D4_LEVELS + ("L5",))                                      # the L5 escalation: 4 levels plus L5, one session of 165 turns
 
 
 def d4_scale(levels=None):
-    """(main session USD, factor of the fork cost) for the levels of a design-4 run: L1-L4 is 105 turns and 12 forks, with L5 it is 165 turns and 15 forks."""
+    """(main session USD, factor of the fork cost) for the levels of a design-4 run: L1-L4 is 105 turns and 36 forks, with L5 it is 165 turns and 45 forks."""
     if levels and "L5" in levels:
         return SMOKE_REAL["main_nc_75_turns"] * D4_TURNS_L5 / 75.0, D4_FORKS_L5 / float(D4_FORKS)
     return D4_MAIN, 1.0
@@ -358,8 +364,8 @@ def main(argv=None):
                           ("FULL V3 (litm3-full-v3, the default full run: R and K to N=10)", FULL3_V3), ("FULL V5 (litm3-full-v5: no R, K at N=10 only)", FULL3_V5)):
             print(render3(name, cfg)[1])
         print("\nPROBE DESIGN 4 (litm4-calibrate, litm4-smoke, litm4-pilot, litm4-full-v3): no-compaction condition with update chains; compaction condition as in design 3")
-        print("  real figures of the Sonnet smoke: main $%.2f for 75 turns, 15 A forks $%.2f; design 4: main $%.2f (105 turns), A forks $%.2f (12), K forks x%.2f" % (
-            SMOKE_REAL["main_nc_75_turns"], SMOKE_REAL["forks_15"]["A"], D4_MAIN, D4_A_FORKS, D4_FORK_FACTOR["K"]))
+        print("  real figures of the Sonnet smoke: main $%.2f for 75 turns, 15 A forks $%.2f; design 4: main $%.2f (105 turns), A forks $%.2f (%d forks), K forks x%.2f" % (
+            SMOKE_REAL["main_nc_75_turns"], SMOKE_REAL["forks_15"]["A"], D4_MAIN, D4_A_FORKS, D4_FORKS, D4_FORK_FACTOR["K"]))
         for name, cfg in (("CALIBRATION (litm4-calibrate: arms A,O,Z; the second seed only if a cell of A is at 45-90%)", CALIBRATE4), ("L5 ESCALATION (litm4-calibrate-l5, only if decide says add_l5: one seed, 165 turns, replaces all cells)", CALIBRATE4_L5),
                           ("SMOKE (litm4-smoke)", SMOKE4), ("PILOT (litm4-pilot, dev seeds 3 and 4)", PILOT4), ("FULL V3 (litm4-full-v3)", FULL4_V3)):
             print(render3(name, cfg)[1])
