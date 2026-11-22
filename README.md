@@ -6,7 +6,7 @@
 
 This documentation uses ASD-STE100 Simplified Technical English.
 
-Current versions: product 0.16.0 (`install.sh`), hooks 1.18.0 (`HOOK_VERSION` in `hooks/precompact-handoff.py`, `hooks/postcompact-inject.py`, `hooks/auto-recall.py` and `hooks/recall-mcp.py`).
+Current versions: product 0.16.0 (`install.sh`), hooks 1.18.0 (`HOOK_VERSION` in `hooks/precompact-handoff.py`, `hooks/postcompact-inject.py`, `hooks/auto-recall.py`, `hooks/recall-mcp.py`, `hooks/reanchor.py` and `hooks/claim-guard.py`).
 
 [![CI](https://github.com/pratikgh0se/lossless-handoff/actions/workflows/ci.yml/badge.svg)](https://github.com/pratikgh0se/lossless-handoff/actions/workflows/ci.yml) [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE) [![Release](https://img.shields.io/github/v/release/pratikgh0se/lossless-handoff)](https://github.com/pratikgh0se/lossless-handoff/releases/latest)
 

@@ -1149,3 +1149,21 @@ Why: a benchmark arm runs a private copy of the hooks. It must not read the live
 **F72.b No mixing.** When the override is set to a folder, a hook never falls back to `~/.claude/hooks` for those files, and it does not use a copy next to the hook file either. A missing file in the override folder means the part is absent (for example no recall line). The own parts of a hook (`lossless_handoff/*.py`, and any helper that the entry file loads from beside itself) always load from beside the entry file that runs. The override does not change that.
 
 **F72.c Amendment of F69.** The limit of 12,000 characters per tool result includes the cut marker (see F69.c).
+
+## Review amendments (2026-11-22, PR #32)
+
+**F72.d Printed paths.** When `HANDOFF_HOOKS_HOME` names an existing folder, every injected or printed command that names the recall script uses `python3 <HANDOFF_HOOKS_HOME>/recall.py` instead of `python3 ~/.claude/hooks/recall.py`: the recall line, the summary node line, the `[more rules: ...]` line, the auto-recall footer, a stored recall line in handoff text, and the `open:` line of `recall.py describe`. Unset: the text is byte-identical to before.
+
+**F72.e Agents file.** With the override, the recall subagent file is looked up only at `<HANDOFF_HOOKS_HOME>/agents/recall.md` (not at `~/.claude/agents/recall.md`), in `postcompact-inject.py` and in `lossless_handoff/summary.py`.
+
+**F68.d No ledger.** With the marker `.recall-rules` (and `HANDOFF_RECALL_RULES` not `0`), SessionStart `startup`, `resume` and `compact` (the `--ledger --part 1` call) print the recall line followed by the rule line, also when the project has no decisions list or it has no active entry. Without the marker the output is unchanged (empty with no decisions list).
+
+**F70.e Lock, preamble, usage.** Re-anchor holds an exclusive lock on `reanchor-<session>.lock` (state folder) from the read of the anchor to its save, so parallel tool calls inject at most once for each interval. The rules block of the re-anchor text has no SubagentStart preamble line. An entry with a usage total of 0 tokens is skipped when the count is read.
+
+**F71.f User turn and evidence.** A user message is a real prompt: an entry with `isCompactSummary`, and string content that starts with `<task-notification>`, `<bash-input>`, `<bash-stdout>` or `<local-command-`, are not user messages. Evidence (c) is an auto-recall injection after the last user message; there is no lookback before it.
+
+**F69.h Project, query, install.** The project of the server is `CLAUDE_PROJECT_DIR` if set, else the working directory. The query is passed after `--`, so a query that starts with `-` is searched as text. The fallback protocol version is `2025-11-25`. With `--recall-mcp`, if `claude mcp get lossless-recall` shows the server, install prints `recall-mcp: already installed, kept` and does not run `claude mcp add`.
+
+**F70.f Conflict check.** A default install (no flag) does not count a foreign `reanchor.py` or `claim-guard.py` hook as a conflict. The two names count only when the flag is on or the file is installed.
+
+**Modes.** `recall-mcp.jsonl`, `claim-guard.jsonl`, `claim-guard-<session>.json`, `reanchor-<session>.json` and `reanchor-<session>.lock` are created with mode 0600.

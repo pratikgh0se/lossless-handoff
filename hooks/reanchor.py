@@ -11,6 +11,11 @@ A subagent event (non-empty agent_id) is ignored. Never fails: any error means e
 """
 import json, os, subprocess, sys, time
 
+try:
+    import fcntl
+except ImportError:  # no flock: no lock (parallel calls may inject twice)
+    fcntl = None
+
 HOOK_VERSION = "1.18.0"
 HOME = os.path.expanduser("~")
 
@@ -64,6 +69,8 @@ def context_tokens(path):
                 v = u.get(k)
                 if isinstance(v, (int, float)) and not isinstance(v, bool):
                     t += int(v)
+            if t == 0:
+                continue  # a zero-usage entry (for example a synthetic one) is not a count
             return t
         if size <= n:
             break
@@ -84,9 +91,34 @@ def rules_text(cwd):
 def save_anchor(path, anchor):
     os.makedirs(STATE_DIR, exist_ok=True)
     tmp = "%s.tmp%d" % (path, os.getpid())
-    with open(tmp, "w", encoding="utf-8") as f:
+    with os.fdopen(os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w", encoding="utf-8") as f:
         json.dump({"v": 1, "anchor": anchor}, f)
     os.replace(tmp, path)
+
+
+def decide(sp, lp, t):
+    """Under an exclusive lock from the anchor read to the anchor save, so parallel tool calls inject once per interval.
+    -> True when this run must inject."""
+    os.makedirs(STATE_DIR, exist_ok=True)
+    fd = os.open(lp, os.O_RDWR | os.O_CREAT, 0o600)
+    try:
+        if fcntl is not None:
+            fcntl.flock(fd, fcntl.LOCK_EX)
+        try:
+            with open(sp, encoding="utf-8") as f:
+                a = json.load(f).get("anchor")
+            anchor = a if isinstance(a, int) and not isinstance(a, bool) and a >= 0 else 0
+        except Exception:
+            anchor = 0
+        if t < anchor:  # a compaction happened
+            save_anchor(sp, t)
+            return False
+        if t - anchor < interval():
+            return False
+        save_anchor(sp, t)  # also when there is no rule, so the rules builder runs once per interval
+        return True
+    finally:
+        os.close(fd)  # closing the file releases the lock
 
 
 def main():
@@ -108,18 +140,8 @@ def main():
     if t is None:
         return
     sp = os.path.join(STATE_DIR, "reanchor-%s.json" % sid)
-    try:
-        with open(sp, encoding="utf-8") as f:
-            a = json.load(f).get("anchor")
-        anchor = a if isinstance(a, int) and not isinstance(a, bool) and a >= 0 else 0
-    except Exception:
-        anchor = 0
-    if t < anchor:  # a compaction happened
-        save_anchor(sp, t)
+    if not decide(sp, os.path.join(STATE_DIR, "reanchor-%s.lock" % sid), t):
         return
-    if t - anchor < interval():
-        return
-    save_anchor(sp, t)  # also when there is no rule, so the rules builder runs once per interval
     body = rules_text(cwd)
     if not body:
         return

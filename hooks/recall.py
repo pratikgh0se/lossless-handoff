@@ -65,6 +65,12 @@ SECRET_RES = [
 MARK = "[redacted]"  # legacy mark of earlier versions; readers still treat it as redacted
 
 
+def _recall_cmd():
+    """F72: the printed path of this script: <HANDOFF_HOOKS_HOME>/recall.py when that names a folder."""
+    h = (os.environ.get("HANDOFF_HOOKS_HOME") or "").strip()
+    return h.rstrip("/") + "/recall.py" if h and os.path.isdir(h) else "~/.claude/hooks/recall.py"
+
+
 def mark_for(kind):
     return "[REDACTED:%s]" % kind
 
@@ -1475,7 +1481,7 @@ def cmd_describe(a, root):
            "lines: %d-%d" % (n["first_line"], n["last_line"]),
            "pre_tokens: %s" % (pt if pt is not None else "unknown"),
            "prev: %s" % (n.get("prev") or "none"), "handoff: %s" % (n.get("handoff") or "none"),
-           "open: python3 ~/.claude/hooks/recall.py open %s:%d" % (n["session"][:8], n["first_line"]), ""]
+           "open: python3 %s open %s:%d" % (_recall_cmd(), n["session"][:8], n["first_line"]), ""]
     out.append(redact(summary_of(n)) or "(no summary found in the transcript)")
     return out
 

@@ -21,7 +21,7 @@ CUE_RES = [(c, re.compile(r"(?<!\w)" + r"\s+".join(map(re.escape, c.split())) + 
 REASON = "You stated an earlier fact without searching. Search for it with recall, then correct or confirm it."
 AR_HEADER = "Lossless Handoff auto-recall:"
 TAILS = (1 << 20, 8 << 20, 64 << 20)
-LOOKBACK = 5  # an injection entry can sit just before the user entry in the transcript
+NOT_USER_PREFIXES = ("<task-notification>", "<bash-input>", "<bash-stdout>", "<local-command-")
 
 
 def find_cue(text):
@@ -33,11 +33,11 @@ def find_cue(text):
 
 def is_user_turn(e):
     """A real user message: type user, not meta, not a tool result."""
-    if e.get("type") != "user" or e.get("isMeta") or e.get("isSidechain"):
+    if e.get("type") != "user" or e.get("isMeta") or e.get("isSidechain") or e.get("isCompactSummary"):
         return False
     c = (e.get("message") or {}).get("content")
     if isinstance(c, str):
-        return True
+        return not c.lstrip().startswith(NOT_USER_PREFIXES)
     return isinstance(c, list) and not any(isinstance(b, dict) and b.get("type") == "tool_result" for b in c)
 
 
@@ -93,11 +93,8 @@ def scan(path):
             if size <= n:
                 return None
             continue
-        if idx < LOOKBACK and size > n:
-            continue  # the lookback window is cut: read more
         uuid = ents[idx].get("uuid")
-        ev = any(has_evidence(e) for e in ents[max(0, idx - LOOKBACK):idx] if e.get("type") != "assistant" and e.get("type") != "user") \
-            or any(has_evidence(e) for e in ents[idx:])
+        ev = any(has_evidence(e) for e in ents[idx:])  # only entries after the last user message
         return (uuid if isinstance(uuid, str) else ""), ev
     return None
 
@@ -130,11 +127,11 @@ def main():
         except Exception:
             pass
     os.makedirs(STATE_DIR, exist_ok=True)
-    with open(os.path.join(STATE_DIR, "claim-guard.jsonl"), "a", encoding="utf-8") as f:
+    with os.fdopen(os.open(os.path.join(STATE_DIR, "claim-guard.jsonl"), os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600), "a", encoding="utf-8") as f:
         f.write(json.dumps({"ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "session_id": sid[:36],
                             "would_block": True, "cue": cue}) + "\n")
     if live:
-        with open(mp, "w", encoding="utf-8") as f:
+        with os.fdopen(os.open(mp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w", encoding="utf-8") as f:
             json.dump({"turn": turn}, f)
         sys.stdout.write(json.dumps({"decision": "block", "reason": REASON}))
 

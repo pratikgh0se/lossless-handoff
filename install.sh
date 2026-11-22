@@ -412,7 +412,12 @@ if not isinstance(hooks, dict):
 
 # conflict check: the same hook scripts registered from a different path would run twice
 own_cmds = set([pre, nudge, auto_recall, reanchor_cmd, claim_cmd, start_led, check_cmd, subagent_cmd] + post + post_led)
-names = ("precompact-handoff.py", "postcompact-inject.py", "handoff-nudge.py", "auto-recall.py", "reanchor.py", "claim-guard.py")
+names = ["precompact-handoff.py", "postcompact-inject.py", "handoff-nudge.py", "auto-recall.py"]
+# F70, F71: these two names count as ours only when the flag is on or the file is installed (a default install is as on main)
+if os.environ["HC_RA"] == "1" or os.path.exists(os.path.join(hooks_dir, "reanchor.py")):
+    names.append("reanchor.py")
+if os.environ["HC_CG"] == "1" or os.path.exists(os.path.join(hooks_dir, "claim-guard.py")):
+    names.append("claim-guard.py")
 conflicts = []
 for ev, groups_ in hooks.items():
     if not isinstance(groups_, list):
@@ -724,6 +729,8 @@ if [ "$RECALLMCP" = 1 ]; then
     say "recall-mcp: claude CLI not found; register it later with: $MCP_CMD"
   elif [ "$DRY" = 1 ]; then
     say "would run: $MCP_CMD"
+  elif MCP_GET="$(claude mcp get lossless-recall 2>/dev/null)" && grep -q "lossless-recall" <<<"$MCP_GET"; then
+    say "recall-mcp: already installed, kept"
   elif claude mcp add --scope user lossless-recall -- python3 "$HOOKS_DIR/recall-mcp.py" >/dev/null 2>&1; then
     say "recall-mcp: registered with: $MCP_CMD"
   else

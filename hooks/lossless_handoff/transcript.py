@@ -5,6 +5,12 @@
 HOME = os.path.expanduser("~")
 
 
+def _hooks_home():
+    """F72: HANDOFF_HOOKS_HOME when it names an existing folder, else None."""
+    h = (os.environ.get("HANDOFF_HOOKS_HOME") or "").strip()
+    return h if h and os.path.isdir(h) else None
+
+
 def _hook_candidates(name, first, second):
     """F72: with HANDOFF_HOOKS_HOME naming an existing folder, only that folder (no fallback, no mixing of two trees);
     else (first, second) as before."""

@@ -226,7 +226,8 @@ def format_output(mod, hits):
     lines = [HEADER]
     for h in hits:
         lines.append("- %s:%d %s %s: %s" % (h["sid8"], h["line"], mod.fmt_ts(h["ts"]), h["role"], h["snippet"]))
-    lines.append(FOOTER)
+    h = hooks_home()
+    lines.append(FOOTER.replace("~/.claude/hooks/recall.py", h.rstrip("/") + "/recall.py") if h else FOOTER)
     return "\n".join(lines) + "\n"
 
 

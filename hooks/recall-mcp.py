@@ -29,7 +29,7 @@ STATE_DIR = (os.environ.get("HANDOFF_STATE_DIR") or "").strip() or os.path.join(
 OUT_MAX = 12000
 CUT_LINE = "[cut at 12000 characters]"
 SUPPORTED = ("2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05")
-DEFAULT_PROTOCOL = "2025-06-18"
+DEFAULT_PROTOCOL = "2025-11-25"
 
 RULE = ("- recall rule: before you state an earlier number, path, name, command or decision, search for it. "
         "Do not answer from memory. If the search finds nothing, say so.")
@@ -82,7 +82,7 @@ def load_recall():
 def health(tool, hits, t0):
     try:
         os.makedirs(STATE_DIR, exist_ok=True)
-        with open(os.path.join(STATE_DIR, "recall-mcp.jsonl"), "a", encoding="utf-8") as f:
+        with os.fdopen(os.open(os.path.join(STATE_DIR, "recall-mcp.jsonl"), os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600), "a", encoding="utf-8") as f:
             f.write(json.dumps({"ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "tool": tool, "hits": int(hits),
                                 "ms": int((time.monotonic() - t0) * 1000)}) + "\n")
     except BaseException:
@@ -115,9 +115,9 @@ def tool_search(args):
     if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 10:
         raise ToolError("limit must be an integer from 1 to 10")
     mod = load_recall()
-    a = mod.build_parser().parse_args(["search", q, "--role", role, "--limit", str(limit)])
+    a = mod.build_parser().parse_args(["search", "--role", role, "--limit", str(limit), "--", q])
     a.subagents = True
-    root = mod.project_root(os.getcwd())
+    root = mod.project_root(os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd())
     with contextlib.redirect_stdout(sys.stderr):
         lines = mod.cmd_search(a, root)
     hits = [x for x in lines[1:-1] if x]  # drop the mode line and the count line
@@ -135,7 +135,7 @@ def tool_open(args):
         raise ToolError("full must be true or false")
     mod = load_recall()
     a = mod.build_parser().parse_args(["open", mid.strip()] + (["--full"] if full else []))
-    root = mod.project_root(os.getcwd())
+    root = mod.project_root(os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd())
     with contextlib.redirect_stdout(sys.stderr):
         lines = mod.cmd_open(a, root)
     text = "\n".join(lines)

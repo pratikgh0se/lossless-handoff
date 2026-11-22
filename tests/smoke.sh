@@ -1999,7 +1999,7 @@ SH
   # install with the flag: the file, the manifest, the exact claude call, no direct edit of ~/.claude.json
   PATH="$D/fakebin:$PATH" "$ROOT/install.sh" --recall-mcp >/dev/null
   [ -x "$F/recall-mcp.py" ] && grep -q '"recall-mcp.py"' "$F/.handoff-manifest.json" || fail "F69: file or manifest entry missing"
-  [ "$(cat "$FAKE_CLAUDE_LOG")" = "mcp add --scope user lossless-recall -- python3 $F/recall-mcp.py" ] || fail "F69: claude args: $(cat "$FAKE_CLAUDE_LOG")"
+  grep -qxF "mcp add --scope user lossless-recall -- python3 $F/recall-mcp.py" "$FAKE_CLAUDE_LOG" || fail "F69: claude args: $(cat "$FAKE_CLAUDE_LOG")"
   [ ! -e "$HOME/.claude.json" ] || fail "F69: the installer wrote ~/.claude.json"
   # kept message
   o="$(PATH="$D/fakebin:$PATH" "$ROOT/install.sh")"; grep -qx "recall-mcp: already installed, kept" <<<"$o" || fail "F69: kept message: $o"
@@ -2121,7 +2121,7 @@ assert len(pe) == 1 and pe[0]["error"]["code"] == -32700, pe
 assert 17 in by and "ghp_abcdefghijklmnopqrstuvwxyz" not in txt(by[18]) and "[REDACTED:github]" in txt(by[18]), by.get(18)
 # an unsupported client version gets the default; a supported older one is echoed
 o2, _ = run([req(1, "initialize", {"protocolVersion": "1999-01-01"}), req(2, "initialize", {"protocolVersion": "2025-03-26"})])
-assert o2[0]["result"]["protocolVersion"] == "2025-06-18" and o2[1]["result"]["protocolVersion"] == "2025-03-26", o2
+assert o2[0]["result"]["protocolVersion"] == "2025-11-25" and o2[1]["result"]["protocolVersion"] == "2025-03-26", o2
 PY
   python3 "$D/drive.py" "$MS" "$W" || fail "F69: scripted MCP session"
   python3 - "$HANDOFF_STATE_DIR/recall-mcp.jsonl" <<'PY'
@@ -2393,6 +2393,138 @@ PY
   grep -q "^- recall: " "$D/state/p72b-latest.md" || fail "F72: precompact-handoff ignored the private recall.py"
   decoy_clean precompact-handoff
   ok "F72: no hook or part reads ~/.claude/hooks when HANDOFF_HOOKS_HOME is a folder; unset, empty or missing value: as before"
+)
+
+# PR #32 review fixes: parallel re-anchor, notification turns, foreign hook on a default install, override path in printed commands,
+# agents file under the override, F68 without a ledger, a query that starts with "-", the kept line, file modes
+(
+  set -e
+  D="$T/rv"; mkdir -p "$D"; export HOME="$D/home"; W="$D/work"; mkdir -p "$HOME/.claude" "$W" "$D/fakebin"
+  export HANDOFF_STATE_DIR="$D/state"; mkdir -p "$HANDOFF_STATE_DIR"; unset HANDOFF_HOOKS_HOME HANDOFF_RECALL_RULES HANDOFF_REANCHOR HANDOFF_REANCHOR_TOKENS HANDOFF_CLAIM_GUARD
+  mode_of() { python3 -c 'import os,sys; print(oct(os.stat(sys.argv[1]).st_mode & 0o777)[2:])' "$1"; }
+  # a ledger with one rule for $W, and a transcript past 50,000 tokens
+  KEY="$(python3 -c 'import hashlib,os,re,sys; r=os.path.realpath(sys.argv[1]); print(re.sub(r"[^A-Za-z0-9._-]","_",os.path.basename(r))[:40]+"-"+hashlib.sha1(r.encode()).hexdigest()[:8])' "$W")"
+  git -C "$W" init -q
+  KEY="$(python3 -c 'import hashlib,os,re,sys; r=os.path.realpath(sys.argv[1]); print(re.sub(r"[^A-Za-z0-9._-]","_",os.path.basename(r))[:40]+"-"+hashlib.sha1(r.encode()).hexdigest()[:8])' "$W")"
+  mkdir -p "$HANDOFF_STATE_DIR/projects/$KEY"
+  echo "- D1 [2026-11-01] [rule] Never push to main | why: the user asked" > "$HANDOFF_STATE_DIR/projects/$KEY/decisions.md"
+  python3 - "$D" <<'PY'
+import json, sys
+d = sys.argv[1]
+rows = [{"type": "user", "message": {"role": "user", "content": "hi"}},
+        {"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": "ok"}],
+         "usage": {"input_tokens": 10, "cache_read_input_tokens": 59985, "cache_creation_input_tokens": 5, "output_tokens": 3}}},
+        {"type": "assistant", "message": {"role": "assistant", "model": "<synthetic>", "content": [{"type": "text", "text": "x"}],
+         "usage": {"input_tokens": 0, "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0, "output_tokens": 0}}}]
+open(d + "/t60k.jsonl", "w").write("".join(json.dumps(r) + "\n" for r in rows))
+PY
+  # 8 parallel re-anchor runs inject once; the block has no SubagentStart preamble; the state files are 0600
+  for i in 1 2 3 4 5 6 7 8; do
+    printf '{"session_id":"par","transcript_path":"%s","cwd":"%s","hook_event_name":"PostToolUse","tool_name":"Bash"}' "$D/t60k.jsonl" "$W" | python3 "$ROOT/hooks/reanchor.py" > "$D/par$i.out" &
+  done
+  wait
+  n=0; for i in 1 2 3 4 5 6 7 8; do [ -s "$D/par$i.out" ] && n=$((n + 1)); done
+  [ "$n" = 1 ] || fail "F70: $n of 8 parallel runs injected"
+  cat "$D"/par*.out | grep -q "Never push to main" || fail "F70: the rule is missing from the injection"
+  ! cat "$D"/par*.out | grep -q "These are the user's standing rules for the main session" || fail "F70: the SubagentStart preamble is in the re-anchor text"
+  [ "$(mode_of "$HANDOFF_STATE_DIR/reanchor-par.json")" = 600 ] && [ "$(mode_of "$HANDOFF_STATE_DIR/reanchor-par.lock")" = 600 ] || fail "F70: state file mode"
+  [ "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["anchor"])' "$HANDOFF_STATE_DIR/reanchor-par.json")" = 60000 ] || fail "F70: a zero-usage entry set the anchor"
+  # F71: a task-notification entry and a compact summary are not user messages
+  python3 - "$D" <<'PY'
+import json, sys
+d = sys.argv[1]
+rows = [{"type": "user", "uuid": "u1", "message": {"role": "user", "content": "please check the config"}},
+        {"type": "assistant", "message": {"role": "assistant", "content": [{"type": "tool_use", "id": "t1", "name": "Bash", "input": {"command": "python3 ~/.claude/hooks/recall.py search config"}}]}},
+        {"type": "user", "uuid": "u2", "message": {"role": "user", "content": "<task-notification>done</task-notification>"}},
+        {"type": "user", "uuid": "u3", "isCompactSummary": True, "message": {"role": "user", "content": "This session is being continued from a summary"}}]
+open(d + "/cg.jsonl", "w").write("".join(json.dumps(r) + "\n" for r in rows))
+rows2 = rows[:1] + [{"type": "user", "uuid": "u4", "message": {"role": "user", "content": "and what else"}}]
+open(d + "/cg2.jsonl", "w").write("".join(json.dumps(r) + "\n" for r in rows2))
+PY
+  cg() { printf '{"session_id":"cg","transcript_path":"%s","stop_hook_active":false,"last_assistant_message":"As we decided, use sqlite."}' "$1" | python3 "$ROOT/hooks/claim-guard.py"; }
+  cg "$D/cg.jsonl" >/dev/null; [ ! -e "$HANDOFF_STATE_DIR/claim-guard.jsonl" ] || fail "F71: a notification or compact-summary entry reset the user turn"
+  cg "$D/cg2.jsonl" >/dev/null; [ -s "$HANDOFF_STATE_DIR/claim-guard.jsonl" ] || fail "F71: control: a cue with no evidence was not logged"
+  [ "$(mode_of "$HANDOFF_STATE_DIR/claim-guard.jsonl")" = 600 ] || fail "F71: claim-guard.jsonl mode"
+  # F71: no lookback before the last user message (an injection before it is not evidence)
+  python3 - "$D" <<'PY'
+import json, sys
+d = sys.argv[1]
+rows = [{"type": "attachment", "attachment": {"content": "Lossless Handoff auto-recall: earlier messages"}},
+        {"type": "user", "uuid": "u5", "message": {"role": "user", "content": "what did we decide"}}]
+open(d + "/cg3.jsonl", "w").write("".join(json.dumps(r) + "\n" for r in rows))
+PY
+  n0="$(wc -l < "$HANDOFF_STATE_DIR/claim-guard.jsonl" | tr -d " ")"; cg "$D/cg3.jsonl" >/dev/null
+  [ "$(wc -l < "$HANDOFF_STATE_DIR/claim-guard.jsonl" | tr -d " ")" = $((n0 + 1)) ] || fail "F71: an injection before the last user message counted as evidence"
+  # default install: a foreign reanchor.py or claim-guard.py hook keeps exit 0, as on main
+  mkdir -p "$HOME/.claude"
+  cat > "$HOME/.claude/settings.json" <<'JSON'
+{"hooks": {"PostToolUse": [{"matcher": "*", "hooks": [{"type": "command", "command": "python3 /opt/other/reanchor.py"}]}],
+           "Stop": [{"hooks": [{"type": "command", "command": "python3 /opt/other/claim-guard.py"}]}]}}
+JSON
+  r=0; "$ROOT/install.sh" >/dev/null 2>&1 || r=$?
+  [ "$r" = 0 ] || fail "F70/F71: a default install exited $r because of a foreign reanchor.py or claim-guard.py hook"
+  grep -q "/opt/other/reanchor.py" "$HOME/.claude/settings.json" || fail "F70: the foreign hook was removed"
+  "$ROOT/uninstall.sh" >/dev/null 2>&1 || true
+  # F72: printed recall commands, the footer and the agents file use the override folder
+  PRIV="$D/priv"; mkdir -p "$PRIV/agents"; cp "$ROOT/hooks/recall.py" "$PRIV/recall.py"
+  o="$(printf '{"session_id":"x","cwd":"%s","agent_id":"a","agent_type":"g"}' "$W" | HANDOFF_HOOKS_HOME="$PRIV" python3 "$ROOT/hooks/postcompact-inject.py" --subagent-start)"
+  python3 - "$o" "$PRIV" <<'PY'
+import json, sys
+c = json.loads(sys.argv[1])["hookSpecificOutput"]["additionalContext"]; p = sys.argv[2]
+assert "python3 %s/recall.py search" % p in c and "~/.claude/hooks/recall.py" not in c, c
+assert "ask the recall subagent" not in c, c
+PY
+  mkdir -p "$HOME/.claude/agents"; printf '<!-- lossless-handoff:recall-agent -->\n' > "$HOME/.claude/agents/recall.md"
+  o="$(printf '{"session_id":"x","cwd":"%s","agent_id":"a","agent_type":"g"}' "$W" | HANDOFF_HOOKS_HOME="$PRIV" python3 "$ROOT/hooks/postcompact-inject.py" --subagent-start)"
+  ! grep -q "ask the recall subagent" <<<"$o" || fail "F72: the HOME agents file was used under the override"
+  printf '<!-- lossless-handoff:recall-agent -->\n' > "$PRIV/agents/recall.md"
+  o="$(printf '{"session_id":"x","cwd":"%s","agent_id":"a","agent_type":"g"}' "$W" | HANDOFF_HOOKS_HOME="$PRIV" python3 "$ROOT/hooks/postcompact-inject.py" --subagent-start)"
+  grep -q "ask the recall subagent" <<<"$o" || fail "F72: the override agents file was not used"
+  # F68: with the marker and no ledger, startup prints the recall line and the rule line; without it, nothing
+  W2="$D/work2"; mkdir -p "$W2"; git -C "$W2" init -q; : > "$PRIV/.recall-rules"
+  o="$(printf '{"cwd":"%s"}' "$W2" | HANDOFF_HOOKS_HOME="$PRIV" python3 "$ROOT/hooks/postcompact-inject.py" --ledger --part 1)"
+  python3 - "$o" "$PRIV" <<'PY'
+import json, sys
+c = json.loads(sys.argv[1])["hookSpecificOutput"]["additionalContext"].split("\n")
+assert c[0].startswith("- recall: ") and "%s/recall.py" % sys.argv[2] in c[0], c
+assert c[1].startswith("- recall rule: ") and len(c) == 2, c
+PY
+  rm -f "$PRIV/.recall-rules"
+  [ -z "$(printf '{"cwd":"%s"}' "$W2" | HANDOFF_HOOKS_HOME="$PRIV" python3 "$ROOT/hooks/postcompact-inject.py" --ledger --part 1)" ] || fail "F68: output without the marker and without a ledger"
+  # F72: the auto-recall footer
+  python3 - "$HOME" "$W" <<'PY'
+import json, os, re, sys
+home, w = sys.argv[1:3]
+real = os.path.realpath(w)
+pd = os.path.join(home, ".claude", "projects", re.sub(r"[^A-Za-z0-9]", "-", real)); os.makedirs(pd)
+rows = [{"type": "user", "timestamp": "2026-11-19T10:00:00Z", "cwd": real, "sessionId": "rvsess", "uuid": "u1",
+         "message": {"role": "user", "content": "Our staging database rotation policy is every ninety days for all credentials"}}]
+open(os.path.join(pd, "rvsess.jsonl"), "w").write("".join(json.dumps(r) + "\n" for r in rows))
+PY
+  o="$(printf '{"prompt":"what did we decide earlier about the staging database rotation policy","cwd":"%s","session_id":"rvcur"}' "$W" | HANDOFF_HOOKS_HOME="$PRIV" python3 "$ROOT/hooks/auto-recall.py")"
+  [ "$(tail -n 1 <<<"$o")" = "Open one in full: python3 $PRIV/recall.py open <id>" ] || fail "F72: auto-recall footer: $o"
+  # F69: a query that starts with "-" is text; the project comes from CLAUDE_PROJECT_DIR; the fallback protocol
+  o="$(printf '%s\n%s\n' '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"search_earlier_chat","arguments":{"query":"-x"}}}' '{"jsonrpc":"2.0","id":2,"method":"initialize","params":{"protocolVersion":"1999-01-01"}}' | (cd "$D" && CLAUDE_PROJECT_DIR="$W" python3 "$ROOT/hooks/recall-mcp.py"))"
+  python3 - "$o" <<'PY'
+import json, sys
+rows = [json.loads(x) for x in sys.argv[1].splitlines()]
+assert rows[0]["result"].get("isError") in (None, False) and rows[0]["result"]["content"][0]["text"] == "no matches", rows[0]
+assert rows[1]["result"]["protocolVersion"] == "2025-11-25", rows[1]
+PY
+  printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"search_earlier_chat","arguments":{"query":"staging"}}}' | (cd "$D" && CLAUDE_PROJECT_DIR="$W" python3 "$ROOT/hooks/recall-mcp.py") | grep -q "ninety days" || fail "F69: CLAUDE_PROJECT_DIR was not used"
+  [ "$(mode_of "$HANDOFF_STATE_DIR/recall-mcp.jsonl")" = 600 ] || fail "F69: recall-mcp.jsonl mode"
+  # F69: the server is registered already: the kept line, and no add call
+  cat > "$D/fakebin/claude" <<'SH'
+#!/bin/sh
+echo "$*" >> "$FAKE_CLAUDE_LOG"
+if [ "$1 $2" = "mcp get" ]; then echo "lossless-recall:"; echo "  Status: Connected"; fi
+exit 0
+SH
+  chmod +x "$D/fakebin/claude"; export FAKE_CLAUDE_LOG="$D/claude.args"; : > "$FAKE_CLAUDE_LOG"
+  o="$(PATH="$D/fakebin:$PATH" "$ROOT/install.sh" --recall-mcp)"
+  grep -qx "recall-mcp: already installed, kept" <<<"$o" && ! grep -q "mcp add" "$FAKE_CLAUDE_LOG" || fail "F69: registered server: $o / $(cat "$FAKE_CLAUDE_LOG")"
+  PATH="$D/fakebin:$PATH" "$ROOT/uninstall.sh" >/dev/null 2>&1 || true
+  ok "PR #32 review fixes: parallel re-anchor, notification turns, no lookback, foreign hook, override paths, agents file, no-ledger rule line, -x query, kept line, file modes"
 )
 
 "$ROOT/uninstall.sh" >"$T/un.out"
