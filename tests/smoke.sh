@@ -269,6 +269,65 @@ tail -n 1 "$ST/health.jsonl" | grep -q '"ledger_error": *""' || fail "health lac
 ls "$(dirname "$LF")"/decisions.[0-9]*T*Z.md >/dev/null 2>&1 || fail "no backup of the previous ledger"
 ok "delta merge applies valid changes, ignores invalid ones, deletes nothing"
 
+# F39.3: one merge cursor for each session (parallel chats in one project)
+PX="$T/curproj"; mkdir -p "$PX"
+cat > "$T/mk_tr.py" <<'PY'
+import json, sys
+f, a = sys.argv[1], sys.argv[2:]
+rows = [{"type": "user", "timestamp": a[i], "message": {"content": a[i + 1]}} for i in range(0, len(a), 2)]
+open(f, "w").write("\n".join(json.dumps(r) for r in rows) + "\n")
+PY
+cat > "$T/cursors.py" <<'PY'
+import json, sys
+mode, path = sys.argv[1], sys.argv[2]
+if mode == "get":
+    print(json.load(open(path)).get("cursors", {}).get(sys.argv[3], ""))
+elif mode == "last":
+    d = json.load(open(path))
+    assert d["lastSid"] == "curB" and d["lastEntryTs"] == "2026-10-20T15:00:00.000Z", d
+elif mode == "old":  # old format: no cursors; argv[3] = lastSid
+    json.dump({"v": 1, "root": "x", "updatedAt": 1, "lastSid": sys.argv[3], "lastEntryTs": "2026-10-20T14:00:00.000Z"}, open(path, "w"))
+elif mode == "many":
+    c = {"old%03d" % i: "2026-01-01T00:%02d:%02d.000Z" % (i // 60, i % 60) for i in range(250)}
+    json.dump({"v": 1, "root": "x", "updatedAt": 1, "lastSid": "old000", "lastEntryTs": c["old000"], "cursors": c}, open(path, "w"))
+elif mode == "check":
+    c = json.load(open(path))["cursors"]
+    assert len(c) == 200, len(c)
+    assert "curD" in c and "old249" in c and "old000" not in c and "old050" not in c and "old051" in c, sorted(c)[:3]
+PY
+mk_tr() { python3 "$T/mk_tr.py" "$@"; }
+mk_tr "$T/cA.jsonl" 2026-10-20T14:00:00.000Z "Decision: alpha rule from chat A"
+mk_tr "$T/cB.jsonl" 2026-10-20T10:00:00.000Z "Decision: bravo early rule from chat B" 2026-10-20T15:00:00.000Z "Decision: bravo late rule"
+printf '%s\n' "# Project decisions" "- D1 [2026-10-20] Alpha rule | why: a" > "$T/mx1.txt"
+printf '%s\n' "- D2 [2026-10-20] Bravo early rule | why: b" > "$T/mx2.txt"
+run_led curA "$PX" "$T/cA.jsonl" "$T/mx1.txt"
+run_led curB "$PX" "$T/cB.jsonl" "$T/mx2.txt"
+grep -q "bravo early rule" "$T/shim.log.merge.stdin" || fail "session B early message lost after session A merged first"
+CS="$(ls "$ST"/projects/curproj-*/decisions.state.json | head -1)"
+[ "$(python3 "$T/cursors.py" get "$CS" curA)" = "2026-10-20T14:00:00.000Z" ] || fail "cursor of session A not kept"
+[ "$(python3 "$T/cursors.py" get "$CS" curB)" = "2026-10-20T15:00:00.000Z" ] || fail "cursor of session B wrong"
+python3 "$T/cursors.py" last "$CS" || fail "lastSid/lastEntryTs not written"
+ok "each session has its own merge cursor; other cursors are kept"
+
+# old state file (no cursors) for another session must not hide this session's history
+python3 "$T/cursors.py" old "$CS" curOther
+printf '%s\n' "- D3 [2026-10-20] Bravo late rule | why: c" > "$T/mx3.txt"
+run_led curC "$PX" "$T/cB.jsonl" "$T/mx3.txt"
+grep -q "bravo early rule" "$T/shim.log.merge.stdin" || fail "old state: other session's project cursor hid the history"
+# old state file whose lastSid is this session: the old value still applies
+python3 "$T/cursors.py" old "$CS" curC
+run_led curC "$PX" "$T/cB.jsonl" "$T/mx3.txt"
+! grep -q "bravo early rule" "$T/shim.log.merge.stdin" && grep -q "bravo late rule" "$T/shim.log.merge.stdin" || fail "old state with matching lastSid: cursor not used"
+ok "old state file migrates (project cursor used only for its own session)"
+
+# prune: at most 200 cursors, oldest dropped
+python3 "$T/cursors.py" many "$CS"
+mk_tr "$T/cD.jsonl" 2026-10-20T16:00:00.000Z "Decision: delta rule from chat D"
+printf '%s\n' "- D4 [2026-10-20] Delta rule | why: d" > "$T/mx4.txt"
+run_led curD "$PX" "$T/cD.jsonl" "$T/mx4.txt"
+python3 "$T/cursors.py" check "$CS" || fail "cursor prune limit wrong"
+ok "cursors are pruned to 200, oldest first"
+
 # F40.2: own ledger timeout, health ledger_error
 PT="$T/toproj"; mkdir -p "$PT"
 s0=$SECONDS
