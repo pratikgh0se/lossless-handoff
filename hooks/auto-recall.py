@@ -71,7 +71,8 @@ def write_health(hits, timed_out):
         _state["logged"] = True
     try:
         os.makedirs(STATE_DIR, exist_ok=True)
-        with open(os.path.join(STATE_DIR, "auto-recall.jsonl"), "a", encoding="utf-8") as f:
+        fd = os.open(os.path.join(STATE_DIR, "auto-recall.jsonl"), os.O_APPEND | os.O_CREAT | os.O_WRONLY, 0o600)
+        with os.fdopen(fd, "a", encoding="utf-8") as f:
             f.write(json.dumps({"ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "session_id": str(_state["sid"])[:36],
                                 "fired": True, "cue": _state["cue"], "hits": int(hits),
                                 "ms": int((time.monotonic() - _state["t0"]) * 1000), "timed_out": bool(timed_out)}) + "\n")
@@ -85,7 +86,7 @@ def watchdog():
             return
         _state["done"] = True  # from here the main thread prints nothing
     write_health(0, True)
-    os._exit(0)
+    os._exit(0)  # a child process of the search (rg, git) can stay alive; it ends by itself
 
 
 def load_recall():
@@ -107,12 +108,22 @@ def collapse(s):
     return re.sub(r"\s+", " ", s or "").strip()
 
 
-def is_current_prompt(h, prompt, sid):
-    """Exclude the current prompt itself (Claude Code may already have written it to the transcript)."""
-    if h.get("role") != "user":
+def norm(t):
+    """recall writes a newline as ' / '; undo that, collapse spaces, lower case."""
+    return collapse((t or "").replace(" / ", " ")).lower()
+
+
+def is_current_prompt(h, prompt, transcript_path):
+    """Exclude the current prompt itself (Claude Code may already have written it to the transcript).
+    Only a user hit in the current transcript file counts."""
+    if h.get("role") != "user" or not isinstance(transcript_path, str) or not transcript_path:
         return False
-    p = collapse(prompt).lower()
-    s = collapse(h.get("snippet")).lower()
+    try:
+        if os.path.realpath(h.get("path") or "") != os.path.realpath(transcript_path):
+            return False
+    except Exception:
+        return False
+    p, s = norm(prompt), norm(h.get("snippet"))
     return bool(p) and bool(s) and (s in p or p[:80] in s)
 
 
@@ -156,11 +167,12 @@ def search(mod, prompt, words, cwd, sid, transcript_path=None):
     a = SimpleNamespace(subagents=True, role="any", pattern=" ".join(words), keyword=False, meaning=False)
     phrase_hits = []
     for ph in quoted_phrases(prompt):
-        phrase_hits += mod.keyword_hits(a, ts, re.compile(re.escape(ph), re.I), ph, True)
+        phrase_hits += [h for h in mod.keyword_hits(a, ts, re.compile(re.escape(ph), re.I), ph, True)
+                        if h["role"] in ("user", "assistant")]
     alt = "|".join(re.escape(w) for w in words)
     # rg gets the plain alternation (a fast pre-filter); the match itself needs whole words
     word_rx = re.compile(r"\b(?:%s)\b" % alt, re.I)
-    kw = mod.keyword_hits(a, ts, word_rx, alt, False)[:200]
+    kw = [h for h in mod.keyword_hits(a, ts, word_rx, alt, False) if h["role"] in ("user", "assistant")][:200]
     one_rx = [re.compile(r"\b%s\b" % re.escape(w), re.I) for w in words]
 
     def score(h):
@@ -183,10 +195,10 @@ def search(mod, prompt, words, cwd, sid, transcript_path=None):
             continue
         seen.add(k)
         picked.append(h)
-    picked = [h for h in picked if not is_current_prompt(h, prompt, sid)][:TOP_HITS * 3]
+    picked = [h for h in picked if not is_current_prompt(h, prompt, transcript_path)][:TOP_HITS * 3]
     # meaning-only hits carry no text yet; fill them for the few we may show
     mod.fill_meaning_snippets(picked[:TOP_HITS * 3], ts)
-    picked = [h for h in picked if not is_current_prompt(h, prompt, sid)][:TOP_HITS]
+    picked = [h for h in picked if not is_current_prompt(h, prompt, transcript_path)][:TOP_HITS]
     for h in picked:
         h["snippet"] = collapse(mod.redact(collapse(h.get("snippet"))))[:SNIPPET_MAX]
         h["snippet"] = collapse(mod.redact(h["snippet"]))  # a cut can split a secret: mask again
@@ -232,6 +244,7 @@ def main():
     timer.cancel()
     with _state["lock"]:
         if _state["done"]:
+            timer.join(0.3)  # the watchdog is writing the timed_out row; let it finish
             return
         _state["done"] = True
     write_health(len(hits) if out else 0, False)

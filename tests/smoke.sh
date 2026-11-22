@@ -1701,7 +1701,7 @@ rows = [rec("user", "2026-11-19T10:00:00Z", "Our staging database rotation polic
         rec("user", "2026-11-19T10:02:00Z", "We picked the purple elephant migration strategy for the warehouse", 4)]
 open(os.path.join(pd, "f67sess.jsonl"), "w").write("".join(json.dumps(r) + "\n" for r in rows))
 PY
-  ar() { python3 -c 'import json,sys; print(json.dumps({"prompt":sys.argv[1],"cwd":sys.argv[2],"session_id":"f67cur","transcript_path":""}))' "$1" "$W" | python3 "$HK"; }
+  ar() { python3 -c 'import json,sys; print(json.dumps({"prompt":sys.argv[1],"cwd":sys.argv[2],"session_id":"f67cur","transcript_path":sys.argv[3]}))' "$1" "$W" "${AR_TP:-}" | python3 "$HK"; }
   HDR="Lossless Handoff auto-recall: earlier messages that match your words. Verify them before you rely on them."
   FTR="Open one in full: python3 ~/.claude/hooks/recall.py open <id>"
   # cue: output has the exact header, one line per hit, the exact footer
@@ -1748,7 +1748,38 @@ r = {"type": "user", "timestamp": "2026-11-20T09:00:00Z", "cwd": os.path.realpat
      "message": {"role": "user", "content": "did we decide on the tangerine hovercraft mechanism"}}
 open(p, "a").write(json.dumps(r) + "\n")
 PY
-  [ -z "$(ar "did we decide on the tangerine hovercraft mechanism")" ] || fail "F67.c: the current prompt was a hit"
+  TPF="$(ls "$HOME"/.claude/projects/*/f67sess.jsonl)"
+  [ -z "$(AR_TP="$TPF" ar "did we decide on the tangerine hovercraft mechanism")" ] || fail "F67.c: the current prompt was a hit"
+  # a multi-line current prompt is excluded too (recall writes a newline as " / ")
+  python3 - "$TPF" <<'PY'
+import json, sys
+p = sys.argv[1]
+cwd = json.loads(open(p).readline())["cwd"]
+r = {"type": "user", "timestamp": "2026-11-20T09:05:00Z", "cwd": cwd, "sessionId": "f67sess", "uuid": "u10",
+     "message": {"role": "user", "content": "did we decide on the walrus\nsubmarine telemetry plan"}}
+open(p, "a").write(json.dumps(r) + "\n")
+PY
+  ML="$(printf 'did we decide on the walrus\nsubmarine telemetry plan')"
+  [ -z "$(AR_TP="$TPF" ar "$ML")" ] || fail "F67.c: a multi-line current prompt was a hit"
+  # without the path of the current transcript, nothing is excluded (that message is then a normal hit)
+  grep -q "walrus" <<<"$(ar "$ML")" || fail "F67.c: a hit in another transcript file was dropped"
+  # F67.c: tool results never push out real hits (2 old messages, 250 newer tool results)
+  python3 - "$TPF" <<'PY'
+import json, sys
+p = sys.argv[1]
+cwd = json.loads(open(p).readline())["cwd"]
+rows = []
+for i in range(2):
+    rows.append({"type": "user", "timestamp": "2026-11-01T10:0%d:00Z" % i, "cwd": cwd, "sessionId": "f67sess", "uuid": "o%d" % i,
+                 "message": {"role": "user", "content": "zirconium capacitor calibration notes number %d" % i}})
+for i in range(250):
+    rows.append({"type": "user", "timestamp": "2026-11-21T10:00:00Z", "cwd": cwd, "sessionId": "f67sess", "uuid": "t%d" % i,
+                 "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "x%d" % i,
+                                                          "content": "zirconium capacitor calibration output %d" % i}]}})
+open(p, "a").write("".join(json.dumps(r) + "\n" for r in rows))
+PY
+  o="$(ar "what did we decide about zirconium capacitor calibration")"
+  grep -q "calibration notes number" <<<"$o" && ! grep -q "calibration output" <<<"$o" || fail "F67.c: tool results pushed out real hits: $o"
   # redaction: the secret never reaches the output
   o="$(ar "what did we decide earlier about the deploy pipeline token staging")"
   grep -q "REDACTED" <<<"$o" && ! grep -q "ghp_abcdefghijkl" <<<"$o" || fail "F67.c: secret not masked: $o"
@@ -1795,10 +1826,12 @@ def fill_meaning_snippets(*a): pass
 def fmt_ts(t): return t
 def index_paths(r): return ("", "/nonexistent", "")
 PY
-  t0=$(date +%s)
+  t0=$(date +%s); nrows="$(wc -l < "$AL")"
   r=0; o="$(python3 -c 'import json; print(json.dumps({"prompt":"what did we decide earlier about the staging database rotation policy","cwd":"'"$W"'"}))' | HOME="$D/slowhome" python3 "$HK")" || r=$?
   t1=$(date +%s)
   [ "$r" = 0 ] && [ -z "$o" ] && [ $((t1 - t0)) -le 4 ] || fail "F67.c: timeout path: exit $r, output '$o', $((t1 - t0)) s"
+  [ "$(wc -l < "$AL" | tr -d " ")" = "$(( $(echo "$nrows" | tr -d " ") + 1 ))" ] || fail "F67.d: the timeout run wrote $(wc -l < "$AL") rows after $nrows"
+  [ "$(stat -f %Lp "$AL" 2>/dev/null || stat -c %a "$AL")" = 600 ] || fail "F67.d: the log is not mode 600"
   tail -n 1 "$AL" | python3 -c 'import json,sys; r=json.loads(sys.stdin.read()); assert r["timed_out"] is True and r["hits"] == 0 and 1500 <= r["ms"] <= 2500, r' || fail "F67.d: timeout row"
   ok "F67: cue, no cue, slash, quote, short query, no hits, current prompt, redaction, off switch, stub, timeout, health log"
 )
