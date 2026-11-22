@@ -631,7 +631,8 @@ def history_entries(ts, ident, role="any", cutoff=None):
                         wins.append([a, b])
                 for a, b in wins:
                     out.append({"ts": rec.get("timestamp") or "", "path": t.path, "line": n, "label": t.label, "role": r,
-                                "text": " ".join(sents[a:b + 1])})
+                                "text": " ".join(sents[a:b + 1]),
+                                "core": " ".join(sents[i] for i in idx if a <= i <= b)})
     out.sort(key=lambda e: e["ts"])  # stable: ties keep the file order
     return out
 
@@ -640,40 +641,55 @@ def _cut(s, n):
     return s if len(s) <= n else s[:max(0, n - 1)] + "…"
 
 
+def _window(core, rx, width):
+    """`core` cut to `width` characters centred on the first whole-token match (… marks a cut side)."""
+    if len(core) <= width:
+        return core
+    pos = 0
+    for m in rx.finditer(core):
+        pos = (m.start() + m.end()) // 2
+        if boundary_ok(core, m.start(), m.end()):
+            break
+    a = max(0, min(pos - width // 2, len(core) - width))
+    return ("…" if a else "") + core[a:a + width] + ("…" if a + width < len(core) else "")
+
+
 def history_lines(ident, entries, cap=HISTORY_CAP):
-    """F73: the output lines. `cap` None: no cap. Over the cap: line 1, the 2 oldest entries, an omission line, and as
-    many of the newest entries as fit."""
+    """F73 (cap amendment): the output lines. `cap` None: no cap. Over the cap, stop at the first step that fits:
+    (1) only the matching sentence of each entry, (2) a 200-character window on the match, (3) a 120-character window,
+    (4) the middle cut: line 1, the 2 oldest entries, an omission line, as many of the newest entries as fit."""
     n = len(entries)
     if n == 0:
         return ["history of %s: no mentions" % ident]
     l1 = ("history of %s: %d mention(s), oldest first. A later mention can be a rejected proposal, a dry run or an undo; "
           "read all of them." % (ident, n))
-    rows = ["- %s:%d %s %s: %s" % (e["label"], e["line"], fmt_ts(e["ts"]), e["role"], redact(_norm_keep(e["text"])))
-            for e in entries]
-    if cap is None or len("\n".join([l1] + rows)) <= cap:
-        return [l1] + rows
-    for lim in (600, 300, 150, 80, 40):
-        rr = [_row_cut(entries[i], rows[i], lim) for i in range(n)]
-        if len("\n".join([l1] + rr)) <= cap:
-            return [l1] + rr
-        if n < 3:
-            continue
+    rx = ident_rx(ident)
+
+    def head(e):
+        return "- %s:%d %s %s: " % (e["label"], e["line"], fmt_ts(e["ts"]), e["role"])
+
+    def build(texts):
+        return [head(e) + redact(_norm_keep(t)) for e, t in zip(entries, texts)]
+    steps = [[e["text"] for e in entries], [e.get("core") or e["text"] for e in entries]]
+    for w in (200, 120):
+        steps.append([_window(_norm_keep(e.get("core") or e["text"]), rx, w) for e in entries])
+    for texts in steps:
+        rows = build(texts)
+        if cap is None or len("\n".join([l1] + rows)) <= cap:
+            return [l1] + rows
+    rr = rows  # the 120-character rows
+    if n >= 3:
         for m in range(n - 2 - 1, -1, -1):
             k = n - 2 - m
             om = "[%d mention(s) omitted in the middle; run: python3 %s history %s --all]" % (k, _recall_cmd(), ident)
             lines = [l1] + rr[:2] + [om] + (rr[n - m:] if m else [])
             if len("\n".join(lines)) <= cap:
                 return lines
-    return ["\n".join([l1] + rows)[:cap]]
+    return ["\n".join([l1] + rr)[:cap]]
 
 
 def _norm_keep(t):
     return re.sub(r"\s+", " ", t or "").strip()
-
-
-def _row_cut(e, row, lim):
-    head = row[:len(row) - len(redact(_norm_keep(e["text"])))]
-    return head + _cut(redact(_norm_keep(e["text"])), lim)
 
 
 def history_for(ts, ident, role="any", cutoff=None, cap=HISTORY_CAP):

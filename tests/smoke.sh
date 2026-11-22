@@ -2683,6 +2683,17 @@ rows = [rec("user", "2026-11-01T00:00:00Z", "zz-key set to 5 and kept.", "rankse
 for i in range(250):
     rows.append(rec("user", "2026-11-10T00:%02d:%02dZ" % (i // 60, i % 60), "see zz-key-eu-%d here" % i, "ranksess1", "R%d" % (i + 1)))
 put("ranksess1", rows)
+fill = "Some long unrelated filler words go here to make the neighbour sentence much longer than the match itself."
+ch = []
+for i in range(14):
+    if i == 10:
+        v = "chain-key-q is now DECIDEDVAL."
+    elif i > 10:
+        v = "Rejected: chain-key-q set to LURE%d." % i
+    else:
+        v = "chain-key-q set to OLD%d." % i
+    ch.append(rec("user", "2026-11-05T00:%02d:00Z" % i, fill + " " + v + " " + fill, "chainsess1", "C%d" % i))
+put("chainsess1", ch)
 PY
   # 1. probe-like prompt: `current`, `previous`, `replaced` and 3 keys with no mention take no slot
   ar() { python3 -c 'import json,sys; print(json.dumps({"prompt":sys.argv[1],"cwd":sys.argv[2],"session_id":"f75b","transcript_path":""}))' "$1" "$W" | python3 "$ROOT/hooks/auto-recall.py"; }
@@ -2715,6 +2726,16 @@ a.subagents = True
 lines = m.cmd_search(a, m.project_root(sys.argv[2]))
 hits = [x for x in lines if " [word]: " in x]
 assert hits and "zz-key set to 5" in hits[0], lines[:4]
+PY
+  # 5. cap amendment: 14 mentions, the newest 3 rejected, under the 1,500 cap: every mention and the deciding one stay
+  python3 - "$ROOT/hooks" "$W" <<'PY'
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location("recall", sys.argv[1] + "/recall.py"); m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+ts = m.in_scope_transcripts(m.project_root(sys.argv[2]), True)
+lines, n = m.history_for(ts, "chain-key-q", "any", None, 1500)
+x = "\n".join(lines)
+assert n == 14 and len(x) <= 1500, (n, len(x))
+assert sum(1 for l in lines if l.startswith("- ")) == 14 and "omitted" not in x and "DECIDEDVAL" in x and "LURE13" in x, x
 PY
   ok "F73-F75 amendments: real keys get the slots, current session by id, PEM redaction, whole-token ranking before the cut"
 )
