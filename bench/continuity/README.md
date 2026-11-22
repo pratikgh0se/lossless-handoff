@@ -396,3 +396,17 @@ The preflight4 run 20261122T142851 stopped: a probe fork of session s1-A-nc (the
 - A failed call keeps `failed/<session>-<kind>-<attempt>-<time>.json` (reply redacted and cut at 4,000 characters, usage, class) and a copy of the transcript in the run folder.
 - A `safety_refusal` is not retried (`runner.SafetyRefusal`); the session has `safety_refusals` in sessions.jsonl and the gate message counts them.
 
+
+### Smaller probes and the runaway class (`GEN_VERSION` litm4-5, 2026-11-22)
+
+Why: in preflight4 runs 1 and 2, the probe fork for L2 with 12 items thought for 8,000 tokens. Claude Code continued 4 times and then failed with "exceeded the 8000 output token maximum" (32,000 output tokens in total). The cap worked, but the probe was too large.
+
+What changed:
+
+- A probe fork asks at most 4 chains (`design4.MAX_ITEMS_PER_PROBE`). `design4.chunks` splits each level into chunks. The split is the same for every arm and phrasing, and it is set by the seed. Each chunk holds each third of the context within one chain of the others, so the positions stay balanced.
+- Fork counts for each arm and seed: L1 3, L2 3, L3 3, L4 3 chunks, times 3 phrasings, so 36 forks (before: 12). With L5, 45 forks (before: 15). The fork key of a chunk ends with `:c<n>`. Result rows have `chunk` and `runaway`.
+- A probe fork that hits the output cap is a probe outcome, not a session failure. All its items are wrong, with error class `runaway`. The runaway class is counted apart from abstain and unreadable. It does not count toward the failed-session gate. A main turn that hits the cap is still a failure.
+- `gates.failure_class` maps "exceeded the N output token maximum" to `runaway`.
+- Report: Table D4-6 gives the runaway forks for each arm, level and phrasing. Preflight: FAIL if the runaway rate is above 5% of the probe forks of an arm, and an INFO line with the counts for each level. Abort gate: a runaway rate above 10% of the probe forks of a seed.
+- The 8,000 cap stays. Thinking is not limited.
+- Estimates (offline, `python3 cost.py`): calibration about $16 for 2 seeds ($8.04 per seed), L5 run about $11, smoke about $46, pilot about $192, full V3 about $3,917.

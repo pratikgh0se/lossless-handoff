@@ -563,6 +563,10 @@ class Session:
                                        "cache_read": u.get("cache_read_input_tokens"), "cache_write": u.get("cache_creation_input_tokens"),
                                        "is_error": o.get("is_error")})
             o["_delta"] = delta
+            if o.get("is_error") and self.d4 and kind in ("fork", "z") and gates.failure_class(o.get("result")) == "runaway":
+                self.save_failed(o, out, err_txt, kind, fork_of, attempt)       # a probe that hit the output cap: an outcome, not a failure; no retry
+                o["_runaway"] = True
+                return o
             if o.get("is_error") or p.returncode != 0:
                 refusal = gates.failure_class(o.get("result")) == "safety_refusal"
                 if refusal or attempt == 2:
@@ -598,21 +602,29 @@ class Session:
             return None, None, None
         return recall_log_fired(read_jsonl(os.path.join(self.statedir, AUTO_RECALL_LOG)), fsid)
 
-    def probe(self, ptype, ckpt, fork_of=None, z_sid=None, phrasing="cued"):
-        """Run one probe type. Fork of the main session (arms A, B, O) or a fresh session (arm Z). Write the result lines."""
+    def probe(self, ptype, ckpt, fork_of=None, z_sid=None, phrasing="cued", chunk=None):
+        """Run one probe type. Fork of the main session (arms A, B, O) or a fresh session (arm Z). Write the result lines.
+        Design 4: the level is split into forks of at most design4.MAX_ITEMS_PER_PROBE chains (chunk = (index, items) of one fork)."""
         cfg, st, script = self.ctx.cfg, self.st, self.script
-        marker = "PROBE-%d-%s-%d-%s%s" % (self.seed, self.arm, ckpt, ptype, {"neutral": "n", "nonliteral": "l"}.get(phrasing, ""))
+        if self.d4 and chunk is None and ptype != "F":
+            for ci, ch in enumerate(design4.chunks(script["items"][ptype], self.seed, ptype)):
+                if fork_key(ckpt, ptype, phrasing, ci) not in st["done_forks"]:
+                    self.probe(ptype, ckpt, fork_of=fork_of, z_sid=(str(uuid.uuid4()) if z_sid else None), phrasing=phrasing, chunk=(ci, ch))
+            st["done_forks"].append(fork_key(ckpt, ptype, phrasing))
+            self.ctx.save()
+            return
+        marker = "PROBE-%d-%s-%d-%s%s" % (self.seed, self.arm, ckpt, ptype, {"neutral": "n", "nonliteral": "l"}.get(phrasing, "")) + ("" if chunk is None else "c%d" % chunk[0])
         if ptype == "F":
             items = script["fresh"][str(ckpt)]
         elif self.d4:
-            items = script["items"][ptype]      # design 4: a level of update chains, all planted at the probe point
+            items = chunk[1]      # design 4: a chunk of a level of update chains, all planted at the probe point
         else:
             em = None if (self.arm == "Z" or self.cond == "nocompact") else need_epoch(cfg, self.arm, ckpt)
             items = gen.select(script, ptype, em)      # planted so far, oldest first
         if not items:
             return      # nothing of this type is planted yet (M needs 3 epochs)
         if self.d3 and ptype != "F":
-            items = gen.shuffle3(items, self.seed, ptype, phrasing)     # question order is not position
+            items = gen.shuffle3(items, self.seed, ptype + ("" if chunk is None else "c%d" % chunk[0]), phrasing)     # question order is not position
         if self.d4:
             prompt = design4.probe_prompt(ptype, script, marker, phrasing, items=items)
         else:
@@ -623,7 +635,10 @@ class Session:
             o = self.call(prompt, "z", sid=z_sid, first=True)
         raw = o.get("result") if isinstance(o.get("result"), str) else ""
         fsid = o.get("session_id")
-        graded = design4.grade_level(items, raw, script) if self.d4 else grade.grade(ptype, items, raw)
+        if self.d4 and o.get("_runaway"):
+            graded = design4.runaway_rows(items)          # the fork hit the output cap: a probe outcome, every item is wrong (class runaway)
+        else:
+            graded = design4.grade_level(items, raw, script) if self.d4 else grade.grade(ptype, items, raw)
         epochs = {x["id"]: x.get("epoch") for x in items}
         frecs = read_jsonl(self.transcript(fsid)) if fsid else []
         used = grade.lookup_used(frecs, marker) if fsid else False
@@ -663,16 +678,18 @@ class Session:
                 "window": self.window, "commit": cfg["lh_commit"], "turn_index": st["turns"],
                 "condition": self.cond, "phrasing": phrasing, "position": posmap.get(g["id"]), "attempt": st.get("restarts", 0), **view_fields,
                 "auto_recall_fired": fired, "auto_recall_hits": hits, "auto_recall_timed_out": timed_out,
-                **({k_: g[k_] for k_ in ("m1", "m2", "m3", "error_class", "lag", "alt_ok", "undo_last")} if self.d4 else {})})
+                **({k_: g[k_] for k_ in ("m1", "m2", "m3", "error_class", "lag", "alt_ok", "undo_last")} if self.d4 else {}),
+                **({"chunk": chunk[0], "runaway": bool(o.get("_runaway"))} if self.d4 else {})})
         if self.view_of is not None:
             st.setdefault("first_fork_cost_usd", round(o["_delta"], 6))      # K: the cache-miss check of the preflight
-        st["done_forks"].append(fork_key(ckpt, ptype, phrasing))
+        st["done_forks"].append(fork_key(ckpt, ptype, phrasing, None if chunk is None else chunk[0]))
         self.ctx.save()
 
 
-def fork_key(ckpt, ptype, phrasing="cued"):
-    """Key of a finished probe fork in the state file. A cued key is the old key, so old state files still work."""
-    return "%d:%s" % (ckpt, ptype) + (":" + phrasing if phrasing in ("neutral", "nonliteral") else "")
+def fork_key(ckpt, ptype, phrasing="cued", chunk=None):
+    """Key of a finished probe fork in the state file. A cued key is the old key, so old state files still work. Design 4: a chunk key
+    ends with :c<n>; the key without a chunk means that all chunks of the (type, phrasing) are done."""
+    return "%d:%s" % (ckpt, ptype) + (":" + phrasing if phrasing in ("neutral", "nonliteral") else "") + ("" if chunk is None else ":c%d" % chunk)
 
 
 def probe_plan(cfg, ptype, d3=False):

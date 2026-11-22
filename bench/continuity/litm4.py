@@ -38,6 +38,11 @@ class Vec:
         return cs, ts
 
 
+def gates_runaway(rows):
+    import gates
+    return gates.runaway_rate(rows)
+
+
 def pc(x):
     return "%.0f%%" % (100 * x)
 
@@ -101,6 +106,19 @@ def section4(rows_all, sessions, th, draws):
     for name, st, det in gl:
         md.append("| %s | %s | %s |" % (name, st, det))
         out["gates"].append({"name": name, "status": st})
+    # table D4-6: runaway probe forks (the fork hit the output cap: an outcome, all its items wrong, class runaway)
+    md += ["", "#### Table D4-6: runaway probe forks (forks that hit the output cap of %d tokens / all probe forks)" % 8000, "", "| Arm | all levels | " + " | ".join(design4.D4_LEVELS + ("L5",)) + " |", "|---|---|" + "---|" * 5]
+    rw = {}
+    for arm in arms:
+        cols = []
+        for lv in (None,) + design4.D4_LEVELS + ("L5",):
+            sel = [r for r in rows if r["arm"] == arm and (lv is None or r["type"] == lv)]
+            b, n = gates_runaway(sel)
+            cols.append("%d/%d" % (b, n) if n else "no data")
+            rw[(arm, lv)] = (b, n)
+        md.append("| %s | %s |" % (arm, " | ".join(cols)))
+    md += ["", "By phrasing (all arms, all levels): " + ", ".join("%s %d/%d" % ((ph,) + gates_runaway([r for r in rows if r.get("phrasing") == ph])) for ph in design4.PHRASINGS) + "."]
+    out["runaway"] = {"%s|%s" % (k[0], k[1]): list(v) for k, v in rw.items()}
     # place of the last update inside a third (what part of the context H1 can test)
     pt = design4.place_table(scripts) if scripts else {}
     md += ["", "#### Table D4-5: place of the last update (the deciding statement) inside its third", "",
