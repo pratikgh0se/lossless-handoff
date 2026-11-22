@@ -342,6 +342,24 @@ def _snap(led, which, entries):
         pass
 
 
+MAX_CURSORS = 200
+
+
+def clean_cursors(raw):
+    """The per-session merge cursors of the state file: {session id: ISO timestamp}. Drops bad entries."""
+    if not isinstance(raw, dict):
+        return {}
+    return {k: v for k, v in raw.items() if isinstance(k, str) and isinstance(v, str)}
+
+
+def prune_cursors(cursors):
+    """Keep the MAX_CURSORS newest cursors (by timestamp); drop the oldest."""
+    if len(cursors) <= MAX_CURSORS:
+        return cursors
+    keep = sorted(cursors.items(), key=lambda kv: ts_ms(kv[1]) or 0, reverse=True)[:MAX_CURSORS]
+    return dict(keep)
+
+
 def ledger_merge(sid, tp, root, led, timeout):
     """Thread body: lock, merge the new conversation into the ledger as a delta, write. Fills `led`
     (status ok|unchanged|failed|locked, restored, error). `timeout` covers the lock wait and the claude
@@ -374,7 +392,10 @@ def ledger_merge(sid, tp, root, led, timeout):
             state = st if isinstance(st, dict) else {}
         except Exception:
             state = {}
-        last_ts = state.get("lastEntryTs") if isinstance(state.get("lastEntryTs"), str) else None
+        cursors = clean_cursors(state.get("cursors"))
+        last_ts = cursors.get(sid)
+        if last_ts is None and state.get("lastSid") == sid and isinstance(state.get("lastEntryTs"), str):
+            last_ts = state["lastEntryTs"]  # old state file: the project value is valid only for its own session
         _snap(led, "before", prev)  # F47.a: evidence for the decisions_safe proof
         _snap(led, "after", prev)
         items, newest = merge_items(tp, ts_ms(last_ts) if last_ts else None)
@@ -395,8 +416,11 @@ def ledger_merge(sid, tp, root, led, timeout):
                 write_atomic(os.path.join(ddir, f"decisions.{ts}.md"), redact(prev_text))
                 prune_backups(ddir)
             write_atomic(lpath, redact(ledger_text(root, res)))
+        if (newest or last_ts):
+            cursors[sid] = newest or last_ts
+        cursors = prune_cursors(cursors)
         write_atomic(spath, json.dumps({"v": 1, "root": root, "updatedAt": int(time.time() * 1000), "lastSid": sid,
-                                        "lastEntryTs": newest or last_ts}))
+                                        "lastEntryTs": newest or last_ts, "cursors": cursors}))
         _snap(led, "after", res)
         led["status"] = "ok" if changes else "unchanged"
         led["restored"] = 0

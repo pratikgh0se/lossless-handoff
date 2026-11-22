@@ -2,6 +2,12 @@
 
 Lossless Handoff, formerly claude-handoff.
 
+## Unreleased
+
+### Fixed
+
+- The decisions list merge keeps one cursor for each session (`cursors` in `decisions.state.json`). Before, one cursor served the whole project. If chat X compacted first, chat Y lost its earlier decisions. An old state file works: its project cursor applies only to the session in `lastSid`. `lastEntryTs` and `lastSid` are still written. At most 200 cursors are kept.
+
 ## [0.18.0] - 2026-11-22
 
 History guard, action guard and size trigger (hooks 1.20.0). New F77, F78 and F80 in `docs/spec.md`. All three are opt-in.
