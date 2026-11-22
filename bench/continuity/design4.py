@@ -623,7 +623,8 @@ def action_prompt(level, script, marker, items, out_rel):
             "Services:\n%s\nWhen the file is written, reply with the word done." % (marker, out_rel, "\n".join(lines)))
 
 
-ACTION_LINE = re.compile(r"^\s*(\d+)\s+([A-Za-z0-9_.-]+)\s*=\s*(.*?)\s*$")
+# The line forms accepted: `1 queue=V`, `1. queue=V`, `1) queue=V`, `1: queue=V`, `1 <key> queue=V`, `1. <key> queue=V`. The group 1 is the number, 3 the value.
+ACTION_LINE = re.compile(r"^\s*(\d+)[.):]?\s+(?:\S+\s+)?([A-Za-z0-9_.-]+)\s*=\s*(.*?)\s*$")
 
 
 def grade_action(items, text, script):
@@ -985,32 +986,36 @@ def describe_decision(d):
     return "\n".join(lines)
 
 
-ORACLE_CHECK_M1_MIN, ORACLE_CHECK_RUNAWAY_MAX = 0.95, 0.05
+ORACLE_CHECK_M1_MIN, ORACLE_CHECK_RUNAWAY_MAX, ORACLE_CHECK_REFUSED_MAX = 0.95, 0.05, 0.05
 
 
-def oracle_check(rows, levels=D4_LEVELS):
-    """Gate of the preset litm4-oracle-check: for each level, O M1 at least 95% (all phrasings together and each phrasing) and runaway forks at most 5%.
-    Returns (ok, lines). A level with no O rows fails."""
-    from gates import runaway_rate
+def oracle_check(rows, levels=D4_LEVELS, phrasings=ALL_PHRASINGS):
+    """Gate of the preset litm4-oracle-check. For each level AND each phrasing (cued, neutral, nonliteral, action): O M1 at least 95% of the graded
+    rows, runaway forks at most 5%, refused forks at most 5% (gates.refused_rate). A cell with no O rows FAILs. Any row with `tamper` (a file of the
+    project folder changed outside probe-out) FAILs the whole check. Returns (ok, lines)."""
+    from gates import runaway_rate, refused_rate
     ok, lines = True, []
     for lv in levels:
-        o = [r for r in rows if r.get("arm") == "O" and r.get("type") == lv]
-        if not o:
-            ok = False
-            lines.append("%s: NO DATA -> FAIL" % lv)
-            continue
-        graded = [r for r in o if not r.get("runaway") and not r.get("refused")]
-        m1 = (sum(1 for r in graded if r.get("m1") is True) / float(len(graded))) if graded else 0.0
-        rw, nf = runaway_rate(o)
-        per = []
-        for ph in ALL_PHRASINGS:
-            v, n = cell(o, "O", lv, "m1", ph)
-            if n:
-                per.append("%s %.0f%%" % (ph, 100 * v))
-        good = m1 >= ORACLE_CHECK_M1_MIN and (rw / float(nf) if nf else 1.0) <= ORACLE_CHECK_RUNAWAY_MAX
-        ok = ok and good
-        lines.append("%s: O M1 %.0f%% (need %d%%), runaway %d/%d forks (max %d%%) -> %s   [%s]" % (
-            lv, 100 * m1, int(100 * ORACLE_CHECK_M1_MIN), rw, nf, int(100 * ORACLE_CHECK_RUNAWAY_MAX), "PASS" if good else "FAIL", ", ".join(per)))
+        for ph in phrasings:
+            o = [r for r in rows if r.get("arm") == "O" and r.get("type") == lv and r.get("phrasing") == ph]
+            if not o:
+                ok = False
+                lines.append("%s %s: NO DATA -> FAIL" % (lv, ph))
+                continue
+            graded = [r for r in o if not r.get("runaway") and not r.get("refused")]
+            m1 = (sum(1 for r in graded if r.get("m1") is True) / float(len(graded))) if graded else 0.0
+            rw, nf = runaway_rate(o)
+            rf, nf2 = refused_rate(o)
+            good = (m1 >= ORACLE_CHECK_M1_MIN and (rw / float(nf) if nf else 1.0) <= ORACLE_CHECK_RUNAWAY_MAX
+                    and (rf / float(nf2) if nf2 else 0.0) <= ORACLE_CHECK_REFUSED_MAX)
+            ok = ok and good
+            lines.append("%s %s: O M1 %.0f%% (need %d%%), runaway %d/%d (max %d%%), refused %d/%d (max %d%%) -> %s" % (
+                lv, ph, 100 * m1, int(100 * ORACLE_CHECK_M1_MIN), rw, nf, int(100 * ORACLE_CHECK_RUNAWAY_MAX), rf, nf2,
+                int(100 * ORACLE_CHECK_REFUSED_MAX), "PASS" if good else "FAIL"))
+    tam = [r for r in rows if r.get("tamper")]
+    if tam:
+        ok = False
+        lines.append("TAMPER: %d row(s) show a changed file outside probe-out -> FAIL" % len(tam))
     return ok, lines
 
 

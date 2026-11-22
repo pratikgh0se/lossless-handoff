@@ -1530,17 +1530,6 @@ class OracleCheckAndHaikuScope(unittest.TestCase):
                         "m1": i >= wrong, "runaway": i < runaway, "refused": False, "parse_ok": True})
         return out
 
-    def test_oracle_check_passes_and_fails_per_level(self):
-        good = sum((self.rows(lv) for lv in d4.D4_LEVELS), [])
-        self.assertTrue(d4.oracle_check(good)[0])
-        bad = self.rows("L1") + self.rows("L2") + self.rows("L3", wrong=3) + self.rows("L4")
-        ok, lines = d4.oracle_check(bad)
-        self.assertFalse(ok)
-        self.assertIn("FAIL", [l for l in lines if l.startswith("L3")][0])
-        ok, _ = d4.oracle_check(self.rows("L1") + self.rows("L2") + self.rows("L3", runaway=2) + self.rows("L4"))
-        self.assertFalse(ok)
-        self.assertFalse(d4.oracle_check(self.rows("L1"))[0])
-
     def test_preset_has_a_cost_estimate(self):
         est = cost.estimate_per_seed({"kind": "litm4-oracle-check", "arms": ["O"], "n": [1], "conditions": ["nocompact"],
                                       "phrasings": ["cued", "neutral", "nonliteral", "action"], "probe_design": 4})
@@ -1554,6 +1543,44 @@ class OracleCheckAndHaikuScope(unittest.TestCase):
         sessions = []
         why = gates.abort_reasons(sessions, rows, None, {1})
         self.assertFalse([w for w in (why or []) if "parse error" in w])
+
+
+class ReviewFixes(unittest.TestCase):
+    def setUp(self):
+        self.script = d4.build_litm4(3)
+        self.items = self.script["items"]["L2"][:1]
+
+    def test_action_line_forms(self):
+        v = self.items[0]["current"]
+        for form in ("1 queue=%s", "1. queue=%s", "1) queue=%s", "1: queue=%s", "1 svc queue=%s", "1. svc-a queue=%s"):
+            g = d4.grade_action(self.items, form % v, self.script)
+            self.assertTrue(g[0]["m1"], form)
+        for bad in ("queue=%s", "one queue=%s"):
+            g = d4.grade_action(self.items, bad % v, self.script)
+            self.assertEqual(g[0]["error_class"], "unreadable", bad)
+
+    def test_oracle_check_per_phrasing_refused_and_tamper(self):
+        def rows(lv, ph, **kw):
+            return [dict({"arm": "O", "type": lv, "phrasing": ph, "condition": "nocompact", "seed": 1, "chunk": i, "fork_sid": "f%s%s%d" % (lv, ph, i),
+                          "m1": True, "runaway": False, "refused": False, "parse_ok": True}, **kw) for i in range(6)]
+        full = sum((rows(lv, ph) for lv in d4.D4_LEVELS for ph in d4.ALL_PHRASINGS), [])
+        self.assertTrue(d4.oracle_check(full)[0])
+        missing = [r for r in full if not (r["type"] == "L2" and r["phrasing"] == "action")]
+        ok, lines = d4.oracle_check(missing)
+        self.assertFalse(ok)
+        self.assertTrue(any("L2 action: NO DATA" in l for l in lines))
+        ref = [dict(r, refused=True) if (r["type"] == "L1" and r["phrasing"] == "cued" and r["chunk"] < 2) else r for r in full]
+        self.assertFalse(d4.oracle_check(ref)[0])
+        tam = [dict(r, tamper=["x"]) if r is full[0] else r for r in full]
+        self.assertFalse(d4.oracle_check(tam)[0])
+
+    def test_edit_rule_has_the_double_slash_and_no_write_rule(self):
+        s = runner.Session.__new__(runner.Session)
+        s.arm = "O"
+        tools = s.allowed_tools("Users/me/proj/probe-out/m1")
+        self.assertIn("Edit(//Users/me/proj/probe-out/m1/**)", tools)
+        self.assertNotIn("Write(", tools)
+        self.assertNotIn("Bash(python3:*)", tools)
 
 
 if __name__ == "__main__":

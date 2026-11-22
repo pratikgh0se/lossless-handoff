@@ -439,10 +439,14 @@ class Session:
         return json.dumps({"mcpServers": {"lossless-recall": {"command": "python3", "args": [os.path.join(self.hooks_dir(), "recall-mcp.py")],
                                                                "env": {"HANDOFF_STATE_DIR": self.statedir, "RECALL_EMBED_URL": "http://127.0.0.1:9"}}}})
 
+    # Claude Code permission docs (https://code.claude.com/docs/en/permissions, "How path patterns match"): "//path  Absolute path from filesystem
+    # root  Read(//Users/alice/secrets/**)"; "A pattern like /Users/alice/file isn't an absolute path. Use //Users/alice/file for absolute paths."
+    # Edit rules apply to every tool that edits files (Write too); a Write(path) rule does not match. So the rule is Edit(//<abs dir>/**), where
+    # action_dir is the absolute folder of the probe without its leading slash. The snapshot tamper check is the second layer.
     def allowed_tools(self, action_dir=None):
         """action_dir (F79): the fork may write files with Write and Edit, and the rule names the folder of the probe. No Bash(python3:*) then, so no shell can
         write elsewhere. acceptEdits already allows edits below the project folder: probe-out of the probe is the place, and probe() checks that nothing else changed."""
-        base = ALLOWED_TOOLS if not action_dir else ALLOWED_TOOLS.replace(" Bash(python3:*)", "") + " Write(/%s/**) Edit(/%s/**)" % (action_dir, action_dir)
+        base = ALLOWED_TOOLS if not action_dir else ALLOWED_TOOLS.replace(" Bash(python3:*)", "") + " Edit(//%s/**)" % action_dir
         return base + (" " + MCP_TOOLS + " " + TOOL_SEARCH if self.arm in RECALL_ARMS else "")
 
     # -- folders
@@ -661,6 +665,7 @@ class Session:
         if self.d4 and phrasing == design4.ACTION:
             rel = os.path.join("probe-out", marker)
             action_dir = os.path.realpath(os.path.join(self.proj, rel)).lstrip("/")
+            shutil.rmtree(os.path.join(self.proj, rel), ignore_errors=True)       # no old services.conf: a restart cannot grade an old file, a later fork cannot read it
             os.makedirs(os.path.join(self.proj, rel), exist_ok=True)
             action_before = snapshot_dir(self.proj)
             prompt = design4.action_prompt(ptype, script, marker, items, rel)

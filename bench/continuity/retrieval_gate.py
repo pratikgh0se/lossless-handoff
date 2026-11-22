@@ -287,8 +287,9 @@ def oracle_replies(it, items_of_level, script):
     return out
 
 
-def reply_text(it, value, with_key):
-    value = design4.val_text(it["attr"], value)       # the written form of the value (a tag value is written with its TAG- prefix in the history)
+def reply_text(it, value, with_key, bare=False):
+    if not bare:
+        value = design4.val_text(it["attr"], value)   # the written form of the value (a tag value is written with its TAG- prefix in the history)
     return ("Done. I set the %s of `%s` to `%s`." % (it["attr"], it["key"], value)) if with_key else ("Done. I used `%s`." % value)
 
 
@@ -329,16 +330,16 @@ def trigger_gate(seeds, level, hooks):
             items = script["items"][level]
             for it in items:
                 for kind, value in oracle_replies(it, items, script).items():
-                    for with_key in (True, False):
-                        reply = reply_text(it, value, with_key)
-                        tag = "%d-%s-%s-%s-%d" % (seed, level, it["id"], kind, with_key)
+                    for with_key, bare in ((True, False), (False, False), (True, True), (False, True)):
+                        reply = reply_text(it, value, with_key, bare)
+                        tag = "%d-%s-%s-%s-%d-%d" % (seed, level, it["id"], kind, with_key, bare)
                         fsid, fpath = write_fork(pdir, main, "Write the %s setting for `%s`." % (it["attr"], it["key"]) if with_key else "Continue with the task.", tag, reply=reply)
                         out = run_history_guard(hooks, env, proj, fpath, fsid, reply)
                         os.remove(fpath)
                         if out is None:
                             return {"available": False}, "TRIGGER GATE at %s: NOT AVAILABLE (this hooks folder has no history-guard.py)" % level, None
                         subj = guard_subjects(out)
-                        c = cells.setdefault((kind, with_key), {"n": 0, "fired": 0, "correct_subject": 0, "sibling_subjects": 0})
+                        c = cells.setdefault((kind, with_key, bare), {"n": 0, "fired": 0, "correct_subject": 0, "sibling_subjects": 0})
                         c["n"] += 1
                         c["fired"] += 1 if subj else 0
                         c["correct_subject"] += 1 if it["key"] in subj else 0
@@ -346,15 +347,24 @@ def trigger_gate(seeds, level, hooks):
                         c["sibling_subjects"] += sum(1 for x in subj if x in sib) if kind != "sibling" else 0
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
-    rep = {"available": True, "cells": {"%s/%s" % (k, "key" if wk else "nokey"): v for (k, wk), v in cells.items()}}
-    sl = [cells.get((k, wk)) for k in ("stale", "lure") for wk in (True, False) if cells.get((k, wk))]
+    rep = {"available": True, "cells": {"%s/%s/%s" % (k, "key" if wk else "nokey", "bare" if b else "written"): v for (k, wk, b), v in cells.items()}}
+    sl = [cells.get((k, wk, False)) for k in ("stale", "lure") for wk in (True, False) if cells.get((k, wk, False))]
+    bl = [cells.get((k, wk, True)) for k in ("stale", "lure") for wk in (True, False) if cells.get((k, wk, True))]
     n = sum(c["n"] for c in sl)
     cor = sum(c["correct_subject"] for c in sl)
-    sib = sum(c["sibling_subjects"] for c in cells.values())
+    sib = sum(c["sibling_subjects"] for (k, wk, b), c in cells.items() if not b)
+    bn, bcor = sum(c["n"] for c in bl), sum(c["correct_subject"] for c in bl)
+    bare_nk = cells.get(("stale", False, True)), cells.get(("lure", False, True))
+    bnn = sum(c["n"] for c in bare_nk if c)
+    bnc = sum(c["correct_subject"] for c in bare_nk if c)
+    rep["bare_info"] = {"n": bn, "correct_subject": bcor, "n_nokey": bnn, "correct_subject_nokey": bnc}
     share = cor / float(n) if n else 0.0
     ok = n > 0 and share >= COVERAGE_MIN and sib == 0
-    return rep, "TRIGGER GATE at %s: correct subject for %.0f%% (%d/%d) of the stale and lure replies, need at least %d%%; sibling subjects %d, need 0; GATE %s" % (
-        level, 100 * share, cor, n, int(100 * COVERAGE_MIN), sib, "PASS" if ok else "FAIL"), ok
+    line = "TRIGGER GATE at %s (written form, e.g. TAG-...): correct subject for %.0f%% (%d/%d) of the stale and lure replies, need at least %d%%; sibling subjects %d, need 0; GATE %s" % (
+        level, 100 * share, cor, n, int(100 * COVERAGE_MIN), sib, "PASS" if ok else "FAIL")
+    line += "\nINFO bare value at %s: correct subject for %.0f%% (%d/%d) of the stale and lure replies, %.0f%% (%d/%d) without the key in the reply (known limit: a bare value inside a longer token)" % (
+        level, 100.0 * bcor / bn if bn else 0.0, bcor, bn, 100.0 * bnc / bnn if bnn else 0.0, bnc, bnn)
+    return rep, line, ok
 
 
 # ---- F77 replay on real transcripts: counts only
