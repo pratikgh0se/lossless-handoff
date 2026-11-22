@@ -1062,3 +1062,27 @@ Why: llm_map is a separate tool with its own life cycle. The README must not cla
 **F66.c Evidence wording.** `README.md` does not use the word "Proof" as a heading or a claim, and holds no `[C1]` to `[C8]` markers. The markers and the claim numbers live in `docs/evidence.md`. `--claims-lint` with no file argument lints `docs/evidence.md` of the repository tree (the tree around the script first, then the current folder). It still accepts an explicit path. `tests/local-proof.sh` lints `docs/evidence.md`. The README states that no scored benchmark result is published yet, and that the live mechanism checks in `docs/evidence.md` currently include failures.
 
 **F66.d Versions.** Product 0.14.0 (`install.sh`). `HOOK_VERSION` is `1.16.0` in every hook that has it. This amends the version value in ACs 136, 150, 172, 180, 188 and 267 again.
+
+## F67 Auto-recall (opt-in) (2026-11-20)
+
+Why: Claude often answers from its own memory (possibly lost in the middle, or compacted) instead of searching. Claude Code writes every message to the transcript file as the chat goes on, so the live context is searchable too. Auto-recall runs the search for Claude when the prompt refers to the past, and puts the exact quotes at the end of the context.
+
+**F67.a Install.** New hook file `hooks/auto-recall.py`, registered as a `UserPromptSubmit` command hook `python3 <hooks dir>/auto-recall.py` with timeout 5 seconds.
+- Opt-in: `install.sh --auto-recall` installs and registers it. A default install does not install or register it.
+- `--save-defaults` writes `auto_recall=1` when `--auto-recall` is given. `--no-auto-recall` turns a saved default off for one run. `--save-defaults --no-auto-recall` removes the line. F64 holds: a re-install never removes it. For an installed copy the installer prints `auto-recall: already installed, kept`.
+- `uninstall.sh` removes the file and its `settings.json` entry. `--dry-run` lists it. The settings edit keeps a backup, like the other hooks.
+- `HANDOFF_AUTO_RECALL=0` makes the hook print nothing and exit 0.
+
+**F67.b Trigger.** The hook reads the hook JSON on stdin (`prompt`, `transcript_path`, `cwd`, `session_id`). It fires only if all of these hold: the prompt does not start with `/`; and the prompt matches a cue (case does not matter). A cue is one of these phrases: `what did i say`, `what did you say`, `what did we decide`, `did we decide`, `did we agree`, `did i say`, `did i tell you`, `we decided`, `we agreed`, `i told you`, `i said`, `you said`, `you mentioned`, `i mentioned`, `last time`, `previously`, `as we discussed`, `as discussed`, `which one did`, `earlier you`, `earlier i`, `earlier we`, `said earlier`, `said before`, `as before`, `like before`, `same as before`, `do you remember`, `remember when`, `remember what`; or a double-quoted phrase of 3 or more words. A phrase matches as whole words, and case does not matter. The bare words `before`, `earlier`, `remember`, `did i`, `did we` and `what was the` are not cues: "run the tests before you commit" gives no output. Otherwise: no output, exit 0.
+
+**F67.c Search and output.**
+- Query: the prompt with the cue phrases removed, then the 8 longest remaining words of 4 or more characters. If fewer than 2 such words remain: no output, exit 0. A double-quoted phrase is also searched as an exact phrase.
+- Scope: the transcripts of the current project (the scope of `recall.py search`), main chats and subagents. The current prompt is excluded. Mode: word and meaning if the meaning index exists, else word only. The word part matches whole words. Only user and assistant messages are shown; tool calls and tool results are left out (they are removed before the cut to the best hits). For speed, the hook lists only the project folders in `~/.claude/projects/` whose name starts with the encoded project root (every character that is not a letter or digit becomes `-`), plus the folder of the current transcript. The scope code of `recall.py` still decides by the working directory inside each transcript. The current prompt is excluded only when the hit is in the file of `transcript_path`; a newline in the prompt is compared as a space.
+- The top 3 hits. Each snippet: spaces collapsed, at most 300 characters, passed through `redact()` (F65).
+- Output on stdout, exactly: line 1 `Lossless Handoff auto-recall: earlier messages that match your words. Verify them before you rely on them.`; then one line per hit `- <id> <YYYY-MM-DD HH:MM> <role>: <snippet>` (id and role as `recall.py search` prints them); last line `Open one in full: python3 ~/.claude/hooks/recall.py open <id>`.
+- No hits: no output, exit 0. A missing or incomplete `recall.py`: no output, exit 0.
+- Time budget: 2.0 seconds for the whole hook. If the search is not done in time, no output, exit 0. The hook never fails a prompt: every error gives no output and exit 0.
+
+**F67.d Health.** Each run that passes the trigger appends one JSON line to `~/.local/state/claude-handoffs/auto-recall.jsonl`: `{"ts", "session_id", "fired": true, "cue": <the matched phrase from the list, or "quote">, "hits": <n>, "ms": <int>, "timed_out": <bool>}`. The `cue` value is always a fixed list phrase or `quote`, never prompt text. No prompt text and no snippets are in this log.
+
+**F67.e Versions.** Product 0.15.0 (`install.sh`). `HOOK_VERSION` is `1.17.0` in every hook that has it, `auto-recall.py` too. This amends the version value in ACs 136, 150, 172, 180, 188 and 267 again.
