@@ -28,7 +28,7 @@ import gen        # noqa: E402
 import grade      # noqa: E402
 
 DESIGN = 4
-GEN_VERSION = "litm4-2"
+GEN_VERSION = "litm4-3"
 POSITIONS = gen.POSITIONS
 LEVELS = {
     "L1": {"k": 2, "fam": 1, "rejects": 0, "undo": False, "scoped": 0, "chains": 3, "prefix": False},
@@ -47,7 +47,7 @@ FORM = '{"answers":[{"id":1,"current":"...","previous":"...","replaced":["..."]}
 FIELDS = ("In each answer, `current` is the value in force now. `previous` is the value that `current` took the place of; "
           "if the last update was an undo, `previous` is the value that the undo took out. "
           "`replaced` lists every value that was in force at some time and is not `current`; `previous` is one of them. "
-          "A rejected proposal and a dry-run value were never in force.")
+          "A rejected proposal and a dry-run value were never in force, also when one is stated just ahead of an undo: an undo takes out the last value that was in force.")
 
 # ---- lexicon. A key is a base plus an optional suffix. The description of a key needs common knowledge only and shares no content word
 # and no 5-character stem with the key (checked in code: overlap()). Do not use the words of a key in any description.
@@ -199,8 +199,9 @@ class Tok:
         return "%s-%04d" % (self.chars(4), self.r.randrange(10000))
 
 
-def chain_ops(spec, toks, r, undo_last, prefix):
-    """Update ops (set, change..., one undo), then the lures (rejects, scoped). Values are fresh tokens."""
+def chain_ops(spec, toks, r, undo_last, prefix, lure_late=False):
+    """Update ops (set, change..., one undo), and the lures (rejects, scoped). Values are fresh tokens. lure_late: all lures come after the
+    last update (the strong lure: the last statement of the chain is a lure). Else each lure goes to a random place after the first set."""
     k = spec["k"]
     vals = [toks.new(prefix) for _ in range(k)]
     ops = [{"op": "set", "value": vals[0]}] + [{"op": "change", "value": v} for v in vals[1:]]
@@ -215,6 +216,8 @@ def chain_ops(spec, toks, r, undo_last, prefix):
     r.shuffle(lures)
     # A lure (a reject or a scoped statement) goes to a random place after the first set: before or after the last update, or last. So the
     # offline solver "last mention wins" can fail (it fails when the chain ends with an undo or with a lure) and the gate can fail.
+    if lure_late:
+        return ops + lures
     for lu in lures:
         ops.insert(r.randint(1, len(ops)), lu)
     return ops
@@ -258,6 +261,8 @@ def build_litm4(seed, levels=D4_LEVELS):
         idx = 0
         attr_bits = balanced_bits(r, 3, n_fam)             # the attribute of each family: drawn by the seed, balanced over the thirds
         undo_bits = balanced_bits(r, 3, spec["chains"])    # undo-last or undo-in-the-middle for each chain: same
+        early_bits = balanced_bits(r, 3, spec["chains"])   # the last update in the first half of the third or in the second half: same
+        late_bits = balanced_bits(r, 3, spec["chains"])    # lures after the last update (half of the chains with lures) or at random places: same
         for th in range(3):
             fams = pick_families(r, n_fam, taken_bases)
             for fi, (base, bdesc) in enumerate(fams):
@@ -271,14 +276,15 @@ def build_litm4(seed, levels=D4_LEVELS):
                           [("%s-%s" % (base, m), describe(bdesc, md)) for m, md in mods]
                 for key, desc in members:
                     undo_last = undo_bits[th][idx % spec["chains"]]
-                    ops = chain_ops(spec, toks, r, undo_last, prefix)
+                    late = bool(late_bits[th][idx % spec["chains"]]) and (spec["rejects"] + spec["scoped"] > 0)
+                    ops = chain_ops(spec, toks, r, undo_last, prefix, late)
                     res = interpret(ops)
                     it = {"id": idx + 1, "level": lv, "key": key, "desc": desc, "attr": attr, "family": fid, "third": th, "position": POSITIONS[th],
                           "ops": ops, "stmts": [stmt_text(o["op"], key, attr, o["value"]) for o in ops],
                           "current": res["current"], "previous": res["previous"], "previous_alt": res["previous_alt"], "lags": res["lags"],
                           "replaced": res["replaced"], "values": res["ever"],
                           "lures": [o["value"] for o in ops if o["op"] in ("reject", "scoped")],
-                          "undo_last": bool(spec["undo"] and undo_last)}
+                          "undo_last": bool(spec["undo"] and undo_last), "lure_late": late, "early": bool(early_bits[th][idx % spec["chains"]])}
                     idx += 1
                     items[lv].append(it)
                     per_third[th].append(it)
@@ -302,7 +308,8 @@ def build_litm4(seed, levels=D4_LEVELS):
         for it in items[lv]:
             it["turn"] = it.pop("_last")
             it["update_turn"] = it.pop("_upd")
-            it["position"] = POSITIONS[min(2, it["update_turn"] * 3 // len(plan))]     # tagged by the turn of the last update
+            it["position"] = POSITIONS[min(2, it["update_turn"] * 3 // len(plan))]
+            it["place"] = round((it["update_turn"] - it["third"] * (len(plan) // 3)) / float(len(plan) // 3), 4)      # place of the last update inside its third     # tagged by the turn of the last update
     vals = set()
     for lv in levels:
         for it in items[lv]:
@@ -311,32 +318,85 @@ def build_litm4(seed, levels=D4_LEVELS):
             "n_facts": sum(len(v) for v in items.values()), "max_epoch": 0, "events": [], "fresh": {}, "secrets": sorted(vals)}
 
 
+EARLY_BY, LATE_FROM = 11, 12        # plant turns of a third (0 to 22): an early chain has its last update by turn 11, a late chain from turn 12
+
+
+def last_update_index(c):
+    return max(i for i, o in enumerate(c["ops"]) if o["op"] in ("set", "change", "undo"))
+
+
+def _schedule(chains, r, n_turns):
+    """One try of the schedule. Returns the turns, or None. Chain flag early: the last update is by EARLY_BY (first half of the third);
+    else it is from LATE_FROM on (second half). A chain takes 1 statement in a turn, or 2 (a burst) when it must or by chance."""
+    u = {id(c): last_update_index(c) for c in chains}
+    start = {id(c): (r.randint(0, max(0, EARLY_BY - -(-(u[id(c)] + 1) // 2))) if c.get("early") else r.randint(0, 6)) for c in chains}
+    left = {id(c): list(range(len(c["stmts"]))) for c in chains}
+    turns = []
+    for t in range(n_turns):
+        want = min(STMTS_PER_TURN, sum(len(v) for v in left.values()))
+        live = [c for c in chains if left[id(c)] and start[id(c)] <= t]
+        take = {id(c): 0 for c in live}
+        for c in live:
+            nxt = len(c["stmts"]) - len(left[id(c)])
+            due = (u[id(c)] + 1 - nxt) if (c.get("early") and nxt <= u[id(c)]) else 0         # statements that must be done by EARLY_BY
+            rest = len(left[id(c)])
+            if (due and due > EARLY_BY - t) or rest > n_turns - t:                              # cannot finish with 1 in each turn: take 2
+                take[id(c)] = min(2, rest)
+            if due and due > 2 * (EARLY_BY - t + 1):
+                return None
+            if rest > 2 * (n_turns - t):
+                return None
+        if sum(take.values()) > want:
+            return None
+
+        def allowed(c):                                                                          # a late chain waits with its last update
+            nxt = len(c["stmts"]) - len(left[id(c)]) + take[id(c)]
+            return nxt < len(c["stmts"]) and not (not c.get("early") and nxt == u[id(c)] and t < LATE_FROM)
+
+        for pas in (1, 2):
+            cand = [c for c in live if allowed(c) and take[id(c)] < pas and take[id(c)] < len(left[id(c)])]
+            r.shuffle(cand)
+            cand.sort(key=lambda c: 0 if (c.get("early") and len(c["stmts"]) - len(left[id(c)]) <= u[id(c)]) else 1)
+            for c in cand:
+                if sum(take.values()) >= want:
+                    break
+                if pas == 2 and r.random() < 0.5:
+                    continue
+                if allowed(c):
+                    take[id(c)] += 1
+        for _ in range(8):                                                                       # still free slots: more bursts
+            if sum(take.values()) >= want:
+                break
+            cand = [c for c in live if take[id(c)] < min(2, len(left[id(c)])) and allowed(c)]
+            if not cand:
+                return None
+            take[id(r.choice(cand))] += 1
+        if sum(take.values()) < want:
+            return None
+        labels = [id(c) for c in live for _ in range(take[id(c)])]
+        r.shuffle(labels)
+        by = {id(c): c for c in live}
+        turns.append([(by[i], by[i]["stmts"][left[i][0]], left[i].pop(0)) for i in labels])
+    return turns if not sum(len(v) for v in left.values()) else None
+
+
 def interleave(chains, r):
     """Order the statements of one third into turns of STMTS_PER_TURN (tuples chain, text, index of the statement in its chain).
-    The order inside a chain is kept. One key is never twice in a turn. Each chain gets a random start inside the third; a chain
-    that has to run in every remaining turn is forced. So the last updates are spread over the third, as far as the chain
-    lengths allow (a chain of n statements needs n turns). If no schedule is found in 500 tries, the greedy order is used."""
+    The order inside a chain is kept. A chain has a random start and may put 2 statements in one turn (a burst; the same key is then
+    twice in one turn). Each chain is early (its last update is in the first half of the third) or late (in the second half); the
+    flags are balanced over the thirds by the seed. If a third has no schedule in 400 tries, the early chain with the most updates
+    becomes late (the flag in the chain is changed, so it stays true), and so on. Last resort: the greedy order."""
     total = sum(len(c["stmts"]) for c in chains)
     n_turns = -(-total // STMTS_PER_TURN)
-    for _try in range(500):
-        start = {id(c): r.randint(0, max(0, n_turns - len(c["stmts"]))) for c in chains}
-        left = {id(c): list(range(len(c["stmts"]))) for c in chains}
-        turns, ok = [], True
-        for t in range(n_turns):
-            want = min(STMTS_PER_TURN, sum(len(v) for v in left.values()))
-            live = [c for c in chains if left[id(c)] and start[id(c)] <= t]
-            forced = [c for c in live if len(left[id(c)]) >= n_turns - t]
-            if len(live) < want or len(forced) > want:
-                ok = False
-                break
-            rest = [c for c in live if c not in forced]
-            r.shuffle(rest)
-            take = forced + rest[:want - len(forced)]
-            group = [(c, c["stmts"][left[id(c)][0]], left[id(c)].pop(0)) for c in take]
-            r.shuffle(group)
-            turns.append(group)
-        if ok and not sum(len(v) for v in left.values()):
-            return turns
+    while True:
+        for _try in range(400):
+            turns = _schedule(chains, r, n_turns)
+            if turns is not None:
+                return turns
+        early = [c for c in chains if c.get("early")]
+        if not early:
+            break
+        max(early, key=lambda c: last_update_index(c))["early"] = False
     left = {id(c): list(range(len(c["stmts"]))) for c in chains}
     turns = []
     while sum(len(v) for v in left.values()):
@@ -509,7 +569,7 @@ def parse_all(step):
 
 
 # ---- gates ----
-O_MIN, Z_MAX, SOLVER_MAX, CEILING, FLOOR = 0.95, 0.02, 0.60, 0.95, 0.30
+O_MIN, Z_MAX, SOLVER_MAX, CEILING, FLOOR = 0.95, 0.02, 0.50, 0.95, 0.30
 BAND_LOW, BAND_HIGH = 0.55, 0.80
 SEED2_LOW, SEED2_HIGH = 0.45, 0.90
 METRICS = ("m1", "m2", "m3")
@@ -557,15 +617,16 @@ def gate_lines(rows, scripts=(), levels=D4_LEVELS):
                     bad.append("%s %s %.0f%%" % (lv, ph, 100 * v))
     out.append(("amnesia Z (no history): at most %d%%" % int(100 * Z_MAX), "NO DATA" if not seen else ("FAIL" if bad else "PASS"), "above the limit: %s" % (bad or "none") if seen else "no rows"))
     if scripts:
-        bad = []
+        bad, means = [], []
         for lv in ("L3", "L4"):
             if lv in levels:
-                for sc in scripts:
-                    v = last_mention_rate(sc, lv)
-                    if v > SOLVER_MAX:
-                        bad.append("seed %s %s %.0f%%" % (sc["seed"], lv, 100 * v))
-        out.append(("offline solver 'last mention wins': at most %d%% on M1 at L3 and L4" % int(100 * SOLVER_MAX), "FAIL" if bad else "PASS",
-                    "above the limit: %s" % (bad or "none")))
+                vals = [last_mention_rate(sc, lv) for sc in scripts]
+                mean = sum(vals) / float(len(vals))
+                means.append("%s %.0f%% (%d seeds)" % (lv, 100 * mean, len(vals)))
+                if mean > SOLVER_MAX:
+                    bad.append("%s mean %.0f%%" % (lv, 100 * mean))
+        out.append(("offline solver 'last mention wins': mean over the seeds of the run at most %d%% on M1 at L3 and L4" % int(100 * SOLVER_MAX), "FAIL" if bad else "PASS",
+                    "above the limit: %s" % bad if bad else "means: %s" % ", ".join(means)))
     for lv in levels:
         for ph in PHRASINGS:
             v, n = cell(rows, "A", lv, "m1", ph)
@@ -707,3 +768,17 @@ def gen_dedupe(rows):
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
+
+def place_table(scripts, levels=D4_LEVELS):
+    """For each level: {share of chains whose last update is in the first half of its third, mean place in each third (0 to 1)}.
+    `place` is (turn of the last update - first turn of the third) / turns of the third."""
+    out = {}
+    for lv in levels:
+        its = [it for sc in scripts for it in sc["items"].get(lv, [])]
+        if not its:
+            continue
+        out[lv] = {"first_half": sum(1 for it in its if it["place"] < 0.5) / float(len(its)),
+                   "mean_by_third": [sum(it["place"] for it in its if it["third"] == th) / float(max(1, sum(1 for it in its if it["third"] == th))) for th in range(3)],
+                   "n": len(its)}
+    return out

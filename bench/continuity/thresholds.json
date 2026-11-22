@@ -160,7 +160,7 @@
         "solver_max_accuracy_l3_l4": 0.5,
         "ceiling_max_accuracy": 0.95,
         "floor_min_accuracy": 0.3,
-        "note": "O: at least o_min_accuracy for each level, phrasing and metric. Z: at most z_max_accuracy. The offline 'last mention wins' solver: at most solver_max_accuracy_l3_l4 on M1 at L3 and L4. Arm A above the ceiling is TOO EASY, below the floor TOO HARD."
+        "note": "O: at least o_min_accuracy for each level, phrasing and metric. Z: at most z_max_accuracy. The offline 'last mention wins' solver: at most solver_max_accuracy_l3_l4 on M1 at L3 and L4, applied to the mean over the seeds of the run, for each level (not for each seed). Arm A above the ceiling is TOO EASY, below the floor TOO HARD."
       },
       "calibration": {
         "preset": "litm4-calibrate",

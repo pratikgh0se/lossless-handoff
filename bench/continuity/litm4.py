@@ -101,6 +101,15 @@ def section4(rows_all, sessions, th, draws):
     for name, st, det in gl:
         md.append("| %s | %s | %s |" % (name, st, det))
         out["gates"].append({"name": name, "status": st})
+    # place of the last update inside a third (what part of the context H1 can test)
+    pt = design4.place_table(scripts) if scripts else {}
+    md += ["", "#### Table D4-5: place of the last update (the deciding statement) inside its third", "",
+           "| Level | chains | last update in the first half of its third | mean place in third 1 / 2 / 3 (0 = start, 1 = end) |", "|---|---|---|---|"]
+    for lv, v in pt.items():
+        md.append("| %s | %d | %s | %s |" % (lv, v["n"], pc(v["first_half"]), " / ".join("%.2f" % x for x in v["mean_by_third"])))
+    out["place"] = pt
+    if pt.get(level) and pt[level]["first_half"] < 0.10:
+        md += ["", "**H1 does not test the first part of a third at %s: no last update of this level is there.** The result says nothing about the start of that part of the context." % level]
     # hypotheses
     md += ["", "#### Table D4-4: pre-registered hypotheses of design 4 (thresholds in thresholds.json, committed before any data)", "",
            "| Hypothesis | Threshold | Measured | Result |", "|---|---|---|---|"]
@@ -182,7 +191,7 @@ def section4(rows_all, sessions, th, draws):
     else:
         add("H11 harm guard: R minus B stale-plus-lure error rate, cued (primary level), paired by seed",
             "HARM if the interval lower bound > 0 (auto-recall injects old values)", fmt_diff(d),
-            "HARM: auto-recall injects old values" if d[1] is not None and d[1] > 0 else "OK (no harm shown)")
+            "HARM: auto-recall injects old values" if d[1] is not None and d[1] > 0 else "OK: no harm shown (%d seeds)" % d[3])
     md += ["", "Notes. K's gain (H6, H7) is an upper bound: every statement has one fixed sentence form with the key in backticks, so a search by the key finds the "
            "statements almost like an oracle. Real notes do not look like this."]
     return md, out
