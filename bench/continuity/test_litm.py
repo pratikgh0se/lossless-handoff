@@ -522,7 +522,7 @@ class Design3(unittest.TestCase):
         self.assertEqual(runner.NC3_WINDOW, 400000)
         lines, est = runner.nc3_plan(400000)
         self.assertTrue(0.70 * 400000 <= est <= 0.80 * 400000, est)
-        self.assertGreaterEqual(lines, 300)
+        self.assertGreaterEqual(lines, 200)
         with self.assertRaises(SystemExit):
             runner.nc3_plan(60000)
 

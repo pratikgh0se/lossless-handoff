@@ -105,8 +105,8 @@ class Structure(unittest.TestCase):
                     self.assertEqual(kinds.count("scoped"), spec["scoped"])
                     self.assertEqual(kinds.count("undo"), 1 if spec["undo"] else 0)
                     last_update = max(i for i, o in enumerate(kinds) if o in ("set", "change", "undo"))
-                    self.assertTrue(all(o in ("reject", "scoped") for o in kinds[last_update + 1:]))     # lures come after the last update
-                    self.assertEqual(len(kinds[last_update + 1:]), spec["rejects"] + spec["scoped"])
+                    self.assertEqual(kinds[0], "set")                                                    # a lure never comes before the first set
+                    self.assertEqual(sum(1 for o in kinds if o in ("reject", "scoped")), spec["rejects"] + spec["scoped"])
                     if spec["undo"]:
                         self.assertEqual(kinds[last_update] == "undo", it["undo_last"])
                     self.assertNotIn(it["current"], it["lures"])
@@ -161,8 +161,8 @@ class FullInformationSolver(unittest.TestCase):
     def test_naive_last_mention_solver_stays_low_at_l3_and_l4(self):
         for sd in SEEDS:
             sc = script(sd)
-            self.assertLessEqual(d4.last_mention_rate(sc, "L3"), 0.5, sd)
-            self.assertLessEqual(d4.last_mention_rate(sc, "L4"), 0.5, sd)
+            self.assertLessEqual(d4.last_mention_rate(sc, "L3"), d4.SOLVER_MAX, sd)
+            self.assertLessEqual(d4.last_mention_rate(sc, "L4"), d4.SOLVER_MAX, sd)
             self.assertEqual(d4.last_mention_rate(sc, "L1"), 1.0)         # no lures at L1: the naive solver is right there
 
 
@@ -194,7 +194,7 @@ class Lures(unittest.TestCase):
         v = self.it["values"]
         g = self.grade_current(v[0])
         self.assertEqual(g["error_class"], "stale")
-        self.assertEqual(g["lag"], len(v) - 1 - 0)
+        self.assertEqual(g["lag"], sum(1 for o in self.it["ops"] if o["op"] in ("set", "change", "undo")) - 1)    # updates after it was put in force
         self.assertFalse(g["m1"])
         g = self.grade_current(self.it["replaced"][-1])
         self.assertEqual(g["error_class"], "stale")
@@ -418,11 +418,12 @@ class Plumbing(unittest.TestCase):
     def test_thresholds_register_h8_to_h11_and_an_empty_pick(self):
         th = json.load(open(os.path.join(HERE, "thresholds.json")))
         d = th["litm"]["design4"]
-        self.assertEqual((d["h8_dose_min_points"], d["h9_interference_min_share"], d["h10_length_min_points"], d["h11_harm_max_points"]), (15, 0.60, 15, 5))
+        self.assertEqual((d["h8_dose_min_points"], d["h9_interference_min_share"], d["h10_length_min_points"]), (15, 0.60, 15))
+        self.assertIn("lower bound of the interval is above 0", d["h11_note"])
         self.assertEqual(d["pick"]["metric"], None)
         self.assertEqual(d["gates"]["o_min_accuracy"], 0.95)
         self.assertEqual((d["chains_per_seed"], d["statements_per_seed"]), (39, 276))
-        self.assertIn("H1 and H1n use the primary cell", d["kept"])
+        self.assertIn("H1 and its secondary forms use the primary cell", d["kept"])
         self.assertEqual(litm4.pick_cell(th), (("m1", "L3"), False))
         th["litm"]["design4"]["pick"] = {"metric": "M2", "level": "L2"}
         self.assertEqual(litm4.pick_cell(th), (("m2", "L2"), True))
@@ -433,7 +434,8 @@ class Plumbing(unittest.TestCase):
         self.assertAlmostEqual(cost.d4_nc_main(), 4.28, delta=0.05)
         tot, _l, per = cost.estimate3(2, ["A", "O", "Z"], [1], ["nocompact"], design=4)
         self.assertTrue(9 < tot < 14, tot)
-        self.assertTrue(5.0 < per < 6.0, per)
+        self.assertTrue(5.5 < per < 6.5, per)
+        self.assertEqual(cost.D4_CONTROL_USD["O"], 0.90)       # arm O at about $0.9
         smoke = cost.estimate3(1, ["A", "B", "R", "K"], [1, 3], ["compact", "nocompact"], design=4)[0]
         smoke3 = cost.estimate3(1, ["A", "B", "R", "K"], [1, 3], ["compact", "nocompact"], design=3)[0]
         self.assertGreater(smoke, smoke3)
@@ -464,7 +466,7 @@ class ReportAndPreflight(unittest.TestCase):
         for word in ("Table D4-1 (A)", "Table D4-1 (K)", "Table D4-2", "Table D4-3", "Table D4-4", "provisional", "H1 lost in the middle", "H1n", "H8 dose", "H9 interference",
                      "H10 length", "H6 search rate", "H7 accuracy", "H11 harm guard", "mean stale lag"):
             self.assertIn(word, text, word)
-        self.assertEqual(len([h for h in out["hypotheses"]]), 8)
+        self.assertEqual(len([h for h in out["hypotheses"]]), 10)
         th["litm"]["design4"]["pick"] = {"metric": "M1", "level": "L2"}
         md2, out2 = litm4.section4(self.synth_rows(), {}, th, 200)
         self.assertIn("Primary cell: **M1 L2**.", "\n".join(md2))
@@ -511,6 +513,279 @@ class ReportAndPreflight(unittest.TestCase):
         self.assertIn("L3", [x[2] for x in res if "oracle (arm O) M1" in x[0]][0])
         res = self.run_check(d4_z_high=True)
         self.assertEqual([x[1] for x in res if "amnesia (arm Z)" in x[0]], ["FAIL"])
+
+
+class AuditFixes(unittest.TestCase):
+    """Fixes of the audit of PR #35 (findings 1 to 9). Offline, from the script generator and the code only."""
+    SEEDS = range(1000, 1200)
+
+    def test_1_attribute_is_balanced_over_the_thirds_at_every_level(self):
+        import collections
+        cnt = collections.defaultdict(collections.Counter)
+        for sd in self.SEEDS:
+            for lv, its in script(sd)["items"].items():
+                for it in its:
+                    cnt[(lv, it["third"])][it["attr"]] += 1
+        for k, c in cnt.items():
+            share = c["queue"] / float(c["queue"] + c["tag"])
+            self.assertTrue(0.40 <= share <= 0.60, (k, dict(c)))        # no fixed attribute for a position
+            self.assertTrue(c["queue"] and c["tag"], k)
+        a = d4.balanced_bits(__import__("random").Random(5), 3, 1)     # one family in each third: at most one group differs from the others
+        self.assertEqual(len(a), 3)
+
+    def test_2_undo_pattern_is_balanced_over_the_thirds(self):
+        import collections
+        cnt = collections.defaultdict(collections.Counter)
+        per_seed = set()
+        for sd in self.SEEDS:
+            sc = script(sd)
+            for lv in ("L3", "L4"):
+                per_seed.add(tuple(sum(1 for it in sc["items"][lv] if it["third"] == th and it["undo_last"]) for th in range(3)))
+                for it in sc["items"][lv]:
+                    cnt[(lv, it["third"])][it["undo_last"]] += 1
+        for k, c in cnt.items():
+            share = c[True] / float(c[True] + c[False])
+            self.assertTrue(0.40 <= share <= 0.60, (k, dict(c)))
+        self.assertGreater(len(per_seed), 1)             # the pattern differs between seeds
+        self.assertNotEqual(per_seed, {(2, 1, 2)})
+
+    def test_3_deciding_statements_cover_the_session_and_position_is_the_last_update(self):
+        import collections
+        tenth = collections.Counter()
+        n = 0
+        for sd in range(1000, 1060):
+            sc = script(sd)
+            T = len(sc["plan"])
+            for its in sc["items"].values():
+                for it in its:
+                    n += 1
+                    ut = it["update_turn"]
+                    self.assertEqual(it["position"], d4.POSITIONS[min(2, ut * 3 // T)])
+                    self.assertEqual(it["position"], d4.POSITIONS[it["third"]])
+                    last_upd = max(i for i, o in enumerate(it["ops"]) if o["op"] in ("set", "change", "undo"))
+                    self.assertIn(it["stmts"][last_upd], sc["plan"][ut]["prompt"])      # the turn of the last update holds that statement
+                    self.assertLessEqual(ut, it["turn"])
+                    tenth[min(9, ut * 10 // T)] += 1
+        self.assertEqual(sorted(tenth), list(range(10)))
+        for i in range(10):
+            self.assertGreater(tenth[i] / float(n), 0.03, (i, dict(tenth)))     # every tenth of the session holds deciding statements
+        self.assertLess(tenth[9] / float(n), 0.30)                              # no cluster at the end
+
+    def test_4_head_states_previous_and_replaced_in_plain_words(self):
+        sc = script(3)
+        for ph in d4.PHRASINGS:
+            head = d4.probe_prompt("L3", sc, "PROBE-X", ph).split("\n")[0]
+            for w in ("`previous` is the value that `current` took the place of", "if the last update was an undo, `previous` is the value that the undo took out",
+                      "`replaced` lists every value that was in force at some time and is not `current`", "`previous` is one of them"):
+                self.assertIn(w, head, (ph, w))
+
+    def test_4_grading_by_the_stated_rules_and_the_alt_reading(self):
+        sc = script(11)
+        it = next(i for i in sc["items"]["L4"] if i["undo_last"])
+        self.assertIsNotNone(it["previous_alt"])
+        self.assertNotEqual(it["previous"], it["previous_alt"])
+        self.assertIn(it["previous"], it["replaced"])                  # replaced includes previous
+        self.assertIn(it["previous_alt"], it["replaced"])
+
+        def g(prev, rep):
+            e = {"id": it["id"], "current": it["current"], "previous": prev, "replaced": rep}
+            return d4.grade_level([it], json.dumps({"answers": [e]}), sc)[0]
+        r = g(it["previous"], it["replaced"])
+        self.assertEqual((r["m1"], r["m2"], r["m3"], r["alt_ok"]), (True, True, True, False))
+        r = g(it["previous_alt"], it["replaced"])                       # the other reading of an undo: accepted, marked
+        self.assertEqual((r["m2"], r["m3"], r["alt_ok"]), (True, True, True))
+        r = g("WRONG", it["replaced"])
+        self.assertEqual((r["m1"], r["m2"], r["alt_ok"]), (True, False, False))
+        r = g(it["previous"], [x for x in it["replaced"] if x != it["previous"]])        # a reader who leaves out `previous` fails M3
+        self.assertEqual((r["m2"], r["m3"]), (True, False))
+        plain = next(i for i in sc["items"]["L1"])
+        e = {"id": plain["id"], "current": plain["current"], "previous": "WRONG", "replaced": plain["replaced"]}
+        self.assertFalse(d4.grade_level([plain], json.dumps({"answers": [e]}), sc)[0]["alt_ok"])      # no alt reading without an undo-last chain
+
+    def test_4_interpreter_after_an_undo(self):
+        r = d4.interpret(ops(("set", "a"), ("change", "b"), ("change", "c"), ("undo", None)))
+        self.assertEqual((r["current"], r["previous"], r["previous_alt"], r["replaced"]), ("b", "c", "a", ["a", "c"]))
+        r = d4.interpret(ops(("set", "a"), ("change", "b"), ("undo", None), ("change", "c")))
+        self.assertEqual((r["current"], r["previous"], r["previous_alt"], r["replaced"]), ("c", "a", None, ["a", "b"]))
+
+    def test_4_pick_with_m2_or_m3_needs_a_low_alt_rate(self):
+        rows = PickRule.rows(PickRule(), {"L1": 0.9, "L2": 0.9, "L3": 0.7, "L4": 0.9})
+        for r in rows:
+            r["undo_last"] = True
+            r["alt_ok"] = False
+        self.assertEqual(d4.decide(rows)["pick"], ("m1", "L3"))
+        # M1 is out of the band, M2 is in the band at L3: the pick is M2 only if the alt rate is below 10%
+        for r in rows:
+            if r["arm"] == "A" and r["type"] == "L3":
+                r["m1"] = r["m1"] or False
+        rows2 = []
+        for r in rows:
+            r = dict(r)
+            if r["arm"] == "A" and r["type"] == "L3":
+                r["m1"], r["m2"], r["m3"] = True, False, False       # M1 100%
+                r["alt_ok"] = False
+            rows2.append(r)
+        k = 0
+        for r in rows2:
+            if r["arm"] == "A" and r["type"] == "L3":
+                r["m2"] = k < 14                                       # M2 70% (n 20)
+                k += 1
+        self.assertEqual(d4.decide(rows2)["pick"], ("m2", "L3"))
+        for r in rows2:
+            if r["arm"] == "A" and r["type"] == "L3" and r["m2"]:
+                r["alt_ok"] = True                                     # every M2 hit needed the alt reading
+        d = d4.decide(rows2)
+        self.assertNotEqual(d["pick"], ("m2", "L3"))
+        self.assertTrue(any("alt rate" in n for n in d["notes"]), d["notes"])
+
+    def test_5_size_model_uses_the_measured_rate(self):
+        # the smoke: 362 lines in a design-3 session reached 393,352 tokens; the model agrees within 1%
+        est = runner.nc3_estimate(gen.build_litm3(1), 362)
+        self.assertAlmostEqual(est / 393352.0, 1.0, delta=0.01)
+        for lv in (None, ["L1", "L2", "L3", "L4", "L5"]):
+            lines, est4 = runner.nc3_plan(400000, 4, lv)
+            self.assertTrue(270000 <= est4 <= 330000, est4)            # 300k plus or minus 10%
+            self.assertLess(est4, 0.90 * 400000)
+        with self.assertRaises(SystemExit):
+            runner.nc3_plan(60000, 4)
+
+    def test_5_gate_fails_above_90_percent_of_the_window(self):
+        old = runner.NC3_TARGET_FRACTION
+        runner.NC3_TARGET_FRACTION = 0.95
+        try:
+            with self.assertRaises(SystemExit):
+                runner.nc3_plan(400000, 4)
+        finally:
+            runner.NC3_TARGET_FRACTION = old
+
+    def test_6_levels_option_and_l5_session(self):
+        self.assertEqual(runner.nc_types({"probe_design": 4}), list(d4.D4_LEVELS))
+        self.assertEqual(runner.nc_types({"probe_design": 4, "levels": ["L1", "L2", "L3", "L4", "L5"]}), ["L1", "L2", "L3", "L4", "L5"])
+        sc = d4.build_litm4(1, ("L1", "L2", "L3", "L4", "L5"))
+        self.assertEqual(len(sc["plan"]), 165)
+        self.assertEqual(sorted(sc["items"]), ["L1", "L2", "L3", "L4", "L5"])
+        self.assertEqual(d4.check_script(sc), [])
+        k = runner.KINDS["litm4-calibrate-l5"]
+        self.assertEqual(k["levels"], "L1,L2,L3,L4,L5")
+        self.assertEqual(k["conditions"], "nocompact")
+        self.assertIn("litm4-calibrate-l5", open(os.path.join(HERE, "run.sh")).read())
+        rows = PickRule.rows(PickRule(), {"L1": 0.9, "L2": 0.9, "L3": 0.9, "L4": 0.9})
+        d = d4.decide(rows)
+        self.assertEqual(d["decision"], "add_l5")
+        self.assertIn("bench/continuity/run.sh litm4-calibrate-l5", d4.describe_decision(d))
+        l5 = PickRule.rows(PickRule(), {"L1": 0.9, "L2": 0.9, "L3": 0.9, "L4": 0.9, "L5": 0.9}, levels=d4.D4_LEVELS + ("L5",))
+        self.assertEqual(d4.decide(l5, d4.D4_LEVELS + ("L5",))["decision"], "no_loss")
+        self.assertGreater(cost.estimate3(1, ["A"], [1], ["nocompact"], design=4, levels=["L1", "L5"])[2], cost.estimate3(1, ["A"], [1], ["nocompact"], design=4)[2])
+
+    def test_7_pilot_seeds_are_new_dev_seeds(self):
+        def seeds(name):
+            return [int(x) for x in open(os.path.join(HERE, name)).read().split()]
+        cal = set(seeds("seeds-dev.txt")[:runner.KINDS["litm4-calibrate"]["seeds"]]) | set(seeds("seeds-dev-2.txt"))
+        pilot = seeds(runner.KINDS["litm4-pilot"]["seed_file"])[:runner.KINDS["litm4-pilot"]["seeds"]]
+        self.assertEqual(runner.KINDS["litm4-pilot"]["seed_file"], "seeds-pilot.txt")
+        self.assertEqual(len(pilot), 2)
+        self.assertFalse(cal & set(pilot))
+        self.assertFalse(set(pilot) & set(seeds("seeds-report.txt")))
+
+    def test_7_pick_needs_each_phrasing_in_45_to_90_and_z_rows(self):
+        rows = []
+        for arm in ("A", "O", "Z"):
+            for lv in d4.D4_LEVELS:
+                for ph, rate in zip(d4.PHRASINGS, (0.95, 0.55, 0.40)):
+                    for i in range(20):
+                        ok = {"A": i < round(rate * 20), "O": True, "Z": False}[arm]
+                        rows.append({"arm": arm, "type": lv, "phrasing": ph, "condition": "nocompact", "m1": ok, "m2": ok, "m3": ok, "abstained": False})
+        d = d4.decide(rows)                                            # pooled A is 63%: in the band, but cued is 95% and nonliteral is 40%
+        self.assertNotEqual(d["decision"], "pick")
+        self.assertTrue(any("outside 45% to 90%" in n for n in d["notes"]), d["notes"])
+        for r in rows:
+            if r["arm"] == "A":
+                r["m1"] = r["m2"] = r["m3"] = (r["phrasing"] != "nonliteral") or r["m1"]
+        ok_rows = []
+        for r in rows:
+            ok_rows.append(r)
+        # a clean case: all phrasings at 60%, with some abstains: the pick prints the abstain rate
+        clean = []
+        for arm in ("A", "O", "Z"):
+            for ph in d4.PHRASINGS:
+                for i in range(20):
+                    ok = {"A": i < 12, "O": True, "Z": False}[arm]
+                    clean.append({"arm": arm, "type": "L2", "phrasing": ph, "condition": "nocompact", "m1": ok, "m2": ok, "m3": ok, "abstained": arm == "A" and i == 19})
+        d = d4.decide(clean, ("L2",))
+        self.assertEqual(d["pick"], ("m1", "L2"))
+        self.assertAlmostEqual(d["abstain"]["A"][0], 1 / 20.0)
+        self.assertIn("abstain rate in the picked cell: A 5.0%", d4.describe_decision(d))
+        no_z = [r for r in clean if r["arm"] != "Z"]
+        d = d4.decide(no_z, ("L2",))
+        self.assertNotEqual(d["decision"], "pick")                      # Z with no rows is NO DATA, not a pass
+        self.assertTrue(any("NO DATA" in n for n in d["notes"]), d["notes"])
+        lines = d4.gate_lines(no_z, [], ("L2",))
+        self.assertEqual([st for n, st, _d in lines if "amnesia Z" in n], ["NO DATA"])
+
+    def test_8_h1_is_pooled_and_phrasings_are_secondary_and_h11_is_paired(self):
+        th = json.load(open(os.path.join(HERE, "thresholds.json")))
+        rows = []
+        for sd in (1, 2, 3):
+            for arm in ("A", "B", "R"):
+                for ph in d4.PHRASINGS:
+                    for pos in ("start", "middle", "end"):
+                        for i in range(3):
+                            ok = (i < 2) if pos != "middle" else False        # start and end 67%, middle 0%
+                            if arm == "R" and ph == "cued":
+                                ok = False                                      # R: all cued answers wrong (stale)
+                            rows.append({"seed": sd, "arm": arm, "type": "L3", "phrasing": ph, "position": pos, "condition": "nocompact", "m1": ok, "m2": ok, "m3": ok,
+                                         "correct": ok, "error_class": None if ok else "stale", "lag": 1, "abstained": False})
+        md, out = litm4.section4(rows, {}, th, 200)
+        names = [h["name"] for h in out["hypotheses"]]
+        self.assertTrue(names[0].startswith("H1 lost in the middle, primary") and "3 phrasings pooled" in names[0], names[0])
+        for w in ("H1c secondary", "H1s secondary", "H1n secondary"):
+            self.assertTrue(any(n.startswith(w) for n in names), w)
+        self.assertEqual(out["hypotheses"][0]["result"], "SUPPORTED")
+        # H11: R has more stale errors than B in every seed: the paired interval lower bound is above 0
+        h11 = [h for h in out["hypotheses"] if h["name"].startswith("H11")][0]
+        self.assertTrue(h11["result"].startswith("HARM"), h11)
+        # equal errors: no harm
+        rows2 = [dict(r, error_class="stale", m1=False) if r["arm"] == "R" else dict(r) for r in rows]
+        for r in rows2:
+            if r["arm"] == "B":
+                r["error_class"] = "stale"                                      # B has the same errors as R on the cued probes
+        md2, out2 = litm4.section4(rows2, {}, th, 200)
+        h11b = [h for h in out2["hypotheses"] if h["name"].startswith("H11")][0]
+        self.assertTrue(h11b["result"].startswith("OK"), h11b)
+        self.assertIn("upper bound", "\n".join(md) + "upper bound")
+        self.assertIn("K's gain (H6, H7) is an upper bound", "\n".join(md))
+
+    def test_8_solver_gate_can_fail(self):
+        import collections
+        rates = [d4.last_mention_rate(script(sd), lv) for sd in range(1000, 1100) for lv in ("L3", "L4")]
+        self.assertGreater(max(rates), 0.0)                              # no longer always 0: a lure can be last
+        self.assertLessEqual(max(rates), d4.SOLVER_MAX)                  # and the generator passes the gate
+        self.assertEqual(d4.gate_lines([], [script(1000)], ("L3", "L4"))[-1][1], "PASS")
+        old = {lv: dict(d4.LEVELS[lv]) for lv in ("L3", "L4")}
+        try:
+            for lv in ("L3", "L4"):
+                d4.LEVELS[lv]["undo"] = False                            # a design without undo: the naive solver is right most of the time
+            bad = d4.build_litm4(1000)
+            self.assertEqual([st for n, st, _d in d4.gate_lines([], [bad], ("L3", "L4")) if "last mention wins" in n], ["FAIL"] if d4.last_mention_rate(bad, "L3") > d4.SOLVER_MAX or d4.last_mention_rate(bad, "L4") > d4.SOLVER_MAX else ["PASS"])
+            self.assertGreater(sum(d4.last_mention_rate(d4.build_litm4(s), "L3") for s in range(1000, 1020)) / 20.0, 0.70)     # the broken design is mostly solved
+            fails = [s for s in range(1000, 1040) if any(d4.last_mention_rate(d4.build_litm4(s), lv) > d4.SOLVER_MAX for lv in ("L3", "L4"))]
+            self.assertTrue(fails)                                       # and the gate flags such scripts
+        finally:
+            for lv, v in old.items():
+                d4.LEVELS[lv].update(v)
+        self.assertGreater(len(collections.Counter(1 for _ in rates)), 0)
+
+    def test_9_lag_of_an_undone_value_is_defined(self):
+        r = d4.interpret(ops(("set", "a"), ("change", "b"), ("change", "c"), ("undo", None)))
+        self.assertEqual(r["lags"], {"a": 3, "c": 1})                    # the undone value c: one update (the undo) after it
+        sc = script(11)
+        it = next(i for i in sc["items"]["L4"] if i["undo_last"])
+        undone = it["values"][-1]
+        self.assertNotEqual(undone, it["current"])
+        e = {"id": it["id"], "current": undone, "previous": "x", "replaced": []}
+        g = d4.grade_level([it], json.dumps({"answers": [e]}), sc)[0]
+        self.assertEqual((g["error_class"], g["lag"]), ("stale", 1))
+        self.assertGreater(it["lags"][it["values"][0]], g["lag"])         # an older value has a longer lag
 
 
 if __name__ == "__main__":

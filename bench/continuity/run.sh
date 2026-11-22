@@ -5,7 +5,7 @@
 #   run.sh preflight [options]    the cheapest full check (Haiku, under $3). It ends with a PASS/FAIL checklist (preflight.py)
 #   run.sh check <run-id>         print the preflight checklist of a finished run again
 #   run.sh litm3-smoke|litm3-nc-smoke|litm3-pilot|litm3-full   probe design 3 (about 300k tokens no-compaction, non-literal probes, arm K)
-#   run.sh litm4-calibrate|litm4-smoke|litm4-pilot|litm4-full-v3   probe design 4 (update chains with interference, no-compaction condition; compaction as in design 3)
+#   run.sh litm4-calibrate|litm4-calibrate-l5|litm4-smoke|litm4-pilot|litm4-full-v3   probe design 4 (update chains with interference, no-compaction condition; compaction as in design 3)
 #   run.sh preflight4 [options]   the preflight with design 4 (Haiku). run.sh decide <run-id> prints the pick rule of a calibration run
 #   run.sh litm-smoke [options]   1 dev seed, arms A and R, no compaction only (about $12)
 #   run.sh litm-pilot [options]   lost-in-the-middle pilot: 2 dev seeds, arms A,B,R, both conditions, both phrasings (add --dry-run to only print the cost)
@@ -24,7 +24,7 @@ D="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cmd="${1:-}"
 [ $# -gt 0 ] && shift
 case "$cmd" in
-  slice|full|preflight|litm-smoke|litm-pilot|litm-full|litm3-smoke|litm3-nc-smoke|litm3-pilot|litm3-full|litm3-full-v3|litm3-full-v5|litm4-calibrate|litm4-smoke|litm4-pilot|litm4-full-v3|preflight4)
+  slice|full|preflight|litm-smoke|litm-pilot|litm-full|litm3-smoke|litm3-nc-smoke|litm3-pilot|litm3-full|litm3-full-v3|litm3-full-v5|litm4-calibrate|litm4-calibrate-l5|litm4-smoke|litm4-pilot|litm4-full-v3|preflight4)
     python3 "$D/runner.py" run "$cmd" "$@"
     rc=$?
     if { [ "$cmd" = preflight ] || [ "$cmd" = preflight4 ]; } && [ "$rc" -ne 3 ] && [ "$rc" -ne 4 ]; then

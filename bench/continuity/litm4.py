@@ -117,8 +117,11 @@ def section4(rows_all, sessions, th, draws):
         return [x + y for x, y in zip(a[0], b[0])], [x + y for x, y in zip(a[1], b[1])]
 
     ceil = d4t.get("h1_ceiling_max_accuracy", design4.CEILING)
-    for name, ph in (("H1 lost in the middle, cued (arm A, no compaction, primary cell): middle minus mean(start, end)", "cued"),
-                     ("H1n lost in the middle, non-literal (arm A, no compaction, primary cell): middle minus mean(start, end)", "nonliteral")):
+    # H1 primary: the phrasings pooled (3 chains for each position and seed is too few for one phrasing). The rows of each phrasing stay as secondary.
+    for name, ph in (("H1 lost in the middle, primary (arm A, no compaction, primary cell, the 3 phrasings pooled): middle minus mean(start, end)", None),
+                     ("H1c secondary, cued only: middle minus mean(start, end)", "cued"),
+                     ("H1s secondary, neutral only: middle minus mean(start, end)", "neutral"),
+                     ("H1n secondary, non-literal only: middle minus mean(start, end)", "nonliteral")):
         mid, st_, en_ = v("A", ph, pos="middle"), v("A", ph, pos="start"), v("A", ph, pos="end")
         d = mean_ends_diff(boot, mid, st_, en_)
         se, te = ends("A", ph)
@@ -162,17 +165,24 @@ def section4(rows_all, sessions, th, draws):
     h7c = lt.get("h7_ceiling_max_accuracy", 0.95)
     res = "no data" if d[0] is None else ("TOO EASY: no claim" if b_acc is not None and b_acc > h7c else ("SUPPORTED" if d[0] >= 0.05 and d[1] is not None and d[1] > 0 else "NOT SUPPORTED"))
     add("H7 accuracy: K minus B, no compaction, neutral (primary cell)", ">= +5 pts and CI lower bound > 0; TOO EASY if B > %s" % pc(h7c), fmt_diff(d), res)
-    # H11 harm guard: R minus B stale-plus-lure error rate, cued
-    def err(arm):
-        sel = [r for r in rows if r["arm"] == arm and r["type"] == level and r.get("phrasing") == "cued"]
-        bad = [r for r in sel if r.get("error_class") in ("stale", "lure")]
-        return (len(bad) / float(len(sel)) if sel else None), len(bad), len(sel)
-    er, eb = err("R"), err("B")
-    if er[0] is None or eb[0] is None:
-        add("H11 harm guard: R minus B stale-plus-lure error rate, cued (primary level)", "<= +5 pts", "no data", "no data")
+    # H11 harm guard: R minus B error rate (stale plus lure), cued, primary level. Paired by seed: the same seeds and the same forked session of arm A.
+    # HARM if the lower bound of the interval is above 0 (a point estimate alone can pass or fail by noise).
+    def errv(arm):
+        cs, ts = [], []
+        for sd in V.seeds:
+            sel = [r for r in rows if r["seed"] == sd and r["arm"] == arm and r["type"] == level and r.get("phrasing") == "cued"]
+            cs.append(sum(1 for r in sel if r.get("error_class") in ("stale", "lure")))
+            ts.append(len(sel))
+        return cs, ts
+    cr, tr = errv("R")
+    cb, tb = errv("B")
+    d = boot.diff(cr, tr, cb, tb)
+    if d[0] is None:
+        add("H11 harm guard: R minus B stale-plus-lure error rate, cued (primary level), paired by seed", "HARM if the interval lower bound > 0", "no data", "no data")
     else:
-        diff = er[0] - eb[0]
-        add("H11 harm guard: R minus B stale-plus-lure error rate, cued (primary level)", "<= +5 pts (else auto-recall injects old values)",
-            "R %s (%d/%d), B %s (%d/%d), difference %+.0f pts" % (pc(er[0]), er[1], er[2], pc(eb[0]), eb[1], eb[2], 100 * diff),
-            "OK" if diff <= 0.05 else "HARM: auto-recall injects old values")
+        add("H11 harm guard: R minus B stale-plus-lure error rate, cued (primary level), paired by seed",
+            "HARM if the interval lower bound > 0 (auto-recall injects old values)", fmt_diff(d),
+            "HARM: auto-recall injects old values" if d[1] is not None and d[1] > 0 else "OK (no harm shown)")
+    md += ["", "Notes. K's gain (H6, H7) is an upper bound: every statement has one fixed sentence form with the key in backticks, so a search by the key finds the "
+           "statements almost like an oracle. Real notes do not look like this."]
     return md, out

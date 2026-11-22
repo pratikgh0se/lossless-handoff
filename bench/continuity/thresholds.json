@@ -198,9 +198,11 @@
       "h9_note": "H9: at least 60% of the wrong answers of arm A (abstains excluded) are stale, lure or sibling values.",
       "h10_length_min_points": 15,
       "h10_note": "H10: O minus A at least headroom_min_points (15).",
-      "h11_harm_max_points": 5,
-      "h11_note": "H11 harm guard: R minus B stale-plus-lure error rate on cued probes at most +5 points. Else auto-recall injects old values.",
-      "kept": "H1 and H1n use the primary cell. H6 and H7 and the null control are kept.",
+      "h11_note": "H11 harm guard: R minus B stale-plus-lure error rate on cued probes, paired by seed (same bootstrap draws). HARM if the lower bound of the interval is above 0. Else OK.",
+      "h1_primary_note": "H1 primary pools the three phrasings (the rule and the ceiling are unchanged). H1c (cued), H1s (neutral) and H1n (non-literal) are secondary.",
+      "pick_rules_note": "The pick needs arm A at 45% to 90% in the picked cell for each phrasing, Z rows (no rows is NO DATA), and for M2 and M3 an alt rate below 10%.",
+      "k_note": "K's gain is an upper bound: fixed sentence forms with the key in backticks make a search by key almost an oracle.",
+      "kept": "H1 and its secondary forms use the primary cell. H6 and H7 and the null control are kept.",
       "compaction_condition": "as in design 3"
     }
   }

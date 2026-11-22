@@ -99,7 +99,17 @@ D4_TURNS, D4_FORKS = 105, 12
 D4_MAIN = SMOKE_REAL["main_nc_75_turns"] * D4_TURNS / 75.0            # about $4.28 (the design pass says about $4.30)
 D4_A_FORKS = 0.70                                                      # design pass figure, scaled from the real $0.671 for 15 forks
 D4_FORK_FACTOR = {a: v / SMOKE_REAL["forks_15"]["A"] for a, v in SMOKE_REAL["forks_15"].items()}    # real: B 1.00, R 1.02, K 2.09
-D4_CONTROL_USD = {"Z": 0.25, "O": 0.25}                                # design pass: O and Z about $0.50 together
+# Arm O at about $0.9 (audit of PR #35: its short session holds the 69 plant turns, 3 phrasings of 4 levels of forks); the per-session cost gate
+# (gates.session_reasons: above 2 x the estimate and above the estimate plus $0.25) then allows up to $1.80, so a $0.9 session does not trip it.
+D4_CONTROL_USD = {"Z": 0.25, "O": 0.90}
+D4_TURNS_L5, D4_FORKS_L5 = 165, 15                                      # the L5 escalation: 4 levels plus L5, one session of 165 turns
+
+
+def d4_scale(levels=None):
+    """(main session USD, factor of the fork cost) for the levels of a design-4 run: L1-L4 is 105 turns and 12 forks, with L5 it is 165 turns and 15 forks."""
+    if levels and "L5" in levels:
+        return SMOKE_REAL["main_nc_75_turns"] * D4_TURNS_L5 / 75.0, D4_FORKS_L5 / float(D4_FORKS)
+    return D4_MAIN, 1.0
 
 
 def d4_nc_main():
@@ -110,7 +120,7 @@ def d4_nc_forks(arm="A"):
     return D4_A_FORKS * D4_FORK_FACTOR.get(arm, 1.0)
 
 
-def estimate3(seeds, arms, n, conditions, phrasings=("cued", "neutral", "nonliteral"), skip=(), n_by_arm=None, design=3):
+def estimate3(seeds, arms, n, conditions, phrasings=("cued", "neutral", "nonliteral"), skip=(), n_by_arm=None, design=3, levels=None):
     """Design 3. Compaction units: the design-2 model (cued and neutral phrasings), with the arm factor. No-compaction condition: ONE main session
     for each seed (arm A) plus the forks of each arm A, B, R, K on it (token model). skip: (arm, condition) pairs that are not run."""
     mult = fork_multiplier(["cued", "neutral"])
@@ -126,7 +136,8 @@ def estimate3(seeds, arms, n, conditions, phrasings=("cued", "neutral", "nonlite
                 lines.append("arm %s, with compactions (N up to %d): $%.2f per seed" % (a, max(nn), u))
             if "nocompact" in conditions and (a, "nocompact") not in skip:
                 if design >= 4:
-                    u = d4_nc_forks(a) + (d4_nc_main() if a == "A" else 0.0)
+                    main4, fk4 = d4_scale(levels)
+                    u = d4_nc_forks(a) * fk4 + (main4 if a == "A" else 0.0)
                 else:
                     u = d3_nc_forks() * f + (d3_nc_main() if a == "A" else 0.0)
                 per_seed += u
@@ -281,7 +292,7 @@ def estimate_per_seed(cfg):
     if kind == "slice":
         return None
     if cfg.get("probe_design", 1) >= 3:
-        return estimate3(1, arms, cfg["n"], conds, cfg.get("phrasings", ["cued"]), n_by_arm=cfg.get("n_by_arm"), design=cfg["probe_design"])[2]
+        return estimate3(1, arms, cfg["n"], conds, cfg.get("phrasings", ["cued"]), n_by_arm=cfg.get("n_by_arm"), design=cfg["probe_design"], levels=cfg.get("levels"))[2]
     return estimate(1, arms, cfg["n"], conds, cfg.get("phrasings", ["cued"]))[2]
 
 
@@ -296,12 +307,13 @@ def unit_estimate(cfg, arm, cond):
     if cfg.get("probe_design", 1) >= 3:
         dz = cfg["probe_design"]
         if arm == "A" and cond == "nocompact":        # the unit holds the forks of arms B, R and K
-            return estimate3(1, [x for x in arms if x in ("A", "B", "R", "K")], cfg["n"], ["nocompact"], cfg.get("phrasings", ["cued"]), design=dz)[2]
-        return estimate3(1, [arm], cfg["n"], [cond], cfg.get("phrasings", ["cued"]), n_by_arm=cfg.get("n_by_arm"), design=dz)[2]
+            return estimate3(1, [x for x in arms if x in ("A", "B", "R", "K")], cfg["n"], ["nocompact"], cfg.get("phrasings", ["cued"]), design=dz, levels=cfg.get("levels"))[2]
+        return estimate3(1, [arm], cfg["n"], [cond], cfg.get("phrasings", ["cued"]), n_by_arm=cfg.get("n_by_arm"), design=dz, levels=cfg.get("levels"))[2]
     return estimate(1, [arm], cfg["n"], [cond], cfg.get("phrasings", ["cued"]))[2]
 
 
 CALIBRATE4 = {"seeds": 2, "arms": ["A", "O", "Z"], "n": [1], "conditions": ["nocompact"], "phrasings": ["cued", "neutral", "nonliteral"], "design": 4}
+CALIBRATE4_L5 = dict(CALIBRATE4, seeds=1, levels=["L1", "L2", "L3", "L4", "L5"])
 SMOKE4 = dict(SMOKE3, design=4)
 PILOT4 = dict(PILOT3, design=4)
 FULL4_V3 = dict(FULL3_V3, design=4)
@@ -309,7 +321,7 @@ FULL4_V3 = dict(FULL3_V3, design=4)
 
 def render3(name, cfg):
     total, lines, per_seed = estimate3(cfg["seeds"], cfg["arms"], cfg["n"], cfg["conditions"], cfg["phrasings"], skip=cfg.get("skip", ()), n_by_arm=cfg.get("n_by_arm"),
-                                       design=cfg.get("design", 3))
+                                       design=cfg.get("design", 3), levels=cfg.get("levels"))
     out = ["%s: %d seeds, arms %s, N=%s, conditions %s, phrasings %s" % (
         name, cfg["seeds"], ",".join(cfg["arms"]), ",".join(map(str, cfg["n"])), ",".join(cfg["conditions"]), ",".join(cfg["phrasings"]))]
     out += ["  " + x for x in lines]
@@ -348,10 +360,10 @@ def main(argv=None):
         print("\nPROBE DESIGN 4 (litm4-calibrate, litm4-smoke, litm4-pilot, litm4-full-v3): no-compaction condition with update chains; compaction condition as in design 3")
         print("  real figures of the Sonnet smoke: main $%.2f for 75 turns, 15 A forks $%.2f; design 4: main $%.2f (105 turns), A forks $%.2f (12), K forks x%.2f" % (
             SMOKE_REAL["main_nc_75_turns"], SMOKE_REAL["forks_15"]["A"], D4_MAIN, D4_A_FORKS, D4_FORK_FACTOR["K"]))
-        for name, cfg in (("CALIBRATION (litm4-calibrate: arms A,O,Z; the second seed only if a cell of A is at 45-90%)", CALIBRATE4), ("SMOKE (litm4-smoke)", SMOKE4),
-                          ("PILOT (litm4-pilot)", PILOT4), ("FULL V3 (litm4-full-v3)", FULL4_V3)):
+        for name, cfg in (("CALIBRATION (litm4-calibrate: arms A,O,Z; the second seed only if a cell of A is at 45-90%)", CALIBRATE4), ("L5 ESCALATION (litm4-calibrate-l5, only if decide says add_l5: one seed, 165 turns, replaces all cells)", CALIBRATE4_L5),
+                          ("SMOKE (litm4-smoke)", SMOKE4), ("PILOT (litm4-pilot, dev seeds 3 and 4)", PILOT4), ("FULL V3 (litm4-full-v3)", FULL4_V3)):
             print(render3(name, cfg)[1])
-        print("  calibration if the main session costs $8 (twice the figure): about $%.0f for 2 seeds (plus or minus 40%%)" % (2 * (8.0 + D4_A_FORKS + 0.5)))
+        print("  calibration if the main session costs $8 (twice the figure): about $%.0f for 2 seeds (plus or minus 40%%)" % (2 * (8.0 + D4_A_FORKS + D4_CONTROL_USD["O"] + D4_CONTROL_USD["Z"])))
         print()
         pf_total, pf_lines = estimate_preflight()
         print("PREFLIGHT (preflight): Haiku, 1 dev seed, arms A,B,R,K,Z,O, types R,X, N=1, both conditions, cued, neutral and nonliteral, plus selfcheck and one Sonnet 300k turn")

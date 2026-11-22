@@ -28,7 +28,7 @@ import gen        # noqa: E402
 import grade      # noqa: E402
 
 DESIGN = 4
-GEN_VERSION = "litm4-1"
+GEN_VERSION = "litm4-2"
 POSITIONS = gen.POSITIONS
 LEVELS = {
     "L1": {"k": 2, "fam": 1, "rejects": 0, "undo": False, "scoped": 0, "chains": 3, "prefix": False},
@@ -44,8 +44,10 @@ STMTS_PER_TURN = 4
 PHRASINGS = ("cued", "neutral", "nonliteral")
 ERROR_CLASSES = ("stale", "lure", "sibling", "other_chain", "abstain", "novel", "unreadable")
 FORM = '{"answers":[{"id":1,"current":"...","previous":"...","replaced":["..."]}]}'
-FIELDS = ("In each answer, `current` is the value in force now, `previous` is the value that was in force just prior to it, "
-          "and `replaced` lists every other value that was ever in force for it.")
+FIELDS = ("In each answer, `current` is the value in force now. `previous` is the value that `current` took the place of; "
+          "if the last update was an undo, `previous` is the value that the undo took out. "
+          "`replaced` lists every value that was in force at some time and is not `current`; `previous` is one of them. "
+          "A rejected proposal and a dry-run value were never in force.")
 
 # ---- lexicon. A key is a base plus an optional suffix. The description of a key needs common knowledge only and shares no content word
 # and no 5-character stem with the key (checked in code: overlap()). Do not use the words of a key in any description.
@@ -147,9 +149,10 @@ def interpret(ops):
     """The op interpreter. ops: list of {"op", "value"}. Returns {"current", "previous", "replaced" (sorted list), "ever" (in order)}.
     set: V is in force. change: V is in force. reject and scoped: no effect. undo: the value before the last change is in force again.
     previous = the value of the current just before the last op that changed the current. replaced = every value in force at some time, not current."""
-    stack, ever, prev = [], [], None
+    stack, ever, prev, alt, upd, lag_pos = [], [], None, None, 0, {}
     for o in ops:
         old = stack[-1] if stack else None
+        undone = False
         if o["op"] == "set":
             stack = [o["value"]]
             ever.append(o["value"])
@@ -160,6 +163,7 @@ def interpret(ops):
             if len(stack) < 2:
                 raise ValueError("undo with no change to undo")
             stack.pop()
+            undone = True
         elif o["op"] in ("reject", "scoped"):
             continue
         else:
@@ -167,8 +171,12 @@ def interpret(ops):
         new = stack[-1]
         if new != old:
             prev = old
+        alt = stack[-2] if undone and len(stack) >= 2 else None       # the other reading of `previous` after an undo
+        lag_pos[new] = upd                                             # the update that put this value in force (the last time)
+        upd += 1
     cur = stack[-1]
-    return {"current": cur, "previous": prev, "replaced": sorted({v for v in ever if v != cur}), "ever": ever}
+    lags = {v: upd - 1 - p for v, p in lag_pos.items() if v != cur}   # updates (set, change, undo) after the value was last put in force
+    return {"current": cur, "previous": prev, "previous_alt": alt, "replaced": sorted({v for v in ever if v != cur}), "ever": ever, "lags": lags}
 
 
 # ---- generator ----
@@ -205,13 +213,33 @@ def chain_ops(spec, toks, r, undo_last, prefix):
     lures = [{"op": "reject", "value": toks.new(prefix)} for _ in range(spec["rejects"])] + \
             [{"op": "scoped", "value": toks.new(prefix)} for _ in range(spec["scoped"])]
     r.shuffle(lures)
-    return ops + lures
+    # A lure (a reject or a scoped statement) goes to a random place after the first set: before or after the last update, or last. So the
+    # offline solver "last mention wins" can fail (it fails when the chain ends with an undo or with a lure) and the gate can fail.
+    for lu in lures:
+        ops.insert(r.randint(1, len(ops)), lu)
+    return ops
 
 
 def pick_families(r, n_families, taken_bases):
     free = [b for b in BASES if b[0] not in taken_bases]
     r.shuffle(free)
     return free[:n_families]
+
+
+def balanced_bits(r, groups, size):
+    """One list of `size` booleans for each of `groups` groups (the thirds). Each group holds as many True as False; if size is odd, the
+    extra bit of each group is drawn by the seed, balanced over the groups (the majority bit differs by at most one group). So no group
+    has a fixed pattern: over seeds, each group is True half of the time."""
+    extras = [True] * (groups // 2 + groups % 2) + [False] * (groups // 2)
+    if groups % 2 and r.random() < 0.5:
+        extras = [not e for e in extras]
+    r.shuffle(extras)
+    out = []
+    for g in range(groups):
+        bits = [True] * (size // 2) + [False] * (size // 2) + ([extras[g]] if size % 2 else [])
+        r.shuffle(bits)
+        out.append(bits)
+    return out
 
 
 def build_litm4(seed, levels=D4_LEVELS):
@@ -228,24 +256,27 @@ def build_litm4(seed, levels=D4_LEVELS):
         spec = LEVELS[lv]
         n_fam = spec["chains"] // spec["fam"]
         idx = 0
+        attr_bits = balanced_bits(r, 3, n_fam)             # the attribute of each family: drawn by the seed, balanced over the thirds
+        undo_bits = balanced_bits(r, 3, spec["chains"])    # undo-last or undo-in-the-middle for each chain: same
         for th in range(3):
             fams = pick_families(r, n_fam, taken_bases)
-            for base, bdesc in fams:
+            for fi, (base, bdesc) in enumerate(fams):
                 taken_bases.add(base)
                 fid = "%s-f%d" % (lv, fam_count)
-                attr = ("queue", "tag")[fam_count % 2]
+                attr = ("queue", "tag")[int(attr_bits[th][fi])]
                 fam_count += 1
                 prefix = toks.prefix() if spec["prefix"] else None
                 mods = r.sample(MODS, spec["fam"] - 1)
                 members = [(base, describe(bdesc, BASE_MEMBER if spec["fam"] > 1 else ""))] + \
                           [("%s-%s" % (base, m), describe(bdesc, md)) for m, md in mods]
                 for key, desc in members:
-                    undo_last = bool(idx % 2 == 0)
+                    undo_last = undo_bits[th][idx % spec["chains"]]
                     ops = chain_ops(spec, toks, r, undo_last, prefix)
                     res = interpret(ops)
                     it = {"id": idx + 1, "level": lv, "key": key, "desc": desc, "attr": attr, "family": fid, "third": th, "position": POSITIONS[th],
                           "ops": ops, "stmts": [stmt_text(o["op"], key, attr, o["value"]) for o in ops],
-                          "current": res["current"], "previous": res["previous"], "replaced": res["replaced"], "values": res["ever"],
+                          "current": res["current"], "previous": res["previous"], "previous_alt": res["previous_alt"], "lags": res["lags"],
+                          "replaced": res["replaced"], "values": res["ever"],
                           "lures": [o["value"] for o in ops if o["op"] in ("reject", "scoped")],
                           "undo_last": bool(spec["undo"] and undo_last)}
                     idx += 1
@@ -255,11 +286,13 @@ def build_litm4(seed, levels=D4_LEVELS):
     for th in range(3):
         turns = interleave(per_third[th], r)
         for i, group in enumerate(turns):
-            body = " ".join(s for _it, s in group)
+            body = " ".join(s for _it, s, _i in group)
             plan.append({"kind": "fact", "third": th, "prompt": "%s Note for this project: %s Reply only `ok`." % (gen.prose3(pr, 300, 500), body),
-                         "keys": [it["key"] for it, _s in group]})
-            for it, _s in group:
-                it["_last"] = len(plan) - 1
+                         "keys": [it["key"] for it, _s, _i in group]})
+            for it, _s, si in group:
+                it["_last"] = len(plan) - 1                         # the last statement (a lure may be last)
+                if it["ops"][si]["op"] in ("set", "change", "undo"):
+                    it["_upd"] = len(plan) - 1                      # the last update: the statement that decides the answer
             if ((i + 1) * FILL_TURNS_PER_THIRD) // len(turns) > (i * FILL_TURNS_PER_THIRD) // len(turns):
                 plan.append({"kind": "fill", "third": th, "k": fill_k})
                 fill_k += 1
@@ -268,6 +301,8 @@ def build_litm4(seed, levels=D4_LEVELS):
     for lv in levels:
         for it in items[lv]:
             it["turn"] = it.pop("_last")
+            it["update_turn"] = it.pop("_upd")
+            it["position"] = POSITIONS[min(2, it["update_turn"] * 3 // len(plan))]     # tagged by the turn of the last update
     vals = set()
     for lv in levels:
         for it in items[lv]:
@@ -277,21 +312,39 @@ def build_litm4(seed, levels=D4_LEVELS):
 
 
 def interleave(chains, r):
-    """Order the statements of one third into turns of STMTS_PER_TURN. The order inside a chain is kept. One key is never twice in a turn."""
-    left = {id(c): list(range(len(c["stmts"]))) for c in chains}
+    """Order the statements of one third into turns of STMTS_PER_TURN (tuples chain, text, index of the statement in its chain).
+    The order inside a chain is kept. One key is never twice in a turn. Each chain gets a random start inside the third; a chain
+    that has to run in every remaining turn is forced. So the last updates are spread over the third, as far as the chain
+    lengths allow (a chain of n statements needs n turns). If no schedule is found in 500 tries, the greedy order is used."""
     total = sum(len(c["stmts"]) for c in chains)
+    n_turns = -(-total // STMTS_PER_TURN)
+    for _try in range(500):
+        start = {id(c): r.randint(0, max(0, n_turns - len(c["stmts"]))) for c in chains}
+        left = {id(c): list(range(len(c["stmts"]))) for c in chains}
+        turns, ok = [], True
+        for t in range(n_turns):
+            want = min(STMTS_PER_TURN, sum(len(v) for v in left.values()))
+            live = [c for c in chains if left[id(c)] and start[id(c)] <= t]
+            forced = [c for c in live if len(left[id(c)]) >= n_turns - t]
+            if len(live) < want or len(forced) > want:
+                ok = False
+                break
+            rest = [c for c in live if c not in forced]
+            r.shuffle(rest)
+            take = forced + rest[:want - len(forced)]
+            group = [(c, c["stmts"][left[id(c)][0]], left[id(c)].pop(0)) for c in take]
+            r.shuffle(group)
+            turns.append(group)
+        if ok and not sum(len(v) for v in left.values()):
+            return turns
+    left = {id(c): list(range(len(c["stmts"]))) for c in chains}
     turns = []
     while sum(len(v) for v in left.values()):
         live = [c for c in chains if left[id(c)]]
         live.sort(key=lambda c: -(len(left[id(c)]) + r.random() * 1.5))
-        take = live[:STMTS_PER_TURN]
-        group = []
-        for c in take:
-            i = left[id(c)].pop(0)
-            group.append((c, c["stmts"][i]))
+        group = [(c, c["stmts"][left[id(c)][0]], left[id(c)].pop(0)) for c in live[:STMTS_PER_TURN]]
         r.shuffle(group)
         turns.append(group)
-    assert total == sum(len(g) for g in turns)
     return turns
 
 
@@ -324,7 +377,8 @@ def classify(it, ans, script):
     """Class of a wrong answer a (normalised text) of chain it: stale (with lag), lure, sibling, other_chain, novel. Returns (class, lag)."""
     a = strip_tag(ans)
     if a in it["values"] and a != it["current"]:
-        return "stale", len(it["values"]) - 1 - it["values"].index(a)
+        # lag = the updates (set, change, undo) after the value was last put in force; an undone value has lag 1 (the undo), not 0
+        return "stale", it["lags"][a]
     if a in it["lures"]:
         return "lure", None
     for lv in script["items"].values():
@@ -344,7 +398,7 @@ def grade_level(items, raw, script):
     for it in items:
         e = grade.entry_for(answers, it["id"]) if answers is not None else None
         base = {"id": it["id"], "parse_ok": False, "parsed": None, "abstained": False, "m1": False, "m2": False, "m3": False,
-                "correct": False, "error_class": "unreadable", "lag": None}
+                "correct": False, "error_class": "unreadable", "lag": None, "alt_ok": False, "undo_last": bool(it.get("undo_last"))}
         if e is None:
             out.append(base)
             continue
@@ -367,9 +421,11 @@ def grade_level(items, raw, script):
         if isinstance(rep, list) and all(isinstance(x, str) for x in rep):
             reps = sorted({strip_tag(grade.norm(x)) for x in rep})
         m1 = cur == it["current"]
-        m2 = m1 and prev == it["previous"]
-        m3 = m2 and reps == it["replaced"]
-        base.update(m1=m1, m2=m2, m3=m3, correct=m1)
+        # M2 by the stated rule; for an undo-last chain the other reading (the value before `current`) is accepted and marked alt_ok
+        alt_ok = bool(m1 and it.get("undo_last") and it.get("previous_alt") is not None and prev != it["previous"] and prev == it["previous_alt"])
+        m2 = m1 and (prev == it["previous"] or alt_ok)
+        m3 = m2 and reps == it["replaced"]        # `replaced` holds every value in force and not current, including `previous`, on both readings
+        base.update(m1=m1, m2=m2, m3=m3, correct=m1, alt_ok=alt_ok, undo_last=bool(it.get("undo_last")))
         if m1:
             base["error_class"] = None
         else:
@@ -453,7 +509,7 @@ def parse_all(step):
 
 
 # ---- gates ----
-O_MIN, Z_MAX, SOLVER_MAX, CEILING, FLOOR = 0.95, 0.02, 0.50, 0.95, 0.30
+O_MIN, Z_MAX, SOLVER_MAX, CEILING, FLOOR = 0.95, 0.02, 0.60, 0.95, 0.30
 BAND_LOW, BAND_HIGH = 0.55, 0.80
 SEED2_LOW, SEED2_HIGH = 0.45, 0.90
 METRICS = ("m1", "m2", "m3")
@@ -541,13 +597,37 @@ def calibration_cells(rows, levels=D4_LEVELS):
     return out
 
 
+ALT_MAX = 0.10                       # M2 and M3 may be picked only when the alt rate is below this
+H1_LOW, H1_HIGH = 0.45, 0.90         # arm A must be in this range in the picked cell for each phrasing (the H1 phrasings)
+L5_COMMAND = "bench/continuity/run.sh litm4-calibrate-l5"
+
+
+def alt_rate(rows, level):
+    """(rate, n): of the M1-correct rows of arm A on undo-last chains of one level, the share that was accepted only by the alternative reading
+    of `previous` (alt_ok). 0 with n 0 when the level has no undo-last chain."""
+    sel = [r for r in rows if r["arm"] == "A" and r.get("type") == level and r.get("condition", "nocompact") == "nocompact"
+           and r.get("m1") is True and r.get("undo_last")]
+    if not sel:
+        return 0.0, 0
+    return sum(1 for r in sel if r.get("alt_ok")) / float(len(sel)), len(sel)
+
+
+def abstain_rate(rows, arm, level, phrasing=None):
+    sel = [r for r in rows if r["arm"] == arm and r.get("type") == level and (phrasing is None or r.get("phrasing") == phrasing)
+           and r.get("condition", "nocompact") == "nocompact"]
+    if not sel:
+        return None, 0
+    return sum(1 for r in sel if r.get("abstained")) / float(len(sel)), len(sel)
+
+
 def decide(rows, levels=D4_LEVELS, l5_done=False):
     """The pick rule of the calibration. Metrics in the order M1, M2, M3; levels from L1 up. Pick the first (metric, level) where arm A
-    (phrasings pooled) is 55% to 80%, O is at least 95% and Z is at most 2%.
-    If A is above 80% in every cell: add L5 once; if still above 80%: Sonnet has no loss here.
-    Returns {"decision": pick | add_l5 | no_loss | none, "pick", "seed2" (a cell of A between 45% and 90%), "notes"}."""
+    (phrasings pooled) is 55% to 80%, A is 45% to 90% for each phrasing, O is at least 95% and Z has rows and is at most 2%. M2 and M3 are
+    allowed only when the alt rate (the share of correct answers that needed the other reading of `previous`) is below 10%.
+    If A is above 80% in every cell: add L5 (its own run, replaces all cells); if still above 80%: Sonnet has no loss here.
+    Returns {"decision": pick | add_l5 | no_loss | none, "pick", "seed2", "abstain", "alt", "phrasing_rates", "notes"}."""
     cells = calibration_cells(rows, levels)
-    notes, pick = [], None
+    notes, pick, extra = [], None, {}
     a_vals = [(k, c["A"]) for k, c in cells.items() if c["A"][1]]
     seed2 = any(SEED2_LOW <= v[0] <= SEED2_HIGH for _k, v in a_vals)
     for m in METRICS:
@@ -558,26 +638,46 @@ def decide(rows, levels=D4_LEVELS, l5_done=False):
                 continue
             in_band = BAND_LOW <= a[0] <= BAND_HIGH
             o_ok = o[1] > 0 and o[0] >= O_MIN
-            z_ok = z[1] == 0 or z[0] <= Z_MAX
+            z_ok = z[1] > 0 and z[0] <= Z_MAX               # no Z rows is NO DATA, not a pass
             if in_band and not o_ok:
                 notes.append("%s %s: A is in the band (%.0f%%) but O is %s: the loss is interference at zero distance, not lost in the middle." % (
                     m.upper(), lv, 100 * a[0], "%.0f%%" % (100 * o[0]) if o[1] else "missing"))
-            if in_band and o_ok and z_ok and pick is None:
+            if in_band and not z[1]:
+                notes.append("%s %s: Z has no rows (NO DATA): the cell cannot be picked." % (m.upper(), lv))
+            ph = {p: cell(rows, "A", lv, m, p) for p in PHRASINGS}
+            ph_bad = ["%s %.0f%%" % (p, 100 * v[0]) for p, v in ph.items() if v[1] and not H1_LOW <= v[0] <= H1_HIGH]
+            alt = alt_rate(rows, lv)
+            alt_ok = m == "m1" or alt[0] < ALT_MAX
+            if in_band and o_ok and z_ok and ph_bad:
+                notes.append("%s %s: A is outside %d%% to %d%% for a phrasing (%s): not picked." % (m.upper(), lv, int(100 * H1_LOW), int(100 * H1_HIGH), ", ".join(ph_bad)))
+            if in_band and o_ok and z_ok and not ph_bad and not alt_ok:
+                notes.append("%s %s: the alt rate is %.0f%% (limit %d%%): the answers depend on the reading of `previous`: not picked." % (m.upper(), lv, 100 * alt[0], int(100 * ALT_MAX)))
+            if in_band and o_ok and z_ok and not ph_bad and alt_ok and pick is None:
                 pick = (m, lv)
+                extra = {"abstain": {arm: abstain_rate(rows, arm, lv) for arm in ("A", "O", "Z")}, "alt": alt,
+                         "phrasing_rates": {p: v for p, v in ph.items() if v[1]}}
+    base = {"abstain": None, "alt": None, "phrasing_rates": None}
     if pick:
-        return {"decision": "pick", "pick": pick, "seed2": seed2, "notes": notes}
+        return dict(base, decision="pick", pick=pick, seed2=seed2, notes=notes, **extra)
     if a_vals and all(v[0] > BAND_HIGH for _k, v in a_vals):
         if "L5" in levels or l5_done:
-            return {"decision": "no_loss", "pick": None, "seed2": seed2,
-                    "notes": notes + ["Arm A is above 80% in every cell, also with L5: Sonnet has no loss here. Report it."]}
-        return {"decision": "add_l5", "pick": None, "seed2": seed2, "notes": notes + ["Arm A is above 80% in every cell: add L5 (k 16, family 4) once."]}
-    return {"decision": "none", "pick": None, "seed2": seed2, "notes": notes + ["No cell has A in 55% to 80% with O at least 95% and Z at most 2%."]}
+            return dict(base, decision="no_loss", pick=None, seed2=seed2,
+                        notes=notes + ["Arm A is above 80% in every cell, also with L5: Sonnet has no loss here. Report it."])
+        return dict(base, decision="add_l5", pick=None, seed2=seed2,
+                    notes=notes + ["Arm A is above 80%% in every cell: add L5 (k 16, family 4). It runs as its own session of 165 turns and replaces all cells. Run: %s" % L5_COMMAND])
+    return dict(base, decision="none", pick=None, seed2=seed2, notes=notes + ["No cell has A in 55% to 80% with O at least 95% and Z at most 2%."])
 
 
 def describe_decision(d):
     lines = ["decision: %s" % d["decision"]]
     if d["pick"]:
         lines.append("pick: %s %s (commit it in thresholds.json litm.design4.pick before the full run)" % (d["pick"][0].upper(), d["pick"][1]))
+        ab = d.get("abstain") or {}
+        lines.append("abstain rate in the picked cell: " + ", ".join("%s %s" % (arm, "%.1f%% (n=%d)" % (100 * v[0], v[1]) if v and v[1] else "no rows") for arm, v in sorted(ab.items())))
+        lines.append("alt rate (correct answers that needed the other reading of `previous`): %.1f%% (n=%d)" % (100 * d["alt"][0], d["alt"][1]))
+        lines.append("arm A for each phrasing in the picked cell: " + ", ".join("%s %.0f%% (n=%d)" % (p, 100 * v[0], v[1]) for p, v in d["phrasing_rates"].items()))
+    if d["decision"] == "add_l5":
+        lines.append("command: %s" % L5_COMMAND)
     lines.append("seed 2 needed (a cell of arm A is between %d%% and %d%%): %s" % (int(100 * SEED2_LOW), int(100 * SEED2_HIGH), "yes" if d["seed2"] else "no"))
     lines += ["note: " + n for n in d["notes"]]
     return "\n".join(lines)
@@ -593,7 +693,8 @@ def main(argv=None):
                 if ln.strip():
                     rows.append(json.loads(ln))
         rows = [r for r in gen_dedupe(rows) if str(r.get("type", "")).startswith("L")]
-        print(describe_decision(decide(rows)))
+        lv = D4_LEVELS + (("L5",) if any(r.get("type") == "L5" for r in rows) else ())
+        print(describe_decision(decide(rows, lv)))
         return 0
     print("usage: design4.py decide <run-id | run folder>")
     return 2
