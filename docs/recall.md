@@ -68,6 +68,12 @@ Open one in full: python3 ~/.claude/hooks/recall.py open <id>
 - When the time runs out, the hook stops itself. A search child process (`rg` or `git`) can stay alive for a moment and then ends by itself.
 - Set `HANDOFF_AUTO_RECALL=0` to switch it off. Each run that passes the trigger adds one line to `~/.local/state/claude-handoffs/auto-recall.jsonl` (time, session id, the matched cue phrase or `quote`, number of hits, milliseconds, `timed_out`). The line holds no prompt text and no quotes.
 
+## Key history
+
+`python3 ~/.claude/hooks/recall.py history <identifier> [--role user|assistant|any] [--all]` lists every mention of one identifier (a key, file, service, setting or name) in the chats of this project, oldest first. The identifier must match as a whole token: `invoice-mailer` does not match `invoice-mailer-eu` or `invoice-mailer.v2`. Each entry is the sentence with the match and the sentence before and after it. The output has at most 4,000 characters. If there are more, it keeps the 2 oldest entries and the newest entries that fit, and prints the command with `--all` for the rest.
+
+The history leaves out the tool calls and results of recall itself, auto-recall injections, and duplicates (a forked chat copies the history of its parent). A later mention can be a rejected proposal, a dry run or an undo, so read every mention. The MCP tool `key_history` gives the same output and also leaves out the current prompt. With `--auto-recall`, auto-recall uses the same history when your prompt holds an identifier (a token in backticks, or a token with `-`, `_`, `.` or `/` inside).
+
 ## Strict recall rule and the recall tool
 
 Two more opt-in parts help the model search. Neither one forces a search: the model still decides.
