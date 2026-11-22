@@ -29,6 +29,15 @@ class Vec:
         self.rows = rows
         self.seeds = sorted({r["seed"] for r in rows})
 
+    def vecf(self, flt, fn):
+        """Like vec, with a function of the row as the hit test."""
+        cs, ts = [], []
+        for s in self.seeds:
+            sel = [r for r in self.rows if r["seed"] == s and flt(r)]
+            cs.append(sum(1 for r in sel if fn(r)))
+            ts.append(len(sel))
+        return cs, ts
+
     def vec(self, flt, metric):
         cs, ts = [], []
         for s in self.seeds:
@@ -195,10 +204,11 @@ def section4(rows_all, sessions, th, draws):
         add("H10 length (primary cell, phrasings pooled): O minus A", ">= +%d pts (headroom_min_points)" % hm, fmt_diff(d),
             "no data" if d[0] is None else ("SUPPORTED" if d[0] * 100 >= hm else "NOT SUPPORTED"))
         # H6 and H7 (kept): K minus B
-        ck, tk = V.vec(lambda r: r["arm"] == "K" and r["type"] == level and r.get("phrasing") == "neutral", "used_lookup")
-        cb, tb = V.vec(lambda r: r["arm"] == "B" and r["type"] == level and r.get("phrasing") == "neutral", "used_lookup")
+        from litm import model_search_val
+        ck, tk = V.vecf(lambda r: r["arm"] == "K" and r["type"] == level and r.get("phrasing") == "neutral", model_search_val)
+        cb, tb = V.vecf(lambda r: r["arm"] == "B" and r["type"] == level and r.get("phrasing") == "neutral", model_search_val)
         d = boot.diff(ck, tk, cb, tb)
-        add("H6 search rate: K minus B, no compaction, neutral probes (primary level)", "> 0 pts and CI lower bound > 0", fmt_diff(d),
+        add("H6 search rate (model_search): K minus B, no compaction, neutral probes (primary level)", "> 0 pts and CI lower bound > 0", fmt_diff(d),
             "no data" if d[0] is None else ("SUPPORTED" if d[0] > 0 and d[1] is not None and d[1] > 0 else "NOT SUPPORTED"))
         ck, tk = v("K", "neutral")
         cb, tb = v("B", "neutral")
