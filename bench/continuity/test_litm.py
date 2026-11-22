@@ -747,7 +747,9 @@ class Design3(unittest.TestCase):
         self.assertEqual(res["H7"], "SUPPORTED")
         self.assertIn("H1n", " ".join(h["name"] for h in out["hypotheses"]))
         self.assertIn("Table L5", text)
-        self.assertIn("search rate by arm, phrasing and position", text)
+        self.assertIn("Table L5 model_search", text)
+        self.assertIn("Table L5 injected", text)
+        self.assertIn("Table L5 either", text)
         self.assertIn("Table L2b", text)
         lo = d3_rows(k_search=0.0, b_search=0.5)
         res2 = {h["name"][:2]: h["result"] for h in litm.section(lo, [], self.th, 100)[1]["hypotheses"]}

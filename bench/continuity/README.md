@@ -422,3 +422,54 @@ What changed:
 - Report: Table D4-7 gives the refused forks (and items) for each arm, level and phrasing. Table D4-4s repeats every hypothesis with the refused items counted as wrong. The report says when the two readings disagree for a hypothesis.
 - Pick rule output: the refused forks and items in the picked cell and in all cells. A cell with more than 5% refused forks cannot be picked, and a note says why.
 - Gates: preflight FAIL if more than 10% of the probe forks of an arm are refused, plus an INFO line with the counts for each level. Paid-run abort: more than 5% of the probe forks in a seed are refused.
+
+### Retrieval gate and split search rate (F76, 2026-11-22)
+
+Why: on update chains, today's search returns one window for each message, newest first, with look-alike keys mixed in, and auto-recall builds its query from the generic words of the probe head. A paid R or K run on that code would test known defects. Table L5 also counted an auto-recall injection as a search, so "100% cued" hid how rarely the model searched itself.
+
+- Table L5 has three readings. `model_search`: the model called recall.py (Bash) or an `mcp__lossless-recall__` tool. `injected`: auto-recall fired in the probe turn. `either`: the old column `searched` (kept, so old runs still report). H6 uses `model_search`. A row of an old run has no `search_kinds`: it counts as `either` in the `model_search` reading, and it is left out of `injected`.
+- `run.sh retrieval-gate [--level L] [--seeds FILE] [--hooks-dir DIR] [--keep]` costs $0 and makes no model call. It writes each generated design-4 session as a synthetic Claude Code transcript in a temporary HOME (never the real `~/.claude`), with the real jsonl field layout (user, assistant, mode and session-owner records). Each probe has a fork file that copies the parent history with the same uuids and ends with the probe text as the current prompt. It runs the hooks of `--hooks-dir` (default: this repo's `hooks/`): `recall.py history <key>` and the MCP tool `key_history` (reported "not available" on a folder that has no history), `search_earlier_chat` with limit 5 and limit 10, and auto-recall on each cued, neutral and non-literal probe text. It reports full-chain coverage (every statement in time order, and in any order), current-value coverage, sibling leaks, the lure share of the injected hits and the lure-only blocks.
+- Gate before any paid R or K run: `key_history` full-chain coverage of at least 95% at the picked level, and R injects no lure-only block on cued probes at that level. Exit code 1 if the gate fails, 0 if it passes or is not available.
+- Fork copy, checked on a real fork transcript (the file `failed/s1-A-nc-fork-a2-153109.jsonl` of run 20261122T151831-preflight4; the runner deletes the probe transcripts of finished forks, so the smoke run 20261122T123857-litm3-smoke has none left): the fork file holds all 449 uuids of its records; the 438 uuids of the parent session file are in it, with identical message bodies, and only the session id differs. So a fork copies the parent history. When the main file stays in scope, each statement is a hit twice, and exclusion (d) of the contract is needed.
+
+Baseline on main (hooks of the repo at 7eabdcb, seeds 3 and 4, all levels, no key_history):
+
+```
+RETRIEVAL GATE (offline, $0, no model call). hooks dir: <repo>/hooks; seeds: 3,4; synthetic transcripts in a temporary HOME
+
+| Level | Tool | chains | full chain, in time order | full chain, any order | current value | sibling leak lines (chains) |
+|---|---|---|---|---|---|---|
+| L1 | recall.py history (CLI) | not available | | | | |
+| L1 | key_history (MCP) | not available | | | | |
+| L1 | search_earlier_chat limit 5 | 18 | 0% (0/18) | 100% (18/18) | 100% (18/18) | 0 (0) |
+| L1 | search_earlier_chat limit 10 | 18 | 0% (0/18) | 100% (18/18) | 100% (18/18) | 0 (0) |
+| L2 | recall.py history (CLI) | not available | | | | |
+| L2 | key_history (MCP) | not available | | | | |
+| L2 | search_earlier_chat limit 5 | 24 | 0% (0/24) | 46% (11/24) | 79% (19/24) | 38 (12) |
+| L2 | search_earlier_chat limit 10 | 24 | 0% (0/24) | 71% (17/24) | 96% (23/24) | 57 (13) |
+| L3 | recall.py history (CLI) | not available | | | | |
+| L3 | key_history (MCP) | not available | | | | |
+| L3 | search_earlier_chat limit 5 | 18 | 0% (0/18) | 0% (0/18) | 72% (13/18) | 25 (8) |
+| L3 | search_earlier_chat limit 10 | 18 | 0% (0/18) | 33% (6/18) | 83% (15/18) | 49 (9) |
+| L4 | recall.py history (CLI) | not available | | | | |
+| L4 | key_history (MCP) | not available | | | | |
+| L4 | search_earlier_chat limit 5 | 18 | 0% (0/18) | 0% (0/18) | 72% (13/18) | 38 (15) |
+| L4 | search_earlier_chat limit 10 | 18 | 0% (0/18) | 0% (0/18) | 83% (15/18) | 68 (16) |
+
+| Level | Phrasing | probes | auto-recall fired | injected hits | lure share of injected hits | lure-only blocks | blocks with the current value |
+|---|---|---|---|---|---|---|---|
+| L1 | cued | 6 | 6 | 0 | no hits | 0 | 0 |
+| L1 | neutral | 6 | 0 | 0 | no hits | 0 | 0 |
+| L1 | nonliteral | 6 | 0 | 0 | no hits | 0 | 0 |
+| L2 | cued | 6 | 6 | 12 | 67% (8/12) | 7 | 1 |
+| L2 | neutral | 6 | 0 | 0 | no hits | 0 | 0 |
+| L2 | nonliteral | 6 | 0 | 0 | no hits | 0 | 0 |
+| L3 | cued | 6 | 6 | 9 | 67% (6/9) | 3 | 1 |
+| L3 | neutral | 6 | 0 | 0 | no hits | 0 | 0 |
+| L3 | nonliteral | 6 | 0 | 0 | no hits | 0 | 0 |
+| L4 | cued | 6 | 6 | 8 | 62% (5/8) | 4 | 0 |
+| L4 | neutral | 6 | 0 | 0 | no hits | 0 | 0 |
+| L4 | nonliteral | 6 | 0 | 0 | no hits | 0 | 0 |
+
+RETRIEVAL GATE at L3: NOT AVAILABLE (this hooks folder has no key_history); R lure-only blocks on cued probes: 3 of 4 injected blocks (need 0): FAIL
+```
