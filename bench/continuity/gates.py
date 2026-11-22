@@ -87,13 +87,24 @@ def fork_id(r):
     return (r.get("seed"), r.get("arm"), r.get("condition"), r.get("type"), r.get("phrasing"), r.get("chunk"), r.get("fork_sid") if r.get("chunk") is None else None)
 
 
-def runaway_rate(rows):
-    """(runaway forks, forks) of rows. A fork is one (seed, arm, condition, type, phrasing, chunk); its rows all carry the same runaway flag."""
+def flag_rate(rows, flag):
+    """(forks with the flag, forks) of rows. A fork is one (seed, arm, condition, type, phrasing, chunk); its rows all carry the same flag."""
     forks = {}
     for r in rows:
-        if "runaway" in r:
-            forks[fork_id(r)] = bool(r.get("runaway")) or forks.get(fork_id(r), False)
+        if "runaway" in r or "refused" in r:
+            forks[fork_id(r)] = bool(r.get(flag)) or forks.get(fork_id(r), False)
     return sum(1 for v in forks.values() if v), len(forks)
+
+
+def runaway_rate(rows):
+    return flag_rate(rows, "runaway")
+
+
+REFUSED_SEED_MAX = 0.05      # refused probe forks / probe forks of one seed (a safety filter that refuses often makes the data biased)
+
+
+def refused_rate(rows):
+    return flag_rate(rows, "refused")
 
 
 def abort_reasons(sessions, rows, est_per_seed, finished_seeds, session_costs=None, expected=None):
@@ -121,6 +132,11 @@ def abort_reasons(sessions, rows, est_per_seed, finished_seeds, session_costs=No
         if all_f and bad_f / float(all_f) > RUNAWAY_SEED_MAX:
             why.append("seed %s: runaway rate %.0f%% (%d of %d probe forks hit the output cap) is above %.0f%%: a runaway fork wastes money" % (
                 sd, 100.0 * bad_f / all_f, bad_f, all_f, 100 * RUNAWAY_SEED_MAX))
+    for sd in sorted(fin):
+        bad_f, all_f = refused_rate([r for r in sel if r.get("seed") == sd])
+        if all_f and bad_f / float(all_f) > REFUSED_SEED_MAX:
+            why.append("seed %s: refused rate %.0f%% (%d of %d probe forks refused by a safety filter) is above %.0f%%" % (
+                sd, 100.0 * bad_f / all_f, bad_f, all_f, 100 * REFUSED_SEED_MAX))
     nofire = [r for r in sel if r.get("arm") in ("R", "K") and r.get("phrasing", "cued") == "cued" and r.get("auto_recall_fired") is False]
     if nofire:
         forks = sorted({(r["seed"], r["arm"], r["type"], r["fork_sid"]) for r in nofire})

@@ -410,3 +410,15 @@ What changed:
 - Report: Table D4-6 gives the runaway forks for each arm, level and phrasing. Preflight: FAIL if the runaway rate is above 5% of the probe forks of an arm, and an INFO line with the counts for each level. Abort gate: a runaway rate above 10% of the probe forks of a seed.
 - The 8,000 cap stays. Thinking is not limited.
 - Estimates (offline, `python3 cost.py`): calibration about $16 for 2 seeds ($8.04 per seed), L5 run about $11, smoke about $46, pilot about $192, full V3 about $3,917.
+
+### Refused probes as an outcome (`GEN_VERSION` litm4-6, 2026-11-22)
+
+Why: in preflight4 run 3, the safety classifier stopped the hidden thinking of Haiku in one probe fork (non-literal, 4 items, plain neutral text with no bio words), and the retry in Claude Code was refused too. This happened in all 3 runs, at about 1 of 16 forks of arm A. It is a false positive on text that we cannot see. The real runs use Sonnet, and the calibration measures the Sonnet rate.
+
+What changed:
+
+- A `safety_refusal` in a probe fork or a Z call is a probe outcome, error class `refused`. It is not retried and it is not a session failure. The failed/ evidence is kept as before, and `safety_refusals` in the session summary still counts it. A main-session turn that is refused stays a failure.
+- Result rows have `refused`. The items of a refused fork are left out of the accuracy denominator in every main table (D4-1 to D4-5) and in the pick rule.
+- Report: Table D4-7 gives the refused forks (and items) for each arm, level and phrasing. Table D4-4s repeats every hypothesis with the refused items counted as wrong. The report says when the two readings disagree for a hypothesis.
+- Pick rule output: the refused forks and items in the picked cell and in all cells. A cell with more than 5% refused forks cannot be picked, and a note says why.
+- Gates: preflight FAIL if more than 10% of the probe forks of an arm are refused, plus an INFO line with the counts for each level. Paid-run abort: more than 5% of the probe forks in a seed are refused.

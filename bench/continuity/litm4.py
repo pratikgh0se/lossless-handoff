@@ -54,8 +54,9 @@ def cellfmt(c, t):
 def section4(rows_all, sessions, th, draws):
     from report import Boot, fmt_diff
     from litm import mean_ends_diff
-    rows = [r for r in rows_all if is_d4(r)]
-    if not rows:
+    rows_d4 = [r for r in rows_all if is_d4(r)]
+    rows = [r for r in rows_d4 if not r.get("refused")]        # items of a refused probe fork are left out of every accuracy denominator
+    if not rows_d4:
         return [], {}
     lt = th.get("litm", {})
     d4t = lt.get("design4", {})
@@ -119,6 +120,19 @@ def section4(rows_all, sessions, th, draws):
         md.append("| %s | %s |" % (arm, " | ".join(cols)))
     md += ["", "By phrasing (all arms, all levels): " + ", ".join("%s %d/%d" % ((ph,) + gates_runaway([r for r in rows if r.get("phrasing") == ph])) for ph in design4.PHRASINGS) + "."]
     out["runaway"] = {"%s|%s" % (k[0], k[1]): list(v) for k, v in rw.items()}
+    # table D4-7: refused probe forks (a safety filter refused the fork: an outcome, items left out of the accuracy)
+    md += ["", "#### Table D4-7: refused probe forks (a safety filter refused the fork; its items are left out of the accuracy) as refused forks / forks (refused items / items)", "",
+           "| Arm | all levels | " + " | ".join(design4.D4_LEVELS + ("L5",)) + " |", "|---|---|" + "---|" * 5]
+    rf = {}
+    for arm in arms:
+        cols = []
+        for lv in (None,) + design4.D4_LEVELS + ("L5",):
+            t = design4.refused_forks(rows_d4, lv, arm)
+            cols.append("%d/%d (%d/%d)" % t if t[1] else "no data")
+            rf[(arm, lv)] = t
+        md.append("| %s | %s |" % (arm, " | ".join(cols)))
+    md += ["", "By phrasing (all arms, all levels): " + ", ".join("%s %d/%d" % ((ph,) + design4.refused_forks(rows_d4, None, None, ph)[:2]) for ph in design4.PHRASINGS) + "."]
+    out["refused"] = {"%s|%s" % (k[0], k[1]): list(v) for k, v in rf.items()}
     # place of the last update inside a third (what part of the context H1 can test)
     pt = design4.place_table(scripts) if scripts else {}
     md += ["", "#### Table D4-5: place of the last update (the deciding statement) inside its third", "",
@@ -136,80 +150,101 @@ def section4(rows_all, sessions, th, draws):
         md.append("| %s | %s | %s | %s |" % (name, thr, measured, result))
         out["hypotheses"].append({"name": name, "result": result})
 
-    def v(arm, ph, lvl=level, met=metric, pos=None):
-        return V.vec(lambda r: r["arm"] == arm and r["type"] == lvl and (ph is None or r.get("phrasing") == ph) and (pos is None or r.get("position") == pos), met)
+    def hyps(rows, V, boot, add):
+        def v(arm, ph, lvl=level, met=metric, pos=None):
+            return V.vec(lambda r: r["arm"] == arm and r["type"] == lvl and (ph is None or r.get("phrasing") == ph) and (pos is None or r.get("position") == pos), met)
 
-    def ends(arm, ph):
-        a, b = v(arm, ph, pos="start"), v(arm, ph, pos="end")
-        return [x + y for x, y in zip(a[0], b[0])], [x + y for x, y in zip(a[1], b[1])]
+        def ends(arm, ph):
+            a, b = v(arm, ph, pos="start"), v(arm, ph, pos="end")
+            return [x + y for x, y in zip(a[0], b[0])], [x + y for x, y in zip(a[1], b[1])]
 
-    ceil = d4t.get("h1_ceiling_max_accuracy", design4.CEILING)
-    # H1 primary: the phrasings pooled (3 chains for each position and seed is too few for one phrasing). The rows of each phrasing stay as secondary.
-    for name, ph in (("H1 lost in the middle, primary (arm A, no compaction, primary cell, the 3 phrasings pooled): middle minus mean(start, end)", None),
-                     ("H1c secondary, cued only: middle minus mean(start, end)", "cued"),
-                     ("H1s secondary, neutral only: middle minus mean(start, end)", "neutral"),
-                     ("H1n secondary, non-literal only: middle minus mean(start, end)", "nonliteral")):
-        mid, st_, en_ = v("A", ph, pos="middle"), v("A", ph, pos="start"), v("A", ph, pos="end")
-        d = mean_ends_diff(boot, mid, st_, en_)
-        se, te = ends("A", ph)
-        ends_acc = sum(se) / float(sum(te)) if sum(te) else None
+        ceil = d4t.get("h1_ceiling_max_accuracy", design4.CEILING)
+        # H1 primary: the phrasings pooled (3 chains for each position and seed is too few for one phrasing). The rows of each phrasing stay as secondary.
+        for name, ph in (("H1 lost in the middle, primary (arm A, no compaction, primary cell, the 3 phrasings pooled): middle minus mean(start, end)", None),
+                         ("H1c secondary, cued only: middle minus mean(start, end)", "cued"),
+                         ("H1s secondary, neutral only: middle minus mean(start, end)", "neutral"),
+                         ("H1n secondary, non-literal only: middle minus mean(start, end)", "nonliteral")):
+            mid, st_, en_ = v("A", ph, pos="middle"), v("A", ph, pos="start"), v("A", ph, pos="end")
+            d = mean_ends_diff(boot, mid, st_, en_)
+            se, te = ends("A", ph)
+            ends_acc = sum(se) / float(sum(te)) if sum(te) else None
+            if d[0] is None:
+                res = "no data"
+            elif ends_acc is not None and ends_acc > ceil:
+                res = "TOO EASY: no claim (start/end accuracy %s is above %s)" % (pc(ends_acc), pc(ceil))
+            else:
+                res = "SUPPORTED" if (d[0] <= -0.10 and d[2] is not None and d[2] < 0) else "NOT SUPPORTED"
+            add(name, "<= -10 pts and CI upper bound < 0; TOO EASY if mean(start, end) > %s" % pc(ceil), fmt_diff(d), res)
+        # H8 dose: A, L1 minus L4, M1
+        c1, t1 = V.vec(lambda r: r["arm"] == "A" and r["type"] == "L1", "m1")
+        c4, t4 = V.vec(lambda r: r["arm"] == "A" and r["type"] == "L4", "m1")
+        d = boot.diff(c1, t1, c4, t4)
+        add("H8 dose (arm A, M1): L1 minus L4", ">= +15 pts and CI lower bound > 0", fmt_diff(d),
+            "no data" if d[0] is None else ("SUPPORTED" if d[0] >= 0.15 and d[1] is not None and d[1] > 0 else "NOT SUPPORTED"))
+        # H9 interference: share of A's wrong answers (abstains excluded) that are stale, lure or sibling, primary level
+        wrong = [r for r in rows if r["arm"] == "A" and r["type"] == level and r.get("m1") is not True and r.get("error_class") not in ("abstain", "unreadable", "refused", None)]
+        inter = [r for r in wrong if r.get("error_class") in ("stale", "lure", "sibling")]
+        add("H9 interference (arm A, primary level, abstains excluded): share of wrong answers that are stale, lure or sibling", ">= 60%",
+            "no wrong answers" if not wrong else "%s (%d/%d)" % (pc(len(inter) / float(len(wrong))), len(inter), len(wrong)),
+            "no data" if not wrong else ("SUPPORTED" if len(inter) / float(len(wrong)) >= 0.60 else "NOT SUPPORTED"))
+        # H10 length: O minus A
+        co, to = v("O", None)
+        ca, ta = v("A", None)
+        d = boot.diff(co, to, ca, ta)
+        hm = th.get("headroom_min_points", 15)
+        add("H10 length (primary cell, phrasings pooled): O minus A", ">= +%d pts (headroom_min_points)" % hm, fmt_diff(d),
+            "no data" if d[0] is None else ("SUPPORTED" if d[0] * 100 >= hm else "NOT SUPPORTED"))
+        # H6 and H7 (kept): K minus B
+        ck, tk = V.vec(lambda r: r["arm"] == "K" and r["type"] == level and r.get("phrasing") == "neutral", "used_lookup")
+        cb, tb = V.vec(lambda r: r["arm"] == "B" and r["type"] == level and r.get("phrasing") == "neutral", "used_lookup")
+        d = boot.diff(ck, tk, cb, tb)
+        add("H6 search rate: K minus B, no compaction, neutral probes (primary level)", "> 0 pts and CI lower bound > 0", fmt_diff(d),
+            "no data" if d[0] is None else ("SUPPORTED" if d[0] > 0 and d[1] is not None and d[1] > 0 else "NOT SUPPORTED"))
+        ck, tk = v("K", "neutral")
+        cb, tb = v("B", "neutral")
+        d = boot.diff(ck, tk, cb, tb)
+        b_acc = sum(cb) / float(sum(tb)) if sum(tb) else None
+        h7c = lt.get("h7_ceiling_max_accuracy", 0.95)
+        res = "no data" if d[0] is None else ("TOO EASY: no claim" if b_acc is not None and b_acc > h7c else ("SUPPORTED" if d[0] >= 0.05 and d[1] is not None and d[1] > 0 else "NOT SUPPORTED"))
+        add("H7 accuracy: K minus B, no compaction, neutral (primary cell)", ">= +5 pts and CI lower bound > 0; TOO EASY if B > %s" % pc(h7c), fmt_diff(d), res)
+        # H11 harm guard: R minus B error rate (stale plus lure), cued, primary level. Paired by seed: the same seeds and the same forked session of arm A.
+        # HARM if the lower bound of the interval is above 0 (a point estimate alone can pass or fail by noise).
+        def errv(arm):
+            cs, ts = [], []
+            for sd in V.seeds:
+                sel = [r for r in rows if r["seed"] == sd and r["arm"] == arm and r["type"] == level and r.get("phrasing") == "cued"]
+                cs.append(sum(1 for r in sel if r.get("error_class") in ("stale", "lure")))
+                ts.append(len(sel))
+            return cs, ts
+        cr, tr = errv("R")
+        cb, tb = errv("B")
+        d = boot.diff(cr, tr, cb, tb)
         if d[0] is None:
-            res = "no data"
-        elif ends_acc is not None and ends_acc > ceil:
-            res = "TOO EASY: no claim (start/end accuracy %s is above %s)" % (pc(ends_acc), pc(ceil))
+            add("H11 harm guard: R minus B stale-plus-lure error rate, cued (primary level), paired by seed", "HARM if the interval lower bound > 0", "no data", "no data")
         else:
-            res = "SUPPORTED" if (d[0] <= -0.10 and d[2] is not None and d[2] < 0) else "NOT SUPPORTED"
-        add(name, "<= -10 pts and CI upper bound < 0; TOO EASY if mean(start, end) > %s" % pc(ceil), fmt_diff(d), res)
-    # H8 dose: A, L1 minus L4, M1
-    c1, t1 = V.vec(lambda r: r["arm"] == "A" and r["type"] == "L1", "m1")
-    c4, t4 = V.vec(lambda r: r["arm"] == "A" and r["type"] == "L4", "m1")
-    d = boot.diff(c1, t1, c4, t4)
-    add("H8 dose (arm A, M1): L1 minus L4", ">= +15 pts and CI lower bound > 0", fmt_diff(d),
-        "no data" if d[0] is None else ("SUPPORTED" if d[0] >= 0.15 and d[1] is not None and d[1] > 0 else "NOT SUPPORTED"))
-    # H9 interference: share of A's wrong answers (abstains excluded) that are stale, lure or sibling, primary level
-    wrong = [r for r in rows if r["arm"] == "A" and r["type"] == level and r.get("m1") is not True and r.get("error_class") not in ("abstain", "unreadable", None)]
-    inter = [r for r in wrong if r.get("error_class") in ("stale", "lure", "sibling")]
-    add("H9 interference (arm A, primary level, abstains excluded): share of wrong answers that are stale, lure or sibling", ">= 60%",
-        "no wrong answers" if not wrong else "%s (%d/%d)" % (pc(len(inter) / float(len(wrong))), len(inter), len(wrong)),
-        "no data" if not wrong else ("SUPPORTED" if len(inter) / float(len(wrong)) >= 0.60 else "NOT SUPPORTED"))
-    # H10 length: O minus A
-    co, to = v("O", None)
-    ca, ta = v("A", None)
-    d = boot.diff(co, to, ca, ta)
-    hm = th.get("headroom_min_points", 15)
-    add("H10 length (primary cell, phrasings pooled): O minus A", ">= +%d pts (headroom_min_points)" % hm, fmt_diff(d),
-        "no data" if d[0] is None else ("SUPPORTED" if d[0] * 100 >= hm else "NOT SUPPORTED"))
-    # H6 and H7 (kept): K minus B
-    ck, tk = V.vec(lambda r: r["arm"] == "K" and r["type"] == level and r.get("phrasing") == "neutral", "used_lookup")
-    cb, tb = V.vec(lambda r: r["arm"] == "B" and r["type"] == level and r.get("phrasing") == "neutral", "used_lookup")
-    d = boot.diff(ck, tk, cb, tb)
-    add("H6 search rate: K minus B, no compaction, neutral probes (primary level)", "> 0 pts and CI lower bound > 0", fmt_diff(d),
-        "no data" if d[0] is None else ("SUPPORTED" if d[0] > 0 and d[1] is not None and d[1] > 0 else "NOT SUPPORTED"))
-    ck, tk = v("K", "neutral")
-    cb, tb = v("B", "neutral")
-    d = boot.diff(ck, tk, cb, tb)
-    b_acc = sum(cb) / float(sum(tb)) if sum(tb) else None
-    h7c = lt.get("h7_ceiling_max_accuracy", 0.95)
-    res = "no data" if d[0] is None else ("TOO EASY: no claim" if b_acc is not None and b_acc > h7c else ("SUPPORTED" if d[0] >= 0.05 and d[1] is not None and d[1] > 0 else "NOT SUPPORTED"))
-    add("H7 accuracy: K minus B, no compaction, neutral (primary cell)", ">= +5 pts and CI lower bound > 0; TOO EASY if B > %s" % pc(h7c), fmt_diff(d), res)
-    # H11 harm guard: R minus B error rate (stale plus lure), cued, primary level. Paired by seed: the same seeds and the same forked session of arm A.
-    # HARM if the lower bound of the interval is above 0 (a point estimate alone can pass or fail by noise).
-    def errv(arm):
-        cs, ts = [], []
-        for sd in V.seeds:
-            sel = [r for r in rows if r["seed"] == sd and r["arm"] == arm and r["type"] == level and r.get("phrasing") == "cued"]
-            cs.append(sum(1 for r in sel if r.get("error_class") in ("stale", "lure")))
-            ts.append(len(sel))
-        return cs, ts
-    cr, tr = errv("R")
-    cb, tb = errv("B")
-    d = boot.diff(cr, tr, cb, tb)
-    if d[0] is None:
-        add("H11 harm guard: R minus B stale-plus-lure error rate, cued (primary level), paired by seed", "HARM if the interval lower bound > 0", "no data", "no data")
-    else:
-        add("H11 harm guard: R minus B stale-plus-lure error rate, cued (primary level), paired by seed",
-            "HARM if the interval lower bound > 0 (auto-recall injects old values)", fmt_diff(d),
-            "HARM: auto-recall injects old values" if d[1] is not None and d[1] > 0 else "OK: no harm shown (%d seeds)" % d[3])
+            add("H11 harm guard: R minus B stale-plus-lure error rate, cued (primary level), paired by seed",
+                "HARM if the interval lower bound > 0 (auto-recall injects old values)", fmt_diff(d),
+                "HARM: auto-recall injects old values" if d[1] is not None and d[1] > 0 else "OK: no harm shown (%d seeds)" % d[3])
+    hyps(rows, V, boot, add)
+    refused_n = sum(1 for r in rows_d4 if r.get("refused"))
+    if refused_n:
+        # sensitivity: the same hypotheses with every refused item counted as wrong
+        sens = []
+        V2 = Vec(rows_d4)
+        boot2 = Boot(max(1, len(V2.seeds)), draws or th["bootstrap_draws"], th["bootstrap_rng_seed"], th["ci_level"])
+        hyps(rows_d4, V2, boot2, lambda name, thr, measured, result: sens.append((name, thr, measured, result)))
+        main_res = {h["name"]: h["result"] for h in out["hypotheses"]}
+        md += ["", "#### Table D4-4s: sensitivity, the same hypotheses with the %d refused item(s) counted as wrong (the main table leaves them out)" % refused_n, "",
+               "| Hypothesis | Measured with refused as wrong | Result | Main table result |", "|---|---|---|---|"]
+        differ = []
+        for name, thr, measured, result in sens:
+            md.append("| %s | %s | %s | %s |" % (name, measured, result, main_res.get(name, "")))
+            if main_res.get(name, result).split(":")[0] != result.split(":")[0]:
+                differ.append(name)
+        out["sensitivity"] = [{"name": n, "result": r} for n, _t, _m, r in sens]
+        md += ["", ("**The two readings DISAGREE for %d hypothesis(es): %s. Do not claim these without saying that refused probes change the result.**" % (len(differ), "; ".join(differ)))
+               if differ else "The two readings (refused items left out, refused items counted as wrong) agree for every hypothesis."]
+        out["readings_disagree"] = differ
     md += ["", "Notes. K's gain (H6, H7) is an upper bound: every statement has one fixed sentence form with the key in backticks, so a search by the key finds the "
            "statements almost like an oracle. Real notes do not look like this."]
     return md, out
