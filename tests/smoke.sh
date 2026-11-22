@@ -2062,7 +2062,7 @@ rows = [rec("user", "2026-11-19T10:00:00Z", "Our staging database rotation polic
 open(os.path.join(pd, "f69sess.jsonl"), "w").write("".join(json.dumps(r) + "\n" for r in rows))
 PY
   cat > "$D/drive.py" <<'PY'
-import json, subprocess, sys
+import json, os, subprocess, sys
 ms, cwd = sys.argv[1:3]
 def run(lines):
     p = subprocess.run([sys.executable, ms], input="".join(l + "\n" for l in lines), capture_output=True, text=True, cwd=cwd, timeout=60)
@@ -2608,14 +2608,15 @@ PY
   touch -t 203001010000 "$HOME"/.claude/projects/*/bbbbbbbb.jsonl
   # MCP: key_history, descriptions, instructions, the current prompt is left out
   cat > "$D/mcp.py" <<'PY'
-import json, subprocess, sys
+import json, os, subprocess, sys
 ms, cwd = sys.argv[1:3]
 msgs = [{"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2025-06-18"}},
         {"jsonrpc": "2.0", "id": 2, "method": "tools/list"},
         {"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "key_history", "arguments": {"identifier": "invoice-mailer"}}},
         {"jsonrpc": "2.0", "id": 4, "method": "tools/call", "params": {"name": "key_history", "arguments": {}}},
         {"jsonrpc": "2.0", "id": 5, "method": "tools/call", "params": {"name": "key_history", "arguments": {"identifier": "capkey"}}}]
-p = subprocess.run([sys.executable, ms], input="".join(json.dumps(m) + "\n" for m in msgs), capture_output=True, text=True, cwd=cwd, timeout=60)
+p = subprocess.run([sys.executable, ms], input="".join(json.dumps(m) + "\n" for m in msgs), capture_output=True, text=True, cwd=cwd, timeout=60,
+               env=dict(os.environ, CLAUDE_CODE_SESSION_ID="bbbbbbbb"))
 by = {o["id"]: o for o in map(json.loads, p.stdout.splitlines())}
 assert "For the current value of a setting, key or decision, call key_history and read every mention: the newest mention can be a rejected proposal." in by[1]["result"]["instructions"]
 t = {x["name"]: x for x in by[2]["result"]["tools"]}
@@ -2648,11 +2649,74 @@ PY
   python3 - <<PY
 import importlib.util
 spec = importlib.util.spec_from_file_location("ar", "$ROOT/hooks/auto-recall.py"); m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
-assert m.identifiers("fix \`foo\` in a/b.c, see x_y and e.g. 2026-11-19 or https://h.io/p-q") == ["foo", "a/b.c", "x_y", "2026-11-19"], m.identifiers("fix \`foo\` in a/b.c, see x_y and e.g. 2026-11-19 or https://h.io/p-q")
+assert m.identifiers("fix \`MyKey\` \`current\` \`foo\` in a/b.c, see x_y and e.g. 2026-11-19 or https://h.io/p-q") == ["a/b.c", "x_y", "MyKey"], m.identifiers("fix \`MyKey\` \`current\` \`foo\` in a/b.c, see x_y and e.g. 2026-11-19 or https://h.io/p-q")
 assert m.identifiers("plain words only") == []
 assert m.query_words("what did we decide earlier about previous rejected proposal values staging database") == ["database", "staging"] or set(m.query_words("what did we decide earlier about previous rejected proposal values staging database")) == {"staging", "database"}
 PY
   ok "F73-F75: history output, token boundary, exclusions, fork dedupe, cap, search ranking, key_history tool, auto-recall identifiers and health"
+)
+
+# F73-F75 amendments (PR #41 review): slots, current session by id, redaction before the split, whole-token ranking
+(
+  set -e
+  D="$T/f75b"; mkdir -p "$D"; export HOME="$D/home"; W="$D/work"; mkdir -p "$HOME/.claude" "$W"
+  export HANDOFF_STATE_DIR="$D/state" HANDOFF_LEDGER=0; unset HANDOFF_HOOKS_HOME HANDOFF_AUTO_RECALL CLAUDE_CODE_SESSION_ID
+  git -C "$W" init -q; RC="$ROOT/hooks/recall.py"
+  python3 - "$HOME" "$W" <<'PY'
+import json, os, re, sys
+home, w = sys.argv[1:3]
+real = os.path.realpath(w)
+pd = os.path.join(home, ".claude", "projects", re.sub(r"[^A-Za-z0-9]", "-", real)); os.makedirs(pd)
+def rec(t, ts, text, sess, uuid):
+    return {"type": t, "timestamp": ts, "cwd": real, "sessionId": sess, "uuid": uuid,
+            "message": {"role": t, "content": text if t == "user" else [{"type": "text", "text": text}]}}
+def put(name, rows):
+    open(os.path.join(pd, name + ".jsonl"), "w").write("".join(json.dumps(r) + "\n" for r in rows))
+# probe-like keys, a PEM block, two sessions with one key, and 250 substring hits
+put("probe0001", [rec("user", "2026-11-19T09:00:00Z", "Set key-alpha-one to 1. Set key-beta-two to 2. Set key-gamma-three to 3.", "probe0001", "P1"),
+                  rec("assistant", "2026-11-19T09:01:00Z", "Done. key-alpha-one is 1, key-beta-two is 2, key-gamma-three is 3.", "probe0001", "P2"),
+                  rec("user", "2026-11-19T09:02:00Z", "The pem-holder-x block follows. -----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEF\nSECRETPEMBODY99\n-----END PRIVATE KEY-----\nThat is all.", "probe0001", "P3")])
+put("oldsess01", [rec("user", "2026-11-20T10:00:00Z", "OLDPROMPT zebra-key is 7 now.", "oldsess01", "O1"),
+                  rec("assistant", "2026-11-20T10:01:00Z", "OLDREPLY zebra-key acknowledged.", "oldsess01", "O2")])
+put("newsess01", [rec("user", "2026-11-20T11:00:00Z", "NEWPROMPT zebra-key is 9 final.", "newsess01", "N1")])
+rows = [rec("user", "2026-11-01T00:00:00Z", "zz-key set to 5 and kept.", "ranksess1", "R0")]
+for i in range(250):
+    rows.append(rec("user", "2026-11-10T00:%02d:%02dZ" % (i // 60, i % 60), "see zz-key-eu-%d here" % i, "ranksess1", "R%d" % (i + 1)))
+put("ranksess1", rows)
+PY
+  # 1. probe-like prompt: `current`, `previous`, `replaced` and 3 keys with no mention take no slot
+  ar() { python3 -c 'import json,sys; print(json.dumps({"prompt":sys.argv[1],"cwd":sys.argv[2],"session_id":"f75b","transcript_path":""}))' "$1" "$W" | python3 "$ROOT/hooks/auto-recall.py"; }
+  o="$(ar 'what did we decide earlier about `current` `previous` `replaced` ghost-aa-1 ghost-bb-2 ghost-cc-3 key-alpha-one key-beta-two key-gamma-three')"
+  for k in key-alpha-one key-beta-two key-gamma-three; do grep -q "^history of $k: " <<<"$o" || fail "F75: real key $k got no slot: $o"; done
+  ! grep -q "history of current\|history of previous\|history of replaced\|ghost-" <<<"$o" || fail "F75: a lure took a slot: $o"
+  # 2. MCP: two main transcripts, the session id names the older one: only its prompt is hidden
+  cat > "$D/mcp.py" <<'PY'
+import json, os, subprocess, sys
+ms, cwd = sys.argv[1:3]
+msgs = [{"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2025-06-18"}},
+        {"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": "key_history", "arguments": {"identifier": "zebra-key"}}}]
+p = subprocess.run([sys.executable, ms], input="".join(json.dumps(m) + "\n" for m in msgs), capture_output=True, text=True, cwd=cwd,
+                   timeout=60, env=dict(os.environ, CLAUDE_CODE_SESSION_ID="oldsess01"))
+x = {o["id"]: o for o in map(json.loads, p.stdout.splitlines())}[2]["result"]["content"][0]["text"]
+assert "OLDPROMPT" not in x and "OLDREPLY" in x and "NEWPROMPT" in x, x
+PY
+  python3 "$D/mcp.py" "$ROOT/hooks/recall-mcp.py" "$W" || fail "F73: current session by id"
+  # 3. a PEM block in a mention is redacted before the sentence split
+  cd "$W"
+  o="$(python3 "$RC" history pem-holder-x)"
+  grep -q "REDACTED" <<<"$o" && ! grep -q "SECRETPEMBODY99\|MIIEvQIBADANBgkq" <<<"$o" || fail "F73: PEM block not redacted: $o"
+  # 4. whole tokens rank above substrings before the cut to 200 (meaning search on, so the cut applies)
+  python3 - "$ROOT/hooks" "$W" <<'PY'
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location("recall", sys.argv[1] + "/recall.py"); m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+m.meaning_hits = lambda a, root, ts: ([], "mode: test", None)
+a = m.build_parser().parse_args(["search", "--role", "user", "--limit", "5", "--", "zz-key"])
+a.subagents = True
+lines = m.cmd_search(a, m.project_root(sys.argv[2]))
+hits = [x for x in lines if " [word]: " in x]
+assert hits and "zz-key set to 5" in hits[0], lines[:4]
+PY
+  ok "F73-F75 amendments: real keys get the slots, current session by id, PEM redaction, whole-token ranking before the cut"
 )
 
 "$ROOT/uninstall.sh" >"$T/un.out"

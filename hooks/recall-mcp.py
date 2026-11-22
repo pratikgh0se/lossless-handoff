@@ -130,7 +130,7 @@ def tool_search(args):
     a.subagents = True
     root = mod.project_root(os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd())
     with contextlib.redirect_stdout(sys.stderr):
-        mod.CURRENT_CUTOFF = mod.current_cutoff(mod.in_scope_transcripts(root, True))  # F74.c: not the current prompt
+        mod.CURRENT_CUTOFF = mod.current_cutoff(mod.in_scope_transcripts(root, True), sid=os.environ.get("CLAUDE_CODE_SESSION_ID"))  # F74.c: not the current prompt
         try:
             lines = mod.cmd_search(a, root)
         finally:
@@ -152,7 +152,7 @@ def tool_history(args):
     root = mod.project_root(os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd())
     with contextlib.redirect_stdout(sys.stderr):
         ts = mod.in_scope_transcripts(root, True)
-        lines, n = mod.history_for(ts, ident.strip(), role, mod.current_cutoff(ts), mod.HISTORY_CAP)
+        lines, n = mod.history_for(ts, ident.strip(), role, mod.current_cutoff(ts, sid=os.environ.get("CLAUDE_CODE_SESSION_ID")), mod.HISTORY_CAP)
     return mod.redact("\n".join(lines)), n
 
 

@@ -55,26 +55,38 @@ MAX_IDENTS, PER_IDENT_CAP, TOTAL_CAP = 3, 1500, 4000
 URL_RE = re.compile(r"(?:https?://|www\.)\S+", re.I)
 IDENT_TOKEN_RE = re.compile(r"`([^`\s]+)`|([A-Za-z0-9_./-]+)")
 IDENT_FULL_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_./-]*[_./-][A-Za-z0-9_./-]*[A-Za-z0-9]")
-NOT_IDENT = {"e.g", "i.e"}  # abbreviations, not identifiers
+NOT_IDENT = {"e.g", "i.e", "and/or"}  # abbreviations, not identifiers
+PLAIN_WORD_RE = re.compile(r"[a-z]{1,8}")
+BUDGET_IDENT_S = 1.2  # no new identifier after this many seconds
 
 
 def identifiers(prompt):
-    """F75: identifiers in prompt order, no duplicates: a token in backticks, or a token of 3+ characters that holds
-    -, _, . or / inside. A URL and a cue word are not identifiers."""
+    """F75 (amended): first the tokens of the regex form (they hold -, _, . or / inside and a letter), in prompt order,
+    then the backticked tokens that do not match it. A URL, a cue word, a stop word or a plain word of 8 or fewer
+    lowercase letters in backticks is not an identifier. No duplicates."""
     rest = URL_RE.sub(" ", prompt)
-    seen, out = set(), []
+    seen, regex_form, ticked = set(), [], []
     for m in IDENT_TOKEN_RE.finditer(rest):
-        tok = m.group(1) if m.group(1) is not None else m.group(2).strip("._/-")
-        if m.group(1) is None and not IDENT_FULL_RE.fullmatch(tok):
-            continue
         if m.group(1) is not None:
-            tok = tok.strip()
+            tok = m.group(1).strip()
+            ticks = True
+        else:
+            tok = m.group(2).strip("._/-")
+            ticks = False
+            if not IDENT_FULL_RE.fullmatch(tok):
+                continue
         k = tok.lower()
         if len(tok) < 1 or k in seen or k in NOT_IDENT or k in CUES:
             continue
+        form = bool(IDENT_FULL_RE.fullmatch(tok)) and any(c.isalpha() for c in tok)
+        if not form:
+            if not ticks or k in STOP or (PLAIN_WORD_RE.fullmatch(tok) and not any(c.isdigit() for c in tok)):
+                continue
+            if not ticks:
+                continue
         seen.add(k)
-        out.append(tok)
-    return out
+        (regex_form if form else ticked).append(tok)
+    return regex_form + ticked
 
 
 def quoted_phrases(prompt):
@@ -270,7 +282,9 @@ def history_output(mod, prompt, idents, cwd, transcript_path):
         return "", 0
     cutoff = mod.current_cutoff(ts, transcript_path if isinstance(transcript_path, str) and transcript_path else None, prompt)
     blocks, total, mentions, first = [], len(HIST_HEADER) + 1, 0, None
-    for ident in idents[:MAX_IDENTS]:
+    for ident in idents:
+        if len(blocks) >= MAX_IDENTS or time.monotonic() - _state["t0"] > BUDGET_IDENT_S:
+            break  # 3 blocks with mentions, or the time is short: print what we have
         lines, n = mod.history_for(ts, ident, "any", cutoff, PER_IDENT_CAP)
         if n == 0:
             continue
