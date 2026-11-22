@@ -1200,3 +1200,55 @@ Amends F67.c. The trigger (F67.b) does not change.
 - **Health.** The row of `auto-recall.jsonl` adds `"mode": "history"|"search"` and `"identifiers": <n>` (the number of identifiers found, never the text). `hits` counts mentions in history mode. The 2.0-second budget and the no-error rule do not change.
 
 **F75.a Versions.** Product 0.17.0 (`install.sh`). `HOOK_VERSION` is `1.19.0` in every hook that has it. The default install does not change.
+
+## F77, F78, F80: history guard, size trigger and action guard (0.18.0, hooks 1.20.0)
+
+Why: in a long chat a key can have many values (set, changed, rejected, undone). The model can use an old value. These three parts show the full history of a key when the model is about to use it. All three are opt-in. The default install does not change. They share the rules below and the code in `guard_common.py`.
+
+**Terms.**
+- *Identifier*: the F75 rule.
+- *Text message*: a real user message or a message of the assistant. Tool input, tool result, recall output and hook text are not text messages.
+- *Subject*: an identifier (whole token, case-insensitive) that is in 2 to 40 text messages of the current session before the current user prompt, and at least 2 of them are user messages.
+- *Context count*: the usage of the last assistant entry (input, cache read and cache creation tokens), skipping an entry with a total of 0. Same rule as `reanchor.py`.
+
+**Shared subject rules (F77 and F80).**
+1. An *anchor* is an identifier in the text that the guard checks. The guard uses the first 60. An anchor that is an existing path (`os.path.exists(os.path.join(cwd, token))`, token as written) is left out.
+2. If the anchor is a subject, it is the subject. If it is not, but it was in an earlier text message, the subjects are the identifiers in the same sentence as that earlier mention. A key that was stated one time is not a subject, and a sibling key (`queue-limit-eu` and `queue-limit`) is another token.
+3. Evidence: a subject is left out if this user turn already holds a `key_history` call or a `recall.py history` call that names it, or an injected block `history of <subject>:`.
+4. Cooldown: a subject that a guard showed is not shown again unless it has a new mention or the context grew by 50,000 tokens. F77 and F80 share one cooldown table in `history-guard-<session>.json`, so one change is not shown twice.
+5. At most 4 subjects, in text order. The text holds the F73 history block of each subject: 1,500 characters each, 6,000 in total.
+6. Threshold: the context count is 100,000 tokens or more.
+7. Every error or a 3.0-second timeout gives no output and exit 0. Stdlib only. Lookups of other installed files follow F72. The state file, the logs and `history-guard-<session>.json` have mode 0600 and use `HANDOFF_STATE_DIR`. A log row holds no reply text, no input text and no identifier text.
+
+**F77 History guard.** `./install.sh --history-guard` (saved key `history_guard`, `--no-history-guard`). It copies `hooks/history-guard.py` and `hooks/guard_common.py` and registers a `Stop` entry, timeout 5. It works with or without `--claim-guard` (separate file, separate entry). Input: `session_id`, `transcript_path`, `cwd`, `stop_hook_active`, `last_assistant_message`.
+- It does nothing if `stop_hook_active` is true, or if the guard already showed history in this user turn (the turn marker in the state file is the uuid of the current prompt).
+- The anchors are the identifiers of the reply that are not in a tool input or tool result of this turn.
+- Modes (`HANDOFF_HISTORY_GUARD`): unset or `shadow`: one row in `history-guard.jsonl`: `{"ts","session_id","mode","fired":true,"subjects":<n>,"anchors":<n>,"tokens":<int>,"chars":<int>,"ms":<int>}`, no output. `block`: the same row and the output. `0`: nothing. `HANDOFF_HISTORY_GUARD_TOKENS` (10,000 to 1,000,000) sets the threshold.
+- Output form. The current hooks reference (https://code.claude.com/docs/en/hooks, section "Stop decision control", read 2026-11-22) says: "`hookSpecificOutput.additionalContext` | Non-error feedback for Claude. The conversation continues so Claude can act on it, but unlike `decision: "block"` it is shown in the transcript as hook feedback rather than a hook error". It gives this example, and the hook prints this form:
+```json
+{"hookSpecificOutput": {"hookEventName": "Stop", "additionalContext": "<text>"}}
+```
+  The same page says that this form keeps the conversation going through the same loop protections as `decision: "block"` (the `stop_hook_active` input and the cap of 8 consecutive continuations). The older form `{"decision": "block", "reason": text}` is also documented and is not used here, because it shows as a hook error. The docs and the design agree, so the docs form is used.
+- `additionalContext` line 1, exactly: `Lossless Handoff history check: your reply uses values that changed in this chat. The full history is below, oldest first. A later mention can be a rejected proposal, a dry run or an undo. Read every mention in order. If your reply is correct, send the same reply again. If it is not, send the corrected reply. Do not mention this check.`
+  Then the F73 blocks.
+
+**F78 Size trigger.** `./install.sh --recall-size-trigger` (saved key `recall_size_trigger`, `--no-recall-size-trigger`). It needs `--auto-recall`. The install writes the empty marker `<hooks dir>/.recall-size-trigger`. Uninstall removes it. If auto-recall is not installed, the installer prints `recall-size-trigger: needs --auto-recall; skipped` and exits 0. A rerun prints `recall-size-trigger: already installed, kept`.
+- With the marker, and when no F67.b cue matches, auto-recall fires if all of these hold: the prompt does not start with `/`; the context count is 100,000 tokens or more (`HANDOFF_AUTO_RECALL_TOKENS`, 10,000 to 1,000,000); the prompt holds 1 or more identifiers that are subjects in the current session and are not existing paths below cwd.
+- Output: the F75 history output for the first 3 such identifiers (same caps and format as F75). No word-search fallback. The 2.0-second budget and the no-error rule do not change.
+- The health row of `auto-recall.jsonl` has `"cue": "size"`. Off switch: `HANDOFF_AUTO_RECALL_SIZE=0`.
+- Without the marker, auto-recall behaves as in 0.17.0.
+
+**F80 Action guard.** `./install.sh --action-guard` (saved key `action_guard`, `--no-action-guard`). It copies `hooks/action-guard.py` and `hooks/guard_common.py` and registers a `PostToolBatch` entry, timeout 5.
+- Why: in work with no guidance, the risk is an action (a write, an edit, a command) that uses an old, rejected or undone value. The Stop guard sees only the last reply.
+- Event. The current hooks reference lists `PostToolBatch` ("After a full batch of parallel tool calls resolves, before the next model call"). Its section "PostToolBatch decision control" says: "`PostToolBatch` hooks can inject context for Claude." and "`additionalContext` | Context string injected once before the next model call". The hook prints this form, so `PostToolUse` is not used:
+```json
+{"hookSpecificOutput": {"hookEventName": "PostToolBatch", "additionalContext": "<text>"}}
+```
+  The event has no matcher, and the hook input holds `tool_calls` (`tool_name`, `tool_input`, `tool_use_id`, `tool_response`). The hook ignores `tool_response`.
+- Inputs scanned: the new text of `Edit` (`new_string`), `MultiEdit` (each `new_string`), `Write` (`content`) and `NotebookEdit` (`new_source`), and the `command` of `Bash`. `old_string`, `file_path` and every other tool are ignored.
+- Anchors, subjects, evidence, cooldown, threshold (`HANDOFF_ACTION_GUARD_TOKENS`), caps: as in the shared rules. The names of the current turn do not exclude an anchor (the call itself holds them).
+- Modes (`HANDOFF_ACTION_GUARD`): unset or `shadow`: one row in `action-guard.jsonl` (the F77 fields and `"tool": <tool name>`), no output. `inject`: the same row and the output. `0`: nothing. The hook never denies or blocks a tool call.
+- `additionalContext` line 1, exactly: `Lossless Handoff history check: your last tool call used names whose values changed in this chat. The full history is below, oldest first. A later mention can be a rejected proposal, a dry run or an undo. If the call used an old, rejected or undone value, fix it now. If it is correct, go on. Do not mention this check.`
+  Then the F73 blocks.
+
+**F77-F80.a Versions.** Product 0.18.0 (`install.sh`). `HOOK_VERSION` is `1.20.0` in every hook that has it, and in `guard_common.py`. The default install does not change. `guard_common.py` is installed with any of the three flags and is kept up to date after that.

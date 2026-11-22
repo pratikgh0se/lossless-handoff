@@ -10,7 +10,7 @@ Off switch: HANDOFF_AUTO_RECALL=0. The health log (auto-recall.jsonl) holds no p
 """
 import json, os, re, sys, threading, time
 
-HOOK_VERSION = "1.19.0"
+HOOK_VERSION = "1.20.0"
 HOME = os.path.expanduser("~")
 
 
@@ -297,6 +297,42 @@ def format_output(mod, hits):
     return "\n".join(lines) + "\n"
 
 
+def size_trigger(prompt, d):
+    """F78: with the marker .recall-size-trigger and no cue, -> the identifiers of the prompt that are subjects in this
+    chat (not existing paths below cwd), or []. The chat must hold 100,000 tokens or more (HANDOFF_AUTO_RECALL_TOKENS)."""
+    if (os.environ.get("HANDOFF_AUTO_RECALL_SIZE") or "").strip() == "0":
+        return []
+    if not isinstance(prompt, str) or not prompt.strip() or prompt.lstrip().startswith("/"):
+        return []
+    h = hooks_home() or os.path.join(HOME, ".claude", "hooks")
+    if not os.path.isfile(os.path.join(h, ".recall-size-trigger")):
+        return []
+    tp, cwd = d.get("transcript_path"), d.get("cwd")
+    if not isinstance(tp, str) or not os.path.isfile(tp) or not isinstance(cwd, str) or not cwd.strip():
+        return []
+    import importlib.util
+    path = next((p for p in hook_candidates("guard_common.py", os.path.join(HOME, ".claude", "hooks", "guard_common.py"),
+                                            os.path.join(os.path.dirname(os.path.abspath(__file__)), "guard_common.py")) if os.path.isfile(p)), None)
+    if not path:
+        return []
+    spec = importlib.util.spec_from_file_location("lh_guard_common", path)
+    g = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(g)
+    s = (os.environ.get("HANDOFF_AUTO_RECALL_TOKENS") or "").strip()
+    need = int(s) if s.isdigit() and 10000 <= int(s) <= 1000000 else 100000
+    tk = g.context_tokens(tp)
+    if tk is None or tk < need:
+        return []
+    idents = identifiers(prompt)
+    if not idents:
+        return []
+    r = g.read_session(tp, _state["t0"] + 1.5, prompt)
+    if r is None:
+        return []
+    idx, _sent = g.build_index(r[0])
+    return [t for t in idents if g.is_subject(idx, t.lower()) and not os.path.exists(os.path.join(cwd, t))]
+
+
 def main():
     if (os.environ.get("HANDOFF_AUTO_RECALL") or "").strip() == "0":
         return
@@ -307,8 +343,15 @@ def main():
     if not isinstance(d, dict):
         return
     prompt = d.get("prompt")
+    size_idents = []
     if not triggered(prompt):
-        return
+        try:
+            size_idents = size_trigger(prompt, d)
+        except BaseException:
+            size_idents = []
+        if not size_idents:
+            return
+        _state["cue"] = "size"
     _state["sid"] = d.get("session_id") or ""
     timer = threading.Timer(WATCHDOG_S, watchdog)
     timer.daemon = True
@@ -316,7 +359,7 @@ def main():
     out, hits = "", []
     try:
         cwd = d.get("cwd")
-        idents = identifiers(prompt)
+        idents = size_idents or identifiers(prompt)
         _state["idents"] = len(idents)
         mod = load_recall() if isinstance(cwd, str) and cwd.strip() else None
         if mod is not None and idents:
@@ -324,7 +367,7 @@ def main():
             if out:
                 _state["mode"] = "history"
                 hits = [None] * n
-        if not out:
+        if not out and not size_idents:
             _state["mode"] = "search"
             words = query_words(prompt)
             if words and mod is not None:

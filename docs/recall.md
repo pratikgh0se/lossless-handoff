@@ -101,6 +101,16 @@ Both are opt-in. They help when the model forgets a rule or states an earlier fa
 
 **Claim guard** (`./install.sh --claim-guard`). A `Stop` hook (`claim-guard.py`, timeout 5). It looks at the last reply for 12 cue phrases such as "as we decided", "you said" and "last time". If there is a cue and, since your last message, no recall search (a Bash call with `recall.py`, a `mcp__lossless-recall__` tool call, or an auto-recall note), it acts by mode. In the default shadow mode it only adds one line to `claim-guard.jsonl` (time, session id, the cue; no text) and prints nothing. In live mode (`HANDOFF_CLAIM_GUARD=block`) it also asks the model to search, once per user turn. Read the log before you switch to live mode. See [limitations](limitations.md).
 
+## History guard, action guard and size trigger
+
+These three parts are opt-in (0.18.0). They help in a long chat where a key changed value, for example a setting that was set, changed, rejected and undone. All three use the same rule. A *subject* is a key (an identifier, see F75) that is in 2 to 40 text messages of this chat, and at least 2 are from you. They act only when the context is 100,000 tokens or more.
+
+- **History guard** (`./install.sh --history-guard`). A `Stop` hook (`history-guard.py`, timeout 5). If the reply uses a subject and the turn has no history check for it, the hook gives the model the full history of that key, oldest first, once per user turn. The model then confirms or corrects its reply. Set `HANDOFF_HISTORY_GUARD=block` for this. The default is shadow mode: one log line in `history-guard.jsonl` (no text). `HANDOFF_HISTORY_GUARD=0` switches it off.
+- **Action guard** (`./install.sh --action-guard`). A `PostToolBatch` hook (`action-guard.py`, timeout 5). It reads the new text of Edit, Write, MultiEdit and NotebookEdit calls and the Bash command. If one names a subject, it injects the same history before the next model call, so the model can fix the action. Set `HANDOFF_ACTION_GUARD=inject` for this. The default is shadow mode (`action-guard.jsonl`). It never blocks a tool call. `HANDOFF_ACTION_GUARD=0` switches it off.
+- **Size trigger** (`./install.sh --recall-size-trigger`, needs `--auto-recall`). Auto-recall also fires, with no cue phrase, when the prompt names a subject. It gives the key history as it does for an identifier. `HANDOFF_AUTO_RECALL_SIZE=0` switches it off.
+
+The guards share one cooldown, so one change is not shown twice. A key that was stated one time is not a subject. A key that is an existing path below the working folder is left out. `HANDOFF_HISTORY_GUARD_TOKENS`, `HANDOFF_ACTION_GUARD_TOKENS` and `HANDOFF_AUTO_RECALL_TOKENS` (10,000 to 1,000,000) change the 100,000 threshold. The exact rules are in [F77, F78 and F80](spec.md).
+
 ## Recall commands
 
 `recall.py` searches every earlier chat in the same project (all sessions whose folder is inside the git root of the project). It is read-only and works over the transcripts that Claude Code already keeps. A summary keeps decisions but loses exact commands, numbers, paths and your own wording. Recall gets them back.
