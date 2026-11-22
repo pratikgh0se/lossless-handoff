@@ -2101,6 +2101,187 @@ PY
   r=0; python3 "$MS" </dev/null || r=$?; [ "$r" = 0 ] || fail "F69: exit $r on empty stdin"
   ok "F69: MCP protocol, both tools, limits, redaction, errors, parse error, version echo, health log without query text"
 )
+# F70: re-anchor hook (opt-in): interval, anchor state, compaction reset, no rules, off switch, env interval, health row, errors
+(
+  set -e
+  D="$T/f70"; mkdir -p "$D"; export HOME="$D/home"; W="$D/work"; mkdir -p "$HOME/.claude" "$W"
+  export HANDOFF_STATE_DIR="$D/state"; HK="$ROOT/hooks/reanchor.py"; unset HANDOFF_REANCHOR HANDOFF_REANCHOR_TOKENS
+  # a ledger with two rules for the project of $W (same key rule as the SubagentStart hook)
+  KEY="$(python3 -c 'import hashlib,os,re,sys; r=sys.argv[1]; print(re.sub(r"[^A-Za-z0-9._-]","_",os.path.basename(r))[:40]+"-"+hashlib.sha1(r.encode()).hexdigest()[:8])' "$W")"
+  mkdir -p "$HANDOFF_STATE_DIR/projects/$KEY"
+  cat > "$HANDOFF_STATE_DIR/projects/$KEY/decisions.md" <<'MD'
+- D2 [2026-11-01] [rule] Always run the linter before a commit | why: the user asked
+- D1 [2026-11-01] [rule] Never push to main | why: the user asked
+MD
+  python3 - "$D" <<'PY'
+import json, sys
+d = sys.argv[1]
+def tr(name, tokens):
+    rows = [{"type": "user", "message": {"role": "user", "content": "hi"}},
+            {"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": "ok"}],
+             "usage": {"input_tokens": 10, "cache_read_input_tokens": tokens, "cache_creation_input_tokens": 5, "output_tokens": 3}}}]
+    open("%s/%s.jsonl" % (d, name), "w").write("".join(json.dumps(r) + "\n" for r in rows))
+tr("t30k", 29985); tr("t60k", 59985); tr("t120k", 119985); tr("t20k", 19985)
+PY
+  ra() { python3 -c 'import json,sys; print(json.dumps({"session_id":sys.argv[1],"transcript_path":sys.argv[2],"cwd":sys.argv[3],"hook_event_name":"PostToolUse","tool_name":"Bash"}))' "$1" "$D/$2.jsonl" "$W" | python3 "$HK"; }
+  [ "$(grep -c '^HOOK_VERSION = "1.18.0"$' "$HK")" = 1 ] || fail "F70: HOOK_VERSION"
+  # below the interval: nothing, no state file
+  [ -z "$(ra s1 t30k)" ] && [ ! -e "$HANDOFF_STATE_DIR/reanchor-s1.json" ] || fail "F70: output below 50,000"
+  # at 60,000: exactly one JSON object, exact shape and first line, the rules block, the recall line is not required to exist here
+  o="$(ra s1 t60k)"
+  python3 - "$o" <<'PY'
+import json, sys
+d = json.loads(sys.argv[1])
+assert list(d) == ["hookSpecificOutput"] and d["hookSpecificOutput"]["hookEventName"] == "PostToolUse", d
+t = d["hookSpecificOutput"]["additionalContext"]
+assert t.split("\n")[0] == "Lossless Handoff re-anchor: the project's active rules, repeated so they stay near the end of your context.", t
+assert "Never push to main" in t and "Always run the linter" in t, t
+assert len(t) <= 4200, len(t)
+PY
+  # same count again: nothing (the anchor moved)
+  [ -z "$(ra s1 t60k)" ] || fail "F70: second output at the same count"
+  [ "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["anchor"])' "$HANDOFF_STATE_DIR/reanchor-s1.json")" = 60000 ] || fail "F70: anchor not stored"
+  # 120,000 is 60,000 above the anchor: output again
+  [ -n "$(ra s1 t120k)" ] || fail "F70: no output 60,000 above the anchor"
+  # compaction: a count below the anchor resets the anchor and prints nothing; then 20,000 is not enough, nothing
+  [ -z "$(ra s1 t20k)" ] || fail "F70: output on a compaction"
+  [ "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["anchor"])' "$HANDOFF_STATE_DIR/reanchor-s1.json")" = 20000 ] || fail "F70: anchor not reset"
+  # the interval env: 10,000 gives output at 30,000 from anchor 20,000? (10,000 above) and 600,000 is not valid (falls back to 50,000)
+  [ -n "$(HANDOFF_REANCHOR_TOKENS=10000 ra s2 t30k)" ] || fail "F70: HANDOFF_REANCHOR_TOKENS=10000"
+  [ -z "$(HANDOFF_REANCHOR_TOKENS=600000 ra s3 t30k)" ] && [ -z "$(HANDOFF_REANCHOR_TOKENS=abc ra s3 t30k)" ] || fail "F70: an invalid interval was used"
+  [ -n "$(HANDOFF_REANCHOR_TOKENS=600000 ra s4 t60k)" ] || fail "F70: an invalid interval did not fall back to 50,000"
+  # off switch
+  [ -z "$(HANDOFF_REANCHOR=0 ra s5 t60k)" ] && [ ! -e "$HANDOFF_STATE_DIR/reanchor-s5.json" ] || fail "F70: HANDOFF_REANCHOR=0"
+  # no active rules: no output
+  mkdir -p "$D/empty"
+  [ -z "$(python3 -c 'import json,sys; print(json.dumps({"session_id":"s6","transcript_path":sys.argv[1],"cwd":sys.argv[2]}))' "$D/t60k.jsonl" "$D/empty" | python3 "$HK")" ] || fail "F70: output with no rules"
+  # a subagent event is ignored
+  [ -z "$(python3 -c 'import json,sys; print(json.dumps({"session_id":"s7","agent_id":"a1","transcript_path":sys.argv[1],"cwd":sys.argv[2]}))' "$D/t60k.jsonl" "$W" | python3 "$HK")" ] || fail "F70: a subagent event printed"
+  # errors: bad stdin, missing transcript, no usage line: exit 0 and no output
+  r=0; o="$(echo "not json" | python3 "$HK")" || r=$?; [ "$r" = 0 ] && [ -z "$o" ] || fail "F70: bad stdin"
+  r=0; o="$(python3 -c 'import json; print(json.dumps({"session_id":"s8","transcript_path":"/no/such","cwd":"/"}))' | python3 "$HK")" || r=$?; [ "$r" = 0 ] && [ -z "$o" ] || fail "F70: missing transcript"
+  # health: one row per injection, exact fields
+  python3 - "$HANDOFF_STATE_DIR/health.jsonl" <<'PY'
+import json, sys
+rows = [json.loads(l) for l in open(sys.argv[1]) if '"reanchor"' in l]
+assert len(rows) == 4, rows
+assert all(set(r) == {"ts", "session_id", "event", "tokens", "chars"} and r["event"] == "reanchor" for r in rows), rows
+assert all(isinstance(r["tokens"], int) and isinstance(r["chars"], int) and r["chars"] > 0 for r in rows), rows
+assert "Never push" not in open(sys.argv[1]).read()
+PY
+  ok "F70: interval, anchor, compaction reset, env interval, off switch, no rules, subagent, errors, health row"
+)
+# F71: claim guard (opt-in Stop hook): cues, evidence, shadow, block, once per turn, loop guard, off switch
+(
+  set -e
+  D="$T/f71"; mkdir -p "$D"; export HOME="$D/home"; mkdir -p "$HOME/.claude"
+  export HANDOFF_STATE_DIR="$D/state"; HK="$ROOT/hooks/claim-guard.py"; LOG="$HANDOFF_STATE_DIR/claim-guard.jsonl"; unset HANDOFF_CLAIM_GUARD
+  [ "$(grep -c '^HOOK_VERSION = "1.18.0"$' "$HK")" = 1 ] || fail "F71: HOOK_VERSION"
+  python3 - "$D" <<'PY'
+import json, sys
+d = sys.argv[1]
+def user(u, text): return {"type": "user", "uuid": u, "message": {"role": "user", "content": text}}
+def tool(name, inp): return {"type": "assistant", "message": {"role": "assistant", "content": [{"type": "tool_use", "id": "x", "name": name, "input": inp}]}}
+def res(): return {"type": "user", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "x", "content": "ok"}]}}
+def txt(t): return {"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": t}]}}
+def w(name, rows): open("%s/%s.jsonl" % (d, name), "w").write("".join(json.dumps(r) + "\n" for r in rows))
+w("none", [user("u1", "what port?"), tool("Read", {"file_path": "/x"}), res()])
+w("bash", [user("u1", "what port?"), tool("Bash", {"command": "python3 ~/.claude/hooks/recall.py search port"}), res()])
+w("mcp", [user("u1", "what port?"), tool("mcp__lossless-recall__search_earlier_chat", {"query": "port"}), res()])
+w("auto", [user("u1", "what port?"), {"type": "attachment", "attachment": {"type": "hook_additional_context", "content": ["Lossless Handoff auto-recall: earlier messages that match your words. Verify them before you rely on them."]}}])
+w("old", [user("u0", "earlier"), tool("Bash", {"command": "python3 recall.py search x"}), res(), user("u1", "what port?"), tool("Read", {"file_path": "/x"}), res()])
+w("othertool", [user("u1", "what port?"), tool("Bash", {"command": "ls recall"}), res()])
+PY
+  cg() { python3 -c 'import json,sys; print(json.dumps({"session_id":sys.argv[1],"transcript_path":sys.argv[2],"stop_hook_active":sys.argv[4]=="1","last_assistant_message":sys.argv[3]}))' "$1" "$D/$2.jsonl" "$3" "${4:-0}" | python3 "$HK"; }
+  # shadow (default): one row, no output
+  o="$(cg a1 none "As we decided, the port is 8080.")"
+  [ -z "$o" ] || fail "F71: shadow mode printed: $o"
+  python3 - "$LOG" <<'PY'
+import json, sys
+rows = [json.loads(l) for l in open(sys.argv[1])]
+assert len(rows) == 1 and set(rows[0]) == {"ts", "session_id", "would_block", "cue"} and rows[0]["would_block"] is True and rows[0]["cue"] == "as we decided" and rows[0]["session_id"] == "a1", rows
+PY
+  ! grep -q "8080" "$LOG" || fail "F71: reply text in the log"
+  # every cue fires (case-insensitive); a part of a word does not
+  n0="$(wc -l < "$LOG")"
+  for c in "as we decided" "we decided" "as you said" "you said" "we agreed" "as agreed" "as discussed" "you told me" "you mentioned" "as mentioned earlier" "earlier you" "last time"; do
+    cg a2 none "Right. $(echo "$c" | tr a-z A-Z) it was fine." >/dev/null
+  done
+  [ "$(( $(wc -l < "$LOG") - n0 ))" = 12 ] || fail "F71: not every cue fired"
+  n0="$(wc -l < "$LOG")"
+  cg a3 none "The forecast is fine. Nothing was decided. We decidedly agree." >/dev/null
+  cg a3 none "No cue in this reply at all." >/dev/null
+  [ "$(wc -l < "$LOG")" = "$n0" ] || fail "F71: a non-cue reply was logged"
+  # evidence: bash recall.py, mcp tool, auto-recall injection: no row; evidence from an older turn does not count; a Bash call without recall.py does not count
+  for t in bash mcp auto; do cg a4 "$t" "As you said, the port is 8080." >/dev/null; done
+  [ "$(wc -l < "$LOG")" = "$n0" ] || fail "F71: evidence did not stop the row"
+  cg a5 old "As you said, the port is 8080." >/dev/null; cg a5 othertool "As you said, it is 8080." >/dev/null
+  [ "$(( $(wc -l < "$LOG") ))" = "$((n0 + 2))" ] || fail "F71: old or unrelated evidence counted"
+  # stop_hook_active: nothing
+  n0="$(wc -l < "$LOG")"; o="$(HANDOFF_CLAIM_GUARD=block cg a6 none "As you said." 1)"
+  [ -z "$o" ] && [ "$(wc -l < "$LOG")" = "$n0" ] || fail "F71: stop_hook_active was not honoured"
+  # block mode: the documented Stop output, once per user turn
+  o="$(HANDOFF_CLAIM_GUARD=block cg a7 none "As you said, it is 8080.")"
+  [ "$o" = '{"decision": "block", "reason": "You stated an earlier fact without searching. Search for it with recall, then correct or confirm it."}' ] || fail "F71: block output: $o"
+  o="$(HANDOFF_CLAIM_GUARD=block cg a7 none "As you said, it is 8080.")"; [ -z "$o" ] || fail "F71: second block in one turn"
+  o="$(HANDOFF_CLAIM_GUARD=block cg a8 none "As you said, it is 8080.")"; [ -n "$o" ] || fail "F71: a different session did not block"
+  o="$(HANDOFF_CLAIM_GUARD=block cg a7 bash "As you said, it is 8080.")"; [ -z "$o" ] || fail "F71: block with evidence"
+  # off switch: nothing and no row
+  n0="$(wc -l < "$LOG")"; o="$(HANDOFF_CLAIM_GUARD=0 cg a9 none "As you said.")"
+  [ -z "$o" ] && [ "$(wc -l < "$LOG")" = "$n0" ] || fail "F71: HANDOFF_CLAIM_GUARD=0"
+  # errors: exit 0, no output
+  r=0; o="$(echo "not json" | python3 "$HK")" || r=$?; [ "$r" = 0 ] && [ -z "$o" ] || fail "F71: bad stdin"
+  r=0; o="$(python3 -c 'import json; print(json.dumps({"session_id":"b","transcript_path":"/no/such","last_assistant_message":"As you said."}))' | HANDOFF_CLAIM_GUARD=block python3 "$HK")" || r=$?
+  [ "$r" = 0 ] && [ -z "$o" ] || fail "F71: missing transcript"
+  ok "F71: cues, evidence, shadow, block form, once per turn, stop_hook_active, off switch, errors"
+)
+# F70/F71: install, default off, dry-run, hook entries, kept message, uninstall, saved defaults
+(
+  set -e
+  export HOME="$T/f7071inst"; mkdir -p "$HOME/.claude"; F="$HOME/.claude/hooks"; FS="$HOME/.claude/settings.json"; DF="$HOME/.config/lossless-handoff/install-defaults"
+  echo '{"model": "opus"}' > "$FS"
+  for fl in reanchor claim-guard; do grep -q -- "--$fl" <<<"$("$ROOT/install.sh" --help)" || fail "F70/F71: --help lacks --$fl"; done
+  "$ROOT/install.sh" >/dev/null
+  [ ! -e "$F/reanchor.py" ] && [ ! -e "$F/claim-guard.py" ] && ! grep -Eq "reanchor|claim-guard" "$FS" "$F/.handoff-manifest.json" || fail "F70/F71: default install holds them"
+  ! grep -Eq "reanchor|claim-guard" <<<"$("$ROOT/install.sh" --dry-run)" || fail "F70/F71: default dry-run mentions them"
+  cp "$FS" "$T/f7071-before.json"
+  o="$("$ROOT/install.sh" --reanchor --claim-guard --dry-run)"
+  grep -q "install hook: .*/reanchor.py" <<<"$o" && grep -q "install hook: .*/claim-guard.py" <<<"$o" && grep -q "add PostToolUse reanchor hook" <<<"$o" && grep -q "add Stop claim-guard hook" <<<"$o" || fail "F70/F71: dry-run: $o"
+  [ ! -e "$F/reanchor.py" ] && cmp -s "$FS" "$T/f7071-before.json" || fail "F70/F71: dry-run changed something"
+  "$ROOT/install.sh" --reanchor --claim-guard >/dev/null
+  [ -x "$F/reanchor.py" ] && [ -x "$F/claim-guard.py" ] && grep -q '"reanchor.py"' "$F/.handoff-manifest.json" && grep -q '"claim-guard.py"' "$F/.handoff-manifest.json" || fail "F70/F71: file or manifest"
+  python3 - "$FS" "$F" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1])); f = sys.argv[2]
+ra = "python3 %s/reanchor.py" % f; cg = "python3 %s/claim-guard.py" % f
+g = [x for x in d["hooks"]["PostToolUse"] if any(h["command"] == ra for h in x["hooks"])]
+assert len(g) == 1 and g[0]["matcher"] == "*" and [h for h in g[0]["hooks"] if h["command"] == ra] == [{"type": "command", "command": ra, "timeout": 5}], g
+s = [x for x in d["hooks"]["Stop"] if any(h["command"] == cg for h in x["hooks"])]
+assert len(s) == 1 and [h for h in s[0]["hooks"] if h["command"] == cg] == [{"type": "command", "command": cg, "timeout": 5}], s
+assert d["model"] == "opus"
+PY
+  o="$("$ROOT/install.sh")"
+  grep -qx "reanchor: already installed, kept" <<<"$o" && grep -qx "claim-guard: already installed, kept" <<<"$o" || fail "F70/F71: kept message: $o"
+  o="$("$ROOT/install.sh" --no-reanchor --no-claim-guard)"
+  grep -qx "reanchor: already installed, kept" <<<"$o" && [ -x "$F/reanchor.py" ] && grep -q "reanchor.py" "$FS" || fail "F70/F71: --no-* removed it"
+  "$ROOT/install.sh" --reanchor --claim-guard >/dev/null
+  [ "$(grep -c "reanchor.py" "$FS")" = 1 ] && [ "$(grep -c "claim-guard.py" "$FS")" = 1 ] || fail "F70/F71: registered twice"
+  o="$("$ROOT/uninstall.sh" --dry-run)"; grep -q "reanchor.py" <<<"$o" && grep -q "claim-guard.py" <<<"$o" || fail "F70/F71: uninstall dry-run"
+  [ -e "$F/reanchor.py" ] || fail "F70/F71: uninstall dry-run removed a file"
+  "$ROOT/uninstall.sh" >/dev/null
+  [ ! -e "$F/reanchor.py" ] && [ ! -e "$F/claim-guard.py" ] && ! grep -Eq "reanchor|claim-guard" "$FS" || fail "F70/F71: uninstall left something"
+  python3 -c "import json,sys; d=json.load(open(sys.argv[1])); assert d == {'model': 'opus'}, d" "$FS" || fail "F70/F71: settings not restored"
+  # saved defaults
+  "$ROOT/install.sh" --save-defaults --reanchor --claim-guard >/dev/null
+  grep -qx "reanchor=1" "$DF" && grep -qx "claim_guard=1" "$DF" && [ -x "$F/reanchor.py" ] && [ -x "$F/claim-guard.py" ] || fail "F70/F71: --save-defaults"
+  "$ROOT/uninstall.sh" >/dev/null
+  o="$("$ROOT/install.sh" --dry-run)"; grep -q "saved defaults.*reanchor" <<<"$o" && grep -q "claim-guard.py" <<<"$o" || fail "F70/F71: saved default not applied: $o"
+  "$ROOT/install.sh" --no-reanchor --no-claim-guard >/dev/null
+  [ ! -e "$F/reanchor.py" ] && [ ! -e "$F/claim-guard.py" ] && grep -qx "reanchor=1" "$DF" || fail "F70/F71: --no-* did not skip, or touched the default"
+  "$ROOT/install.sh" --save-defaults --no-reanchor --no-claim-guard >/dev/null
+  ! grep -Eq "reanchor|claim_guard" "$DF" || fail "F70/F71: --save-defaults --no-* kept the lines"
+  ok "F70/F71: install, default off, dry-run, entries, kept message, uninstall, saved defaults"
+)
 
 "$ROOT/uninstall.sh" >"$T/un.out"
 python3 - "$S" "$T/original.json" <<'PY'

@@ -563,6 +563,21 @@ def subagent_start_mode():
         print(json.dumps({"hookSpecificOutput": {"hookEventName": "SubagentStart", "additionalContext": ctx}}))
 
 
+def rules_block_mode():
+    """F70: print the project's standing rules block (the same text as the SubagentStart output) for reanchor.py.
+    Prints nothing when the project has no active rule. Writes no health row. Never exits non-zero."""
+    try:
+        d = json.load(sys.stdin)
+    except Exception:
+        return
+    cwd = d.get("cwd") if isinstance(d, dict) else None
+    if not isinstance(cwd, str) or not cwd.strip():
+        return
+    ctx, nrules = subagent_context(ledger_path_for(cwd))
+    if ctx and nrules > 0:
+        sys.stdout.write(ctx)
+
+
 RECOVER_CODES = ("handoff_missing", "no_health", "handoff_old")
 RECOVERED_FIRST = ("HANDOFF RECOVERED: the pre-compaction hook did not run for this compaction; this handoff was "
                    "rebuilt from the transcript without a model summary. Use recall for detail.\n")
@@ -924,6 +939,14 @@ if "--check" in sys.argv[1:]:
 if "--subagent-start" in sys.argv[1:]:
     try:
         subagent_start_mode()
+    except BaseException as _e:
+        if not isinstance(_e, (SystemExit, KeyboardInterrupt)):
+            log_error(_e)
+    sys.exit(0)
+
+if "--rules-block" in sys.argv[1:]:
+    try:
+        rules_block_mode()
     except BaseException as _e:
         if not isinstance(_e, (SystemExit, KeyboardInterrupt)):
             log_error(_e)
