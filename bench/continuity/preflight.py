@@ -8,7 +8,7 @@ import json, os, re, subprocess, sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
-import cost, gates, runner  # noqa: E402
+import cost, design4, gates, runner  # noqa: E402
 
 COST_CAP_USD = 5.0
 COST_RATIO_MAX = 1.3
@@ -200,6 +200,33 @@ def check(rd, projects=None, mcp=True):
     low = {t: "%d/%d" % tuple(c) for t, c in sorted(by_t.items()) if c[0] < NL_ORACLE_MIN * c[1]}
     add("nonliteral oracle (arm O) accuracy at least %d%% per type" % int(NL_ORACLE_MIN * 100), bool(by_t) and not low,
         "per type: %s%s" % ({t: "%d/%d" % tuple(c) for t, c in sorted(by_t.items())}, "; below the limit: %s" % low if low else ""))
+    # 8c. design 4 (update chains): the scripts are sound, a full-information solver reaches 100%, the naive solver stays low, and the controls work
+    if R.cfg.get("probe_design", 1) >= 4:
+        probs, full_bad, naive_bad = [], [], []
+        for sd in R.cfg["seeds"]:
+            sc = design4.build_litm4(sd)
+            probs += design4.check_script(sc)
+            full = design4.solve_full(sc)
+            full_bad += [it["key"] for lv in sc["items"].values() for it in lv
+                         if (full[it["key"]]["current"], full[it["key"]]["previous"], full[it["key"]]["replaced"]) != (it["current"], it["previous"], it["replaced"])]
+            naive_bad += ["seed %s %s %.0f%%" % (sd, lv, 100 * design4.last_mention_rate(sc, lv)) for lv in ("L3", "L4") if design4.last_mention_rate(sc, lv) > design4.SOLVER_MAX]
+        add("design 4: scripts are sound (zero word and stem overlap, unique descriptions and keys)", not probs, "problems: %s" % (probs[:3] or "none"))
+        add("design 4 solver gate: a full-information solver reaches 100%% on M3, and 'last mention wins' scores at most %d%% on M1 at L3 and L4" % int(100 * design4.SOLVER_MAX),
+            not full_bad and not naive_bad, "full solver misses: %s; naive solver above the limit: %s" % (full_bad[:3] or "none", naive_bad or "none"))
+        o_low = {}
+        for lv in design4.D4_LEVELS:
+            for ph in design4.PHRASINGS:
+                v_, n_ = design4.cell([r for r in R.rows], "O", lv, "m1", ph)
+                if n_ and v_ < NL_ORACLE_MIN:
+                    o_low["%s %s" % (lv, ph)] = "%.0f%%" % (100 * v_)
+        add("design 4: oracle (arm O) M1 at least %d%% for each level and phrasing (Haiku, plumbing level; the gate of the real runs is 95%%)" % int(NL_ORACLE_MIN * 100),
+            any(r["arm"] == "O" for r in R.rows) and not o_low, "below the limit: %s" % (o_low or "none"))
+        z_hi = {}
+        for lv in design4.D4_LEVELS:
+            v_, n_ = design4.cell(R.rows, "Z", lv, "m1")
+            if n_ and v_ > design4.Z_MAX:
+                z_hi[lv] = "%.0f%%" % (100 * v_)
+        add("design 4: amnesia (arm Z) M1 at most %d%%" % int(100 * design4.Z_MAX), not z_hi, "above the limit: %s" % (z_hi or "none"))
     # 9. row counts: no probe class is missing (for example non-literal)
     miss_f = gates.missing_forks(runner.expected_forks(R.cfg), R.rows, R.cfg["seeds"])
     add("row count: every expected probe fork (arm x phrasing x condition x type) has rows", not miss_f, "none missing" if not miss_f else gates.describe_missing(miss_f))

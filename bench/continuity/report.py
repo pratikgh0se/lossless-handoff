@@ -480,11 +480,19 @@ def build(run_id, draws=None):
         head.append("Items dropped for a wrong compaction count: %d.\n" % ag.dropped)
     out["controls"] = controls
     import litm
-    lmd, lout = litm.section(rows_all, sess_all, th, draws)
+    import litm4
+    d4 = cfg.get("probe_design", 1) >= 4
+    lmd, lout = litm.section([r for r in rows_all if not (d4 and litm4.is_d4(r))] if d4 else rows_all, sess_all, th, draws)
     if lmd:
         md.append("")
         md += lmd
         out["litm"] = lout
+    if d4:
+        d4md, d4out = litm4.section4(rows_all, sess_all, th, draws)
+        if d4md:
+            md.append("")
+            md += d4md
+            out["design4"] = d4out
     text = "\n".join(head + md) + "\n"
     return out, text
 
