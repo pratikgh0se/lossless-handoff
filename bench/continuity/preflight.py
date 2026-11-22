@@ -188,12 +188,16 @@ def check(rd, projects=None, mcp=True):
         if n_out is None and isinstance(r.get("tokens"), dict):
             n_out = r["tokens"].get("out")
         if isinstance(n_out, (int, float)):
-            forks[r.get("fork_sid") or id(r)] = n_out
-    outs = sorted(forks.values())
+            forks[r.get("fork_sid") or id(r)] = (n_out, r.get("type"))
+    info_forks = {k: v[0] for k, v in forks.items() if v[1] in D4_INFO_LEVELS}          # L3 and L4: Haiku capability, INFO only
+    outs = sorted(v[0] for k, v in forks.items() if k not in info_forks)
     out_lim = int(OUT_LIMIT_FACTOR * runner.PROBE_MAX_OUTPUT_TOKENS)
     over = sorted(v for v in outs if v > out_lim)
+    over_info = sorted(v for v in info_forks.values() if v > out_lim)
     add("probe fork output at most %d tokens (%s x the cap %s of probe forks; a fork above the cap is counted as runaway)" % (out_lim, OUT_LIMIT_FACTOR, runner.PROBE_MAX_OUTPUT_ENV), None if not outs else not over,
         "no output token data" if not outs else "%d fork(s), above the limit: %s" % (len(outs), over[:5] or "none"))
+    if info_forks:
+        add("probe fork output above %d tokens at L3 and L4 (INFO: %s)" % (out_lim, D4_INFO_NOTE), None, "%d fork(s) at L3 or L4, above the limit: %s" % (len(info_forks), over_info[:8] or "none"))
     # runaway forks: a probe that hit the output cap is an outcome (class runaway), at most 5% of the forks of each arm
     rw_arm = {}
     g_rows_ = [r for r in R.rows if r.get("type") not in D4_INFO_LEVELS]        # L3 and L4 are INFO in the Haiku preflight
@@ -220,6 +224,8 @@ def check(rd, projects=None, mcp=True):
     add("refused forks per level (counts)", None, ", ".join("%s %d/%d" % ((lv,) + gates.refused_rate(v)) for lv, v in sorted(lv_rf.items())) or "no design-4 rows")
     # F79: a G fork shows the history guard (a Stop continuation or a tool-call check); the graded answer is the final reply of `claude -p`, which is the second reply
     g_rows = [r for r in R.rows if r.get("arm") == "G"]
+    if not g_rows and "G" not in R.cfg["arms"]:
+        add("Stop continuation (arm G)", None, "not run: no G arm in this preset")
     if g_rows:
         forks = {gates.fork_id(r) for r in g_rows}
         fired = {gates.fork_id(r) for r in g_rows if r.get("guard_fired")}
@@ -247,13 +253,21 @@ def check(rd, projects=None, mcp=True):
         "%d probe row(s); not graded: %d; unreadable (no entry): %d, of them arm Z %d; rate outside Z %.2f%% (limit %.0f%%); format deviations: %d; classes %s" % (
             len(R.rows), len(not_graded), len(unread), len(unread) - len(unread_s), 100 * rate, 100 * gates.PARSE_ERROR_RATE_MAX, len(dev), kinds))
     # 8b. the non-literal probes must be answerable: the short oracle (arm O, no compaction) gets at least 80% on every type
-    o_nl = [r for r in R.rows if r["arm"] == "O" and r.get("phrasing") == "nonliteral" and cond_row(r) == "nocompact"]
+    o_nl = [r for r in R.rows if r["arm"] == "O" and r.get("phrasing") == "nonliteral" and cond_row(r) == "nocompact" and r.get("type") not in D4_INFO_LEVELS]
+    o_nl_info = {}
+    for r in R.rows:
+        if r["arm"] == "O" and r.get("phrasing") == "nonliteral" and cond_row(r) == "nocompact" and r.get("type") in D4_INFO_LEVELS:
+            c_ = o_nl_info.setdefault(r["type"], [0, 0])
+            c_[0] += 1 if r.get("correct") is True else 0
+            c_[1] += 1
     by_t = {}
     for r in o_nl:
         c = by_t.setdefault(r["type"], [0, 0])
         c[0] += 1 if r.get("correct") is True else 0
         c[1] += 1
     low = {t: "%d/%d" % tuple(c) for t, c in sorted(by_t.items()) if c[0] < NL_ORACLE_MIN * c[1]}
+    if o_nl_info:
+        add("nonliteral oracle (arm O) accuracy at L3 and L4 (INFO: %s)" % D4_INFO_NOTE, None, ", ".join("%s %d/%d" % ((t,) + tuple(c)) for t, c in sorted(o_nl_info.items())))
     add("nonliteral oracle (arm O) accuracy at least %d%% per type" % int(NL_ORACLE_MIN * 100), bool(by_t) and not low,
         "per type: %s%s" % ({t: "%d/%d" % tuple(c) for t, c in sorted(by_t.items())}, "; below the limit: %s" % low if low else ""))
     # 8c. design 4 (update chains): the scripts are sound, a full-information solver reaches 100%, the naive solver stays low, and the controls work

@@ -516,6 +516,30 @@ class ReportAndPreflight(unittest.TestCase):
         self.assertEqual([x[1] for x in res if "amnesia (arm Z)" in x[0]], ["FAIL"])
 
 
+class PreflightHaikuScope(ReportAndPreflight):
+    """The Haiku preflight gates L1 and L2 only; L3 and L4 are INFO. Stop continuation is INFO when there is no G arm."""
+
+    def test_nonliteral_oracle_low_at_l3_is_info_not_fail(self):
+        res = self.run_check(d4_o_low=True)
+        gate = [x for x in res if x[0].startswith("nonliteral oracle (arm O) accuracy at least")]
+        self.assertEqual([x[1] for x in gate], ["PASS"])
+        self.assertNotIn("L3", gate[0][2])
+        info = [x for x in res if x[0].startswith("nonliteral oracle (arm O) accuracy at L3 and L4")]
+        self.assertEqual([x[1] for x in info], ["INFO"])
+        self.assertIn("L3", info[0][2])
+
+    def test_stop_continuation_is_info_when_the_preset_has_no_g_arm(self):
+        res = self.run_check()
+        line = [x for x in res if x[0].startswith("Stop continuation")]
+        self.assertEqual([x[1] for x in line], ["INFO"])
+        self.assertIn("not run: no G arm in this preset", line[0][2])
+
+    def test_output_limit_line_counts_l1_l2_forks_only(self):
+        res = self.run_check()
+        names = [x[0] for x in res]
+        self.assertTrue(any(n.startswith("probe fork output at most 10000 tokens") for n in names))
+
+
 class AuditFixes(unittest.TestCase):
     """Fixes of the audit of PR #35 (findings 1 to 9). Offline, from the script generator and the code only."""
     SEEDS = range(1000, 1200)
