@@ -288,6 +288,7 @@ def oracle_replies(it, items_of_level, script):
 
 
 def reply_text(it, value, with_key):
+    value = design4.val_text(it["attr"], value)       # the written form of the value (a tag value is written with its TAG- prefix in the history)
     return ("Done. I set the %s of `%s` to `%s`." % (it["attr"], it["key"], value)) if with_key else ("Done. I used `%s`." % value)
 
 
