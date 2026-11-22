@@ -104,6 +104,9 @@ If building the body raises an unexpected exception, the file is instead:
 ```
 and is still written to both paths. (Hard to provoke from outside; not covered by an AC.)
 
+### 3.3a File mode
+All files the hooks write under the state folder (handoffs, health log, decisions list, state, backups, recall index) have mode 0600, and new folders have mode 0700. The hooks set `umask 077`. `install.sh` sets existing files to 0600.
+
 ### 3.4 Cleanup
 After writing, every `*.md` directly in the handoffs dir whose mtime is older than 14 days is deleted (this includes `*-agent.md` and `*-latest.md` of old sessions). Non-`.md` files (e.g. `*-agent.meta.json`, `*.txt`) and subdirectories are never deleted. The files just written are never deleted.
 

@@ -870,6 +870,11 @@ fi
 # 2. state dir
 if [ -d "$STATE_DIR" ]; then say "state dir exists: $STATE_DIR"; else
   say "create state dir: $STATE_DIR"; [ "$DRY" = 1 ] || mkdir -p "$STATE_DIR"; fi
+# Older versions wrote these files with mode 644. Make the existing ones private (mode 0600). Content stays the same.
+if [ -d "$STATE_DIR" ]; then
+  say "set existing state files to mode 0600 (not managed-settings.json)"
+  [ "$DRY" = 1 ] || find "$STATE_DIR" -type f ! -name managed-settings.json -exec chmod 600 {} + 2>/dev/null || true
+fi
 
 # 3. semantic search model (opt-in: --semantic)
 if [ "$SEMANTIC" = 1 ]; then

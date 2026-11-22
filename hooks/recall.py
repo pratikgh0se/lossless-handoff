@@ -1983,6 +1983,7 @@ def emit(lines, cap=OUT_CAP):
 
 
 def main(argv):
+    os.umask(0o077)  # state files hold redacted chat content: new files get mode 0600
     try:
         a = build_parser().parse_args(argv)
         if a.cmd == "search":

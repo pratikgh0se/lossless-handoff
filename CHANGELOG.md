@@ -6,6 +6,7 @@ Lossless Handoff, formerly claude-handoff.
 
 ### Fixed
 
+- State files now have mode 0600 (folders 0700). Before, the handoff files and the decisions list were mode 644, so other local users could read them. The three hooks set `umask 077`, and `write_atomic` makes its temp file 0600. `install.sh` sets existing files in the state folder to 0600. Content, paths and hook behaviour are the same.
 - The decisions list merge keeps one cursor for each session (`cursors` in `decisions.state.json`). Before, one cursor served the whole project. If chat X compacted first, chat Y lost its earlier decisions. An old state file works: its project cursor applies only to the session in `lastSid`. `lastEntryTs` and `lastSid` are still written. At most 200 cursors are kept.
 
 ## [0.18.0] - 2026-11-22
