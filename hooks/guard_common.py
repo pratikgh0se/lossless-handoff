@@ -243,16 +243,75 @@ def read_session(path, deadline, prompt=None, include_turn=False):
     return msgs, turn  # else the messages of the turn in progress are not counted
 
 
+_TOK_CHAR = re.compile(r"[A-Za-z0-9_./-]")
+
+
+def token_match(low, key):
+    """The F73 match: `key` as a whole token in `low`, both lower case (so case-insensitive). The characters next to it are not token
+    characters [A-Za-z0-9_./-]; a final dot that ends a sentence is allowed. The same rule as recall.boundary_ok."""
+    n, start = len(key), 0  # `low` and `key` are lower case
+    while True:
+        i = low.find(key, start)
+        if i < 0:
+            return False
+        e = i + n
+        ok = not (i > 0 and _TOK_CHAR.match(low[i - 1]))
+        if ok and e < len(low):
+            c = low[e]
+            if c == ".":
+                j = e
+                while j < len(low) and low[j] == ".":
+                    j += 1
+                ok = j >= len(low) or not _TOK_CHAR.match(low[j])
+            elif _TOK_CHAR.match(c):
+                ok = False
+        if ok:
+            return True
+        start = i + 1
+
+
+class Index:
+    """Mentions of a key in the text messages, counted with the F73 token match (not with the identifier rule, so a key
+    written as a plain word counts). Computed for a key when it is asked for. get(k) -> [(message number, role)]."""
+
+    def __init__(self, msgs):
+        self.msgs, self.cache = msgs, {}
+        self.low = [(role, text.lower()) for role, text in msgs]
+
+    def get(self, k, default=None):
+        k = k.lower()
+        if k not in self.cache:
+            self.cache[k] = [(n, role) for n, (role, low) in enumerate(self.low) if token_match(low, k)]
+        return self.cache[k] or (default if default is not None else [])
+
+    def __getitem__(self, k):
+        return self.get(k)
+
+    def mates(self, k):
+        """The identifiers in the sentences that hold a mention of k."""
+        out = set()
+        k = k.lower()
+        for (_role, text), (_r, low) in zip(self.msgs, self.low):
+            if not token_match(low, k):
+                continue
+            for s in SENT.split(text):
+                if token_match(s.lower(), k):
+                    out.update(t.lower() for t in identifiers(s))
+        out.discard(k.lower())
+        return out
+
+
+class _Mates:
+    def __init__(self, idx):
+        self.idx = idx
+
+    def get(self, k, default=()):
+        return self.idx.mates(k)
+
+
 def build_index(msgs):
-    idx, sent = {}, {}
-    for n, (role, text) in enumerate(msgs):
-        for s in SENT.split(text):
-            ids = {t.lower() for t in identifiers(s)}
-            for t in ids:
-                if not idx.get(t) or idx[t][-1][0] != n:
-                    idx.setdefault(t, []).append((n, role))
-                sent.setdefault(t, set()).update(ids - {t})
-    return idx, sent
+    idx = Index(msgs)
+    return idx, _Mates(idx)
 
 
 def is_subject(idx, t):

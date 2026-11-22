@@ -2902,6 +2902,40 @@ for t in corpus:
 PY
   ok "review fixes 2: backticked identifiers, tool result shapes, one identifier rule"
 
+  # Amendment A: the anchor is an identifier; its mentions are counted with the F73 token match (plain words count)
+  python3 - "$HOME" "$W" "$D" <<'PY'
+import json, os, re, sys
+home, w, d = sys.argv[1:4]
+real = os.path.realpath(w)
+pd = os.path.join(home, ".claude", "projects", re.sub(r"[^A-Za-z0-9]", "-", real))
+def rec(t, ts, content, u=None):
+    r = {"type": t, "timestamp": ts, "cwd": real, "sessionId": "ssss0004", "parentUuid": None, "isSidechain": False, "userType": "external",
+         "message": {"role": t, "content": content}}
+    if u: r["uuid"] = u
+    return r
+rows = []
+for name in ("Quark", "Vexel"):
+    rows += [rec("user", "2026-03-01T10:00:00.000Z", "%s step 0 is the value 0" % name, "%s-0" % name),
+             rec("assistant", "2026-03-01T10:01:00.000Z", [{"type": "text", "text": "%s step 1 is the value 10" % name}], "%s-1" % name),
+             rec("user", "2026-03-01T10:02:00.000Z", "%s step 2 is the value 20" % name, "%s-2" % name)]
+rows += [dict(rec("assistant", "2026-03-01T13:00:00Z", [{"type": "text", "text": "working"}]), message={"role": "assistant", "content": [{"type": "text", "text": "working"}], "usage": {"input_tokens": 150000, "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0, "output_tokens": 0}}),
+         rec("user", "2026-03-02T12:00:00.000Z", "please go on with the task", "cur-p")]
+open(os.path.join(pd, "plain.jsonl"), "w").write("".join(json.dumps(r) + "\n" for r in rows))
+os.symlink(os.path.join(pd, "plain.jsonl"), os.path.join(d, "plain.jsonl"))
+PY
+  for k in Quark Vexel; do
+    o="$(HANDOFF_HISTORY_GUARD=block hg f1$k plain "The \`$k\` is 10.")"
+    python3 - "$o" "$k" <<'PY'
+import json, sys
+t = json.loads(sys.argv[1])["hookSpecificOutput"]["additionalContext"]; k = sys.argv[2]
+assert "history of %s: 3 mention(s)" % k in t, t
+PY
+  done
+  o="$(HANDOFF_HISTORY_GUARD=block hg f2 plain "The \`VEXEL\` is 10.")"; grep -q "history of VEXEL: 3 mention(s)" <<<"$o" || fail "F77: case-insensitive count: $(cut -c1-300 <<<"$o")"
+  o="$(HANDOFF_HISTORY_GUARD=block hg f3 plain "Quark is 10.")"; [ -z "$o" ] || fail "F77: a bare capital word fired"
+  o="$(HANDOFF_ACTION_GUARD=inject ag f4 plain '[{"tool_name":"Bash","tool_input":{"command":"echo `Quark` 10"}}]')"; grep -q "history of Quark:" <<<"$o" || fail "F80: plain-word mentions not counted"
+  ok "Amendment A: anchor is an identifier, mentions counted by the F73 token match (F77, F80)"
+
   # F78: size trigger in auto-recall
   mkdir -p "$HOME/.claude/hooks"
   ar() { python3 -c 'import json,sys; print(json.dumps({"session_id":"z1","transcript_path":sys.argv[1],"cwd":sys.argv[3],"prompt":sys.argv[2]}))' "$D/${3:-main}.jsonl" "$1" "${2:-$W}" | python3 "$AR"; }
