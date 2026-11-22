@@ -12,7 +12,7 @@ The log has no reply text and no prompt text. Never fails: any error means exit 
 """
 import json, os, re, sys, time
 
-HOOK_VERSION = "1.19.0"
+HOOK_VERSION = "1.20.0"
 HOME = os.path.expanduser("~")
 STATE_DIR = (os.environ.get("HANDOFF_STATE_DIR") or "").strip() or os.path.join(HOME, ".local", "state", "claude-handoffs")
 CUES = ["as we decided", "we decided", "as you said", "you said", "we agreed", "as agreed", "as discussed",
@@ -100,10 +100,11 @@ def scan(path):
 
 
 def main():
+    raw = sys.stdin.read()  # read stdin first: an early exit would break the pipe of the caller
     mode = os.environ.get("HANDOFF_CLAIM_GUARD", "").strip().lower()
     if mode == "0":
         return
-    d = json.loads(sys.stdin.read() or "{}")
+    d = json.loads(raw or "{}")
     if not isinstance(d, dict) or d.get("stop_hook_active") is True:
         return
     msg, tp = d.get("last_assistant_message"), d.get("transcript_path")
