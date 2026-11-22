@@ -77,7 +77,20 @@ HARD_MAX = 9900    # each part's total output (warning + header + content + cont
 INLINE_MAX = 9700  # content target per part
 NAMES_MAX = 150    # the section-name list in a continuation line is cut to this many chars
 MAX_PARTS = 3      # F37.6
-HOOK_VERSION = "1.17.0"
+HOOK_VERSION = "1.18.0"
+
+
+def hooks_home():
+    """F72: HANDOFF_HOOKS_HOME when it names an existing folder, else None (then ~/.claude/hooks as before)."""
+    v = (os.environ.get("HANDOFF_HOOKS_HOME") or "").strip()
+    return v if v and os.path.isdir(v) else None
+
+
+def hook_candidates(name, first, second):
+    """F72: with the override, only that folder (no fallback, no mixing of two trees); else (first, second) as before."""
+    h = hooks_home()
+    return [os.path.join(h, name)] if h else [first, second]
+
 _SID = ["unknown"]
 
 
@@ -195,9 +208,12 @@ RECALL_AGENT_SENTENCE = ("For wide lookups (many hits, long messages, or a whole
 
 
 def recall_agent_ours():
-    """F55.c: ~/.claude/agents/recall.md exists and holds our marker line."""
+    """F55.c: ~/.claude/agents/recall.md exists and holds our marker line. F72: with the override, only
+    <HANDOFF_HOOKS_HOME>/agents/recall.md."""
     try:
-        with open(os.path.join(os.path.expanduser("~"), ".claude", "agents", "recall.md"), encoding="utf-8",
+        h = hooks_home()
+        ap = os.path.join(h, "agents", "recall.md") if h else os.path.join(os.path.expanduser("~"), ".claude", "agents", "recall.md")
+        with open(ap, encoding="utf-8",
                   errors="replace") as f:
             return RECALL_AGENT_MARK in f.read()
     except OSError:
@@ -205,18 +221,49 @@ def recall_agent_ours():
 
 
 def recall_path():
-    for p in (os.path.join(os.path.expanduser("~"), ".claude", "hooks", "recall.py"),
-              os.path.join(os.path.dirname(os.path.abspath(__file__)), "recall.py")):
+    for p in hook_candidates("recall.py", os.path.join(os.path.expanduser("~"), ".claude", "hooks", "recall.py"),
+                             os.path.join(os.path.dirname(os.path.abspath(__file__)), "recall.py")):
         if os.path.isfile(p):
             return p
     return None
 
 
+RECALL_RULE_LINE = ("- recall rule: before you state an earlier number, path, name, command or decision, search for it. "
+                    "Do not answer from memory. If the search finds nothing, say so.")
+RECALL_MCP_SENTENCE = "Or call the search_earlier_chat tool."
+
+
+def _hooks_dir():
+    return hooks_home() or os.path.join(os.path.expanduser("~"), ".claude", "hooks")  # F72 override, else HOME from the environment
+
+
+def rpath(text):
+    """F72: with the override, every printed recall command names <HANDOFF_HOOKS_HOME>/recall.py."""
+    h = hooks_home()
+    return text.replace("~/.claude/hooks/recall.py", h.rstrip("/") + "/recall.py") if h else text
+
+
+
+def recall_rules_on():
+    """F68: the marker file ~/.claude/hooks/.recall-rules exists and HANDOFF_RECALL_RULES is not 0."""
+    if (os.environ.get("HANDOFF_RECALL_RULES") or "").strip() == "0":
+        return False
+    return os.path.isfile(os.path.join(_hooks_dir(), ".recall-rules"))
+
+
+def recall_mcp_ours():
+    """F69: recall-mcp.py is installed in ~/.claude/hooks."""
+    return os.path.isfile(os.path.join(_hooks_dir(), "recall-mcp.py"))
+
+
 def recall_line():
     """F44.11(a): the F44.6 line, only when recall.py exists in ~/.claude/hooks (HOME from the environment) or next to this hook.
-    F55.c: ends with one more sentence when the recall subagent file is installed."""
+    F55.c: ends with one more sentence when the recall subagent file is installed. F69: and one more when recall-mcp.py is
+    installed. F68: the strict rule line follows the recall line when the marker is there."""
     if recall_path():
-        return RECALL_LINE[:-1] + (" " + RECALL_AGENT_SENTENCE if recall_agent_ours() else "") + "\n"
+        return rpath(RECALL_LINE[:-1] + (" " + RECALL_AGENT_SENTENCE if recall_agent_ours() else "")
+                     + (" " + RECALL_MCP_SENTENCE if recall_mcp_ours() else "") + "\n"
+                     + (RECALL_RULE_LINE + "\n" if recall_rules_on() else ""))
     return ""
 
 
@@ -246,9 +293,9 @@ def sync_nodes(d):
         if not leaves:
             return ""
         n = max(leaves, key=lambda x: x.get("seq") or 0)
-        return (f"- summary node: this chat continues after node {n['id']} (compaction #{n.get('seq')}, lines "
-                f"{n['first_line']}-{n['last_line']}). See all nodes: python3 ~/.claude/hooks/recall.py map; "
-                f"one node: recall.py describe {n['id']}.\n")
+        return rpath(f"- summary node: this chat continues after node {n['id']} (compaction #{n.get('seq')}, lines "
+                     f"{n['first_line']}-{n['last_line']}). See all nodes: python3 ~/.claude/hooks/recall.py map; "
+                     f"one node: recall.py describe {n['id']}.\n")
     except BaseException as e:
         if isinstance(e, KeyboardInterrupt):
             raise
@@ -261,9 +308,12 @@ def decorate(txt):
     `- authority:` when the text has none, but only when a node line or the recall subagent file asks for it), and add the
     recall subagent sentence to an existing recall line."""
     try:
+        txt = rpath(txt) if txt else txt  # F72: a stored recall line names the override path
         node = _NODE_LINE[0]
         agent = recall_agent_ours()
-        if not txt or not (node or agent):
+        mcp = recall_mcp_ours()
+        rules = recall_rules_on()
+        if not txt or not (node or agent or mcp or rules):
             return txt
         lines = txt.split("\n")
         ri = next((i for i, x in enumerate(lines) if x.startswith("- recall:")), None)
@@ -275,10 +325,18 @@ def decorate(txt):
                 at = ai + 1 if ai is not None else min(1, len(lines))
                 lines.insert(at, recall_line().rstrip("\n"))
                 ri = at
-        elif agent and RECALL_AGENT_SENTENCE not in lines[ri]:
-            lines[ri] = lines[ri].rstrip() + " " + RECALL_AGENT_SENTENCE
+        else:
+            if agent and RECALL_AGENT_SENTENCE not in lines[ri]:
+                lines[ri] = lines[ri].rstrip() + " " + RECALL_AGENT_SENTENCE
+            if mcp and RECALL_MCP_SENTENCE not in lines[ri]:
+                lines[ri] = lines[ri].rstrip() + " " + RECALL_MCP_SENTENCE
+            if rules and RECALL_RULE_LINE not in lines:
+                lines.insert(ri + 1, RECALL_RULE_LINE)
         if node:
-            lines.insert((ri + 1) if ri is not None else min(1, len(lines)), node.rstrip("\n"))
+            at = min(1, len(lines)) if ri is None else ri + 1
+            if ri is not None and at < len(lines) and lines[at] == RECALL_RULE_LINE:
+                at += 1  # the node line goes after the rule line, which follows the recall line
+            lines.insert(at, node.rstrip("\n"))
         return "\n".join(lines)
     except Exception as e:
         log_error(e)
@@ -427,8 +485,13 @@ def ledger_mode(lpart=1):
     try:
         ents = parse_ledger_file(path)
     except FileNotFoundError:
-        return  # no ledger for this project: nothing to say
+        ents = []
     if not ents:
+        # no ledger: nothing to say, except that F68 asks for the recall line and the rule line (part 1 only)
+        if lpart == 1 and recall_rules_on():
+            rl = recall_line().rstrip("\n")
+            if rl:
+                emit(rl)
         return
     parts = plan_ledger(ents, path)
     if len(parts) >= lpart:
@@ -458,7 +521,7 @@ def ledger_path_for(cwd):
     return os.path.abspath(os.path.join(HANDOFFS_DIR, "projects", key, "decisions.md"))
 
 
-def subagent_context(path):
+def subagent_context(path, preamble=True):
     """F58.a: -> (text, number of rule lines in it). Only active `rule` entries, newest first, cut at an entry boundary."""
     try:
         rules = [e for e in parse_ledger_file(path) if e["kind"] == "rule"]
@@ -467,9 +530,9 @@ def subagent_context(path):
     rl = recall_line().rstrip("\n")
     if not rules:
         return rl, 0
-    more = (f"[more rules: python3 ~/.claude/hooks/recall.py search \"rule\" --role user, "
-            f"or the decisions list at {path}]")
-    head = SUBAGENT_PREAMBLE + "\n" + SUBAGENT_HEAD + "\n"
+    more = rpath(f"[more rules: python3 ~/.claude/hooks/recall.py search \"rule\" --role user, "
+                 f"or the decisions list at {path}]")
+    head = (SUBAGENT_PREAMBLE + "\n" if preamble else "") + SUBAGENT_HEAD + "\n"
     tail = ("\n" + rl) if rl else ""
     full = head + "\n".join(e["line"] for e in rules) + tail
     if len(full) <= SUBAGENT_MAX:
@@ -529,14 +592,29 @@ def subagent_start_mode():
         print(json.dumps({"hookSpecificOutput": {"hookEventName": "SubagentStart", "additionalContext": ctx}}))
 
 
+def rules_block_mode():
+    """F70: print the project's standing rules block (the same text as the SubagentStart output) for reanchor.py.
+    Prints nothing when the project has no active rule. Writes no health row. Never exits non-zero."""
+    try:
+        d = json.load(sys.stdin)
+    except Exception:
+        return
+    cwd = d.get("cwd") if isinstance(d, dict) else None
+    if not isinstance(cwd, str) or not cwd.strip():
+        return
+    ctx, nrules = subagent_context(ledger_path_for(cwd), preamble=False)  # F70: no SubagentStart preamble
+    if ctx and nrules > 0:
+        sys.stdout.write(ctx)
+
+
 RECOVER_CODES = ("handoff_missing", "no_health", "handoff_old")
 RECOVERED_FIRST = ("HANDOFF RECOVERED: the pre-compaction hook did not run for this compaction; this handoff was "
                    "rebuilt from the transcript without a model summary. Use recall for detail.\n")
 
 
 def precompact_script():
-    for q in (os.path.join(os.path.dirname(os.path.abspath(__file__)), "precompact-handoff.py"),
-              os.path.join(os.path.expanduser("~"), ".claude", "hooks", "precompact-handoff.py")):
+    for q in hook_candidates("precompact-handoff.py", os.path.join(os.path.dirname(os.path.abspath(__file__)), "precompact-handoff.py"),
+                             os.path.join(os.path.expanduser("~"), ".claude", "hooks", "precompact-handoff.py")):
         if os.path.isfile(q):
             return q
     return None
@@ -681,7 +759,7 @@ def write_receipt(d, key, kind, text):
             hsha = hashlib.sha256(f.read()).hexdigest()
         row = {"ts": utc_now(), "sid": psid[:8], "agent_id": aid, "key": key, "transcript": tp, "boundary_ts": bts,
                "kind": kind, "handoff_sha256": hsha, "part1_sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(),
-               "part1_head": text[:300]}
+               "part1_head": text[:300], "recall_rules": bool(recall_rules_on())}
         with open(os.path.join(HANDOFFS_DIR, "receipts.jsonl"), "a", encoding="utf-8") as f:
             f.write(json.dumps(row) + "\n")
     except BaseException as e:
@@ -745,7 +823,7 @@ def check_mode():
     """F45.d: one line `HANDOFF CHECK: ...` when the install is wrong, nothing when it is fine."""
     import hashlib
     home = os.path.expanduser("~")
-    hooks_dir = os.path.join(home, ".claude", "hooks")
+    hooks_dir = hooks_home() or os.path.join(home, ".claude", "hooks")
     problems = []
     try:
         with open(os.path.join(home, ".claude", "settings.json"), encoding="utf-8") as f:
@@ -890,6 +968,14 @@ if "--check" in sys.argv[1:]:
 if "--subagent-start" in sys.argv[1:]:
     try:
         subagent_start_mode()
+    except BaseException as _e:
+        if not isinstance(_e, (SystemExit, KeyboardInterrupt)):
+            log_error(_e)
+    sys.exit(0)
+
+if "--rules-block" in sys.argv[1:]:
+    try:
+        rules_block_mode()
     except BaseException as _e:
         if not isinstance(_e, (SystemExit, KeyboardInterrupt)):
             log_error(_e)

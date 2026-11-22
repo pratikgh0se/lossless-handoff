@@ -1086,3 +1086,84 @@ Why: Claude often answers from its own memory (possibly lost in the middle, or c
 **F67.d Health.** Each run that passes the trigger appends one JSON line to `~/.local/state/claude-handoffs/auto-recall.jsonl`: `{"ts", "session_id", "fired": true, "cue": <the matched phrase from the list, or "quote">, "hits": <n>, "ms": <int>, "timed_out": <bool>}`. The `cue` value is always a fixed list phrase or `quote`, never prompt text. No prompt text and no snippets are in this log.
 
 **F67.e Versions.** Product 0.15.0 (`install.sh`). `HOOK_VERSION` is `1.17.0` in every hook that has it, `auto-recall.py` too. This amends the version value in ACs 136, 150, 172, 180, 188 and 267 again.
+
+## F68 Strict recall rules (opt-in) (2026-11-22)
+
+Why: the model can skip a recall search when it is wrongly sure. One short rule line next to the recall line makes a search more likely. It does not force one.
+
+**F68.a Install.** Flag `--recall-rules`, saved key `recall_rules`, name `recall-rules`. Install writes the marker file `<hooks dir>/.recall-rules`. Uninstall removes it. F64 holds: `--save-defaults` writes `recall_rules=1`; `--no-recall-rules` turns a saved default off for one run; `--save-defaults --no-recall-rules` removes the line; a re-install never removes an installed marker and prints `recall-rules: already installed, kept`; `--dry-run` lists it; a default install does not write it.
+
+**F68.b Rule line.** When the marker exists and `HANDOFF_RECALL_RULES` is not `0`, every place that injects the recall line (SessionStart `compact`, `startup` and `resume` output, and the SubagentStart output) adds this exact line directly after the recall line: `- recall rule: before you state an earlier number, path, name, command or decision, search for it. Do not answer from memory. If the search finds nothing, say so.` With no marker, or with `HANDOFF_RECALL_RULES=0`, the output is byte-identical to 0.15.0 (when recall-mcp is not installed). A summary node line, if present, follows the rule line.
+
+**F68.c Health.** The inject row in `receipts.jsonl` has `"recall_rules": true|false`.
+
+## F69 Recall MCP tool (opt-in) (2026-11-22)
+
+Why: a tool in the tool list is easier for the model to use than a shell command that it must remember.
+
+**F69.a Install.** Flag `--recall-mcp`, saved key `recall_mcp`, name `recall-mcp`, same F64 rules as F68.a (the kept message is `recall-mcp: already installed, kept`). Install copies `hooks/recall-mcp.py` (it is in the manifest) and runs `claude mcp add --scope user lossless-recall -- python3 <hooks dir>/recall-mcp.py`. If `claude` is not on the PATH, install prints `recall-mcp: claude CLI not found; register it later with: claude mcp add --scope user lossless-recall -- python3 <hooks dir>/recall-mcp.py`, still installs the file and exits 0. If the add command fails (for example the server is registered already), install prints one line with the command and exits 0. `--dry-run` lists the file and the command and runs nothing. Uninstall runs `claude mcp remove lossless-recall --scope user` when `recall-mcp.py` is installed (a failure is ignored) and removes the file. No code edits `~/.claude.json` directly.
+
+**F69.b Server.** Stdlib-only MCP server over stdio: newline-delimited JSON-RPC 2.0 with `initialize`, `notifications/initialized`, `ping`, `tools/list` and `tools/call`. Server name `lossless-recall`, version `HOOK_VERSION`. The `initialize` reply echoes the `protocolVersion` of the client when it is one of `2025-11-25`, `2025-06-18`, `2025-03-26` or `2024-11-05`, and else gives `2025-06-18`. The `instructions` text (under 4,096 characters) holds the F68 rule sentence and one line on when to use the tools. A malformed JSON line gets a JSON-RPC error `-32700` and the server goes on. An unknown method gets `-32601` and an unknown tool name `-32602`. A notification gets no reply.
+
+**F69.c Tools.** Each tool has `_meta: {"anthropic/alwaysLoad": true}`. `search_earlier_chat`: `{query: string (required), role?: "user"|"assistant"|"any" (default "any"), limit?: integer 1-10 (default 5)}`. It calls the search code of `recall.py` (loaded by path) for the project of the server working directory: same scope and ranking as `recall.py search` (word, and meaning when the index exists). Output: one line for each hit in the `recall.py search` hit format, through `redact()`. No hits: `no matches`. `open_message`: `{id: string (required), full?: boolean (default false)}`. Output: the same text as `recall.py open <id>` (with `--full` when `full` is true), through `redact()`. A result has at most 12,000 characters; a longer result is cut so that the total, including the cut marker, is at most 12,000 characters, and its last line is `[cut at 12000 characters]`. A bad input or an unknown id gives a tool result with `isError: true` and one line of text.
+
+**F69.d Recall line.** When `recall-mcp.py` is installed, the injected recall line ends with ` Or call the search_earlier_chat tool.` (after the recall subagent sentence, when that is present).
+
+**F69.e Health.** Each tool call appends `{"ts", "tool", "hits", "ms"}` to `recall-mcp.jsonl` in the state folder (`HANDOFF_STATE_DIR` is honoured). No query text.
+
+**F69.f Neither F68 nor F69 forces a search.** The model decides. This is stated in `docs/recall.md` and `docs/limitations.md`.
+
+**F69.g Versions.** Product 0.16.0 (`install.sh`). `HOOK_VERSION` is `1.18.0` in every hook that has it, `recall-mcp.py` too (this holds for F68 to F71). This amends the version value in ACs 136, 150, 172, 180, 188 and 267 again.
+
+## F70 Re-anchor (opt-in) (2026-11-22)
+
+**F70 (re-anchor).** Why: in a long context the model gives less weight to the standing rules that sit far back. Re-anchor repeats them near the end. It follows the F64 rules for opt-in parts.
+
+- F70.a Install: `./install.sh --reanchor` (saved key `reanchor`; `--no-reanchor`; `--save-defaults --no-reanchor` removes the line). It copies `hooks/reanchor.py` (in the manifest) and registers a `PostToolUse` entry, matcher `*`, timeout 5. A re-install never removes it and prints `reanchor: already installed, kept`. `--dry-run` lists it. `uninstall.sh` removes the file and the entry.
+- F70.b Count: the hook reads the context token count as `handoff-nudge.py` does (the usage of the last assistant entry: input + cache read + cache creation), from the end of the transcript only (64 KB, then 400 KB). It keeps its own copy of these few lines because `handoff-nudge.py` is optional (`--no-nudge`) and importing it would cost start time. A subagent event (non-empty `agent_id`) is ignored.
+- F70.c Anchor: state in `reanchor-<session>.json` (`{"v":1,"anchor":<int>}`, default 0). A count below the anchor means a compaction: the anchor becomes the current count and nothing is printed. A count of the anchor plus the interval or more triggers an injection. The interval is 50,000, or `HANDOFF_REANCHOR_TOKENS` when it is an integer from 10,000 to 500,000. The new anchor is stored before the text is built, also when there is no rule, so the rules builder runs at most once per interval.
+- F70.d Output: exactly one JSON object `{"hookSpecificOutput": {"hookEventName": "PostToolUse", "additionalContext": <text>}}` (this is the shape in the Claude Code hooks reference for PostToolUse). The text is the first line `Lossless Handoff re-anchor: the project's active rules, repeated so they stay near the end of your context.`, then the rules block of the SubagentStart hook (at most 4,000 characters, F58/F66.b, with the recall line at its end). The block comes from `postcompact-inject.py --rules-block` (new mode: stdin `{"cwd"}`, prints the text, nothing when there is no active rule, no health row). No active rule: no output.
+- F70.e Off and errors: `HANDOFF_REANCHOR=0` prints nothing. Every error prints nothing and exits 0.
+- F70.f Health: one row per injection in `health.jsonl`: `{"ts","session_id","event":"reanchor","tokens":<int>,"chars":<int>}`.
+- F70.g Speed (measured on a 35 MB transcript): no-op path p50 20.0 ms, p95 22.3 ms (bare `python3 -c pass`: 11.3 ms); inject path p50 58.2 ms, p95 58.9 ms.
+- F70.h Version: `HOOK_VERSION = "1.18.0"`.
+
+## F71 Claim guard (opt-in, shadow by default) (2026-11-22)
+
+**F71 (claim guard).** Why: the model sometimes states an earlier fact from memory ("as we decided ...") without searching. The guard finds those replies.
+
+- F71.a Install: `./install.sh --claim-guard` (saved key `claim_guard`; `--no-claim-guard`). It copies `hooks/claim-guard.py` and registers a `Stop` entry, timeout 5. Re-install, dry-run and uninstall follow F70.a (`claim-guard: already installed, kept`).
+- F71.b Input: the hook JSON with `session_id`, `transcript_path`, `stop_hook_active` and `last_assistant_message`. If `stop_hook_active` is true: nothing. In live mode there is at most one block per user turn (`claim-guard-<session>.json` holds the uuid of the last user message that was blocked).
+- F71.c Cue: whole words, case-insensitive: `as we decided`, `we decided`, `as you said`, `you said`, `we agreed`, `as agreed`, `as discussed`, `you told me`, `you mentioned`, `as mentioned earlier`, `earlier you`, `last time`. The first cue of this list that matches is logged.
+- F71.d Evidence: since the last real user message (type `user`, not a tool result, not meta), any of (a) a Bash tool call whose command contains `recall.py`, (b) a tool call whose name starts with `mcp__lossless-recall__`, (c) an entry whose text starts with `Lossless Handoff auto-recall:` (the header of `hooks/auto-recall.py`; the 5 entries before the user message are also checked, because the position of an injection entry is not documented). With evidence: nothing.
+- F71.e Modes: `HANDOFF_CLAIM_GUARD` unset or `shadow`: one row `{"ts","session_id","would_block":true,"cue"}` in `claim-guard.jsonl`, no output. `block`: the same row, and the Stop output below. `0`: nothing. No reply text or prompt text is ever logged. Every error prints nothing and exits 0.
+- F71.f Live output form. The hook prints `{"decision": "block", "reason": "You stated an earlier fact without searching. Search for it with recall, then correct or confirm it."}`. The hooks reference (Stop decision control) says: "`decision` | `"block"` prevents Claude from stopping" and "`reason` | Required when `decision` is `"block"`. Tells Claude why it should continue". We chose this form because it is the documented, long-standing form that carries a `reason`, and a claim without evidence is a fault that the user should see in the transcript. The other documented form, `hookSpecificOutput.additionalContext` with `hookEventName` `Stop`, is meant for "non-error feedback" and shows as "Stop hook feedback"; it is the fallback if the block form is removed. Both forms use the same loop limits: "the `stop_hook_active` input and the 8-consecutive-continuation cap" (quoted from the same page, 2026-11-22). The hook honours `stop_hook_active` and the once-per-turn rule.
+- F71.g Version: `HOOK_VERSION = "1.18.0"`.
+
+## F72 Hooks-folder override (2026-11-22)
+
+Why: a benchmark arm runs a private copy of the hooks. It must not read the live install of the user, and a live install during a run must not change an arm.
+
+**F72.a Override.** `HANDOFF_HOOKS_HOME` covers only the lookups of other installed files: `recall.py`, the marker `.recall-rules`, `recall-mcp.py` and `postcompact-inject.py`. When it names an existing folder, a hook looks for those files there instead of in `~/.claude/hooks`. If it is unset, empty or not a folder, the folder is `~/.claude/hooks`, as before. The lookups are in `auto-recall.py`, `postcompact-inject.py` (including the recovery call of `precompact-handoff.py` and `--check`), `recall-mcp.py`, `reanchor.py`, and the `lossless_handoff` parts `summary.py` and `prove.py` (for `recall.py`). `claim-guard.py` and `recall.py` look up no file in the hooks folder.
+
+**F72.b No mixing.** When the override is set to a folder, a hook never falls back to `~/.claude/hooks` for those files, and it does not use a copy next to the hook file either. A missing file in the override folder means the part is absent (for example no recall line). The own parts of a hook (`lossless_handoff/*.py`, and any helper that the entry file loads from beside itself) always load from beside the entry file that runs. The override does not change that.
+
+**F72.c Amendment of F69.** The limit of 12,000 characters per tool result includes the cut marker (see F69.c).
+
+## Review amendments (2026-11-22, PR #32)
+
+**F72.d Printed paths.** When `HANDOFF_HOOKS_HOME` names an existing folder, every injected or printed command that names the recall script uses `python3 <HANDOFF_HOOKS_HOME>/recall.py` instead of `python3 ~/.claude/hooks/recall.py`: the recall line, the summary node line, the `[more rules: ...]` line, the auto-recall footer, a stored recall line in handoff text, and the `open:` line of `recall.py describe`. Unset: the text is byte-identical to before.
+
+**F72.e Agents file.** With the override, the recall subagent file is looked up only at `<HANDOFF_HOOKS_HOME>/agents/recall.md` (not at `~/.claude/agents/recall.md`), in `postcompact-inject.py` and in `lossless_handoff/summary.py`.
+
+**F68.d No ledger.** With the marker `.recall-rules` (and `HANDOFF_RECALL_RULES` not `0`), SessionStart `startup`, `resume` and `compact` (the `--ledger --part 1` call) print the recall line followed by the rule line, also when the project has no decisions list or it has no active entry. Without the marker the output is unchanged (empty with no decisions list).
+
+**F70.e Lock, preamble, usage.** Re-anchor holds an exclusive lock on `reanchor-<session>.lock` (state folder) from the read of the anchor to its save, so parallel tool calls inject at most once for each interval. The rules block of the re-anchor text has no SubagentStart preamble line. An entry with a usage total of 0 tokens is skipped when the count is read.
+
+**F71.f User turn and evidence.** A user message is a real prompt: an entry with `isCompactSummary`, and string content that starts with `<task-notification>`, `<bash-input>`, `<bash-stdout>` or `<local-command-`, are not user messages. Evidence (c) is an auto-recall injection after the last user message; there is no lookback before it.
+
+**F69.h Project, query, install.** The project of the server is `CLAUDE_PROJECT_DIR` if set, else the working directory. The query is passed after `--`, so a query that starts with `-` is searched as text. The fallback protocol version is `2025-11-25`. With `--recall-mcp`, if `claude mcp get lossless-recall` shows the server, install prints `recall-mcp: already installed, kept` and does not run `claude mcp add`.
+
+**F70.f Conflict check.** A default install (no flag) does not count a foreign `reanchor.py` or `claim-guard.py` hook as a conflict. The two names count only when the flag is on or the file is installed.
+
+**Modes.** `recall-mcp.jsonl`, `claim-guard.jsonl`, `claim-guard-<session>.json`, `reanchor-<session>.json` and `reanchor-<session>.lock` are created with mode 0600.

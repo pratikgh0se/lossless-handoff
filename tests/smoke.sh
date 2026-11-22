@@ -75,7 +75,7 @@ python3 - "$H" <<'PY'
 import hashlib, json, sys
 h = sys.argv[1]
 m = json.load(open(h + "/.handoff-manifest.json"))
-assert m["version"] == "1.17.0" and m["installed_at"], m
+assert m["version"] == "1.18.0" and m["installed_at"], m
 pkg = ["lossless_handoff/%s.py" % n for n in "__init__ transcript summary ledger handoff runtime redaction pipeline reconcile prove claims".split()]
 assert sorted(m["files"]) == sorted(["claims.json", "handoff-nudge.py", "postcompact-inject.py", "precompact-handoff.py", "recall.py"] + pkg), m
 for n, want in m["files"].items():
@@ -857,8 +857,8 @@ PY
   [ ! -e "$F/precompact-handoff.py" ] || fail "F66.a: uninstall did not finish its other work"
   rm "$F/llm_map.py" "$SK"; rmdir "$(dirname "$SK")"; o="$("$ROOT/uninstall.sh")"; ! grep -q "llm-map: kept" <<<"$o" || fail "F66.a: kept line without llm-map files"
   # F66.d versions
-  [ "$("$ROOT/install.sh" --version)" = "Lossless Handoff 0.15.0" ] || fail "F66.d: product version"
-  [ "$(grep -c '^HOOK_VERSION = "1.17.0"$' "$ROOT/hooks/precompact-handoff.py" "$ROOT/hooks/postcompact-inject.py" | grep -c ':1$')" = 2 ] || fail "F66.d: HOOK_VERSION"
+  [ "$("$ROOT/install.sh" --version)" = "Lossless Handoff 0.16.0" ] || fail "F66.d: product version"
+  [ "$(grep -c '^HOOK_VERSION = "1.18.0"$' "$ROOT/hooks/precompact-handoff.py" "$ROOT/hooks/postcompact-inject.py" | grep -c ':1$')" = 2 ] || fail "F66.d: HOOK_VERSION"
   # F66.c: README holds no claim markers; evidence page does; claims-lint default path
   ! grep -qE '\[C[1-8]\]' "$ROOT/README.md" && ! grep -qiE '^#+ .*proof|\*\*proof' "$ROOT/README.md" || fail "F66.c: README holds Proof or claim markers"
   grep -qE '\[C1\]' "$ROOT/docs/evidence.md" || fail "F66.c: docs/evidence.md has no markers"
@@ -905,7 +905,7 @@ rows = {json.loads(x)["sid"]: json.loads(x) for x in open(sys.argv[1]) if x.stri
 a, b = rows["f56a"], rows["f56b"]
 assert a["excerpt_chars"] > 0 and a["excerpt_dropped"] == 0, a
 assert b["excerpt_dropped"] > 0 and 0 < b["excerpt_chars"] <= 120000, b
-assert a["hook_version"] == "1.17.0"
+assert a["hook_version"] == "1.18.0"
 PY
   p="$(python3 "$ROOT/hooks/precompact-handoff.py" --prove --days 1; echo "rc=$?")"
   grep -qE "^excerpt cut: 1 of 2 compactions, median dropped [0-9]+ chars$" <<<"$p" || fail "F56.b: prove line: $p"
@@ -1071,7 +1071,7 @@ PY
 import json, sys
 rows = [json.loads(x) for x in open(sys.argv[1]) if x.strip()]
 r = [x for x in rows if x.get("event") == "subagent_start"][-1]
-assert r["rules"] == 2 and r["chars"] > 0 and r["hook_version"] == "1.17.0" and r["agent_type"] == "general-purpose", r
+assert r["rules"] == 2 and r["chars"] > 0 and r["hook_version"] == "1.18.0" and r["agent_type"] == "general-purpose", r
 PY
   # AC 262: no handoff text, no agent notes
   printf '# Handoff\n- cwd: %s\nLATESTTOKEN\n' "$PROJ" > "$STF/s58-latest.md"; printf 'AGENTTOKEN\n' > "$STF/s58-agent.md"
@@ -1845,7 +1845,7 @@ PY
   CMD="python3 $F/auto-recall.py"
   echo '{"model": "opus"}' > "$FS"
   grep -q -- "--auto-recall" <<<"$("$ROOT/install.sh" --help)" || fail "F67.a: --help lacks --auto-recall"
-  [ "$(grep -c '^HOOK_VERSION = "1.17.0"$' "$ROOT/hooks/auto-recall.py")" = 1 ] || fail "F67.e: auto-recall HOOK_VERSION"
+  [ "$(grep -c '^HOOK_VERSION = "1.18.0"$' "$ROOT/hooks/auto-recall.py")" = 1 ] || fail "F67.e: auto-recall HOOK_VERSION"
   # default install: not installed, not registered
   "$ROOT/install.sh" >/dev/null
   [ ! -e "$F/auto-recall.py" ] && ! grep -q "auto-recall" "$FS" && ! grep -q "auto-recall" "$F/.handoff-manifest.json" || fail "F67.a: default install holds auto-recall"
@@ -1891,6 +1891,640 @@ PY
   "$ROOT/install.sh" --save-defaults --no-auto-recall >/dev/null
   ! grep -q "auto_recall" "$DF" && [ ! -e "$F/auto-recall.py" ] || fail "F67.a: --save-defaults --no-auto-recall"
   ok "F67: install, default off, dry-run, backup, upgrade message, uninstall, saved defaults"
+)
+
+# F68: strict recall rules (marker file, one extra line after the recall line, run-time off switch, health flag)
+(
+  set -e
+  export HOME="$T/f68"; mkdir -p "$HOME/.claude"; F="$HOME/.claude/hooks"; DF="$HOME/.config/lossless-handoff/install-defaults"
+  export HANDOFF_STATE_DIR="$HOME/.local/state/claude-handoffs"; STF="$HANDOFF_STATE_DIR"; mkdir -p "$STF"
+  POST="$ROOT/hooks/postcompact-inject.py"
+  RULE='- recall rule: before you state an earlier number, path, name, command or decision, search for it. Do not answer from memory. If the search finds nothing, say so.'
+  PROJ="$HOME/proj"; mkdir -p "$PROJ"; git -C "$PROJ" init -q; PROJ="$(cd "$PROJ" && pwd -P)"
+  python3 - "$PROJ" "$STF" <<'PY'
+import hashlib, os, re, sys
+proj, stf = sys.argv[1:3]
+key = re.sub(r"[^A-Za-z0-9._-]", "_", os.path.basename(proj))[:40] + "-" + hashlib.sha1(proj.encode()).hexdigest()[:8]
+d = os.path.join(stf, "projects", key); os.makedirs(d)
+open(os.path.join(d, "decisions.md"), "w").write("# Decisions\n\n- D1 [2026-11-01] [rule] RULEONE be brief | why: user said so\n- D2 [2026-11-02] [decision] DEC use sqlite | why: simple\n")
+PY
+  printf '# Handoff\n- authority: x\n- recall: old line\n## Goal\nhi\n' > "$STF/s68-latest.md"
+  echo "{\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"trigger\":\"auto\",\"degraded\":false,\"status\":\"ok\"}" > "$STF/s68-last-health.json"
+  run_start() { printf '{"session_id":"s68","cwd":"%s","source":"compact"}' "$PROJ" | python3 "$POST" --part 1; }
+  run_led() { printf '{"cwd":"%s"}' "$PROJ" | python3 "$POST" --ledger --part 1; }
+  run_sub() { printf '{"session_id":"s68","cwd":"%s","agent_id":"agx","agent_type":"general-purpose"}' "$PROJ" | python3 "$POST" --subagent-start; }
+  ctx() { python3 -c "import sys,json; print(json.load(sys.stdin)['hookSpecificOutput']['additionalContext'])"; }
+  # no flag: install has no marker, and the outputs hold no rule line
+  "$ROOT/install.sh" >/dev/null
+  [ ! -e "$F/.recall-rules" ] || fail "F68: default install wrote the marker"
+  ! grep -q "recall-rules" <<<"$("$ROOT/install.sh" --dry-run)" || fail "F68: default dry-run mentions recall-rules"
+  S0="$(run_start | ctx)"; L0="$(run_led | ctx)"; B0="$(run_sub | ctx)"
+  ! grep -qF "recall rule:" <<<"$S0$L0$B0" || fail "F68: rule line without the marker"
+  grep -q "^- recall: " <<<"$S0" && grep -q "^- recall: " <<<"$L0" && grep -q "^- recall: " <<<"$B0" || fail "F68: a baseline output has no recall line"
+  # dry-run with the flag lists the marker and changes nothing
+  o="$("$ROOT/install.sh" --recall-rules --dry-run)"
+  grep -q "recall rules marker" <<<"$o" && [ ! -e "$F/.recall-rules" ] || fail "F68: dry-run: $o"
+  # install with the flag
+  "$ROOT/install.sh" --recall-rules >/dev/null
+  [ -e "$F/.recall-rules" ] || fail "F68: marker not written"
+  for w in start led sub; do
+    if [ "$w" = start ]; then o="$(run_start | ctx)"; b="$S0"; fi
+    if [ "$w" = led ]; then o="$(run_led | ctx)"; b="$L0"; fi
+    if [ "$w" = sub ]; then o="$(run_sub | ctx)"; b="$B0"; fi
+    [ "$(grep -cxF -- "$RULE" <<<"$o")" = 1 ] || fail "F68: $w: the rule line is missing or doubled: $o"
+    n="$(grep -n '^- recall: ' <<<"$o" | cut -d: -f1)"
+    [ "$(sed -n "$((n + 1))p" <<<"$o")" = "$RULE" ] || fail "F68: $w: the rule line is not directly after the recall line"
+    [ "$(grep -vxF -- "$RULE" <<<"$o")" = "$b" ] || fail "F68: $w: output differs from the baseline in more than the rule line"
+    # the off switch: byte-identical to the output without the marker
+    case "$w" in start) o2="$(HANDOFF_RECALL_RULES=0 run_start | ctx)" ;; led) o2="$(HANDOFF_RECALL_RULES=0 run_led | ctx)" ;; sub) o2="$(HANDOFF_RECALL_RULES=0 run_sub | ctx)" ;; esac
+    [ "$o2" = "$b" ] || fail "F68: $w: HANDOFF_RECALL_RULES=0 changed the output"
+  done
+  # the receipt flag
+  run_start >/dev/null; HANDOFF_RECALL_RULES=0 run_start >/dev/null
+  python3 - "$STF/receipts.jsonl" <<'PY'
+import json, sys
+rows = [json.loads(x) for x in open(sys.argv[1]) if x.strip()]
+assert rows[-2]["recall_rules"] is True and rows[-1]["recall_rules"] is False, rows[-2:]
+PY
+  # a rerun keeps it; --no-recall-rules keeps it
+  o="$("$ROOT/install.sh")"; grep -qx "recall-rules: already installed, kept" <<<"$o" || fail "F68: kept message: $o"
+  o="$("$ROOT/install.sh" --no-recall-rules)"; grep -qx "recall-rules: already installed, kept" <<<"$o" && [ -e "$F/.recall-rules" ] || fail "F68: --no-recall-rules removed it"
+  # uninstall: dry-run lists, real run removes
+  o="$("$ROOT/uninstall.sh" --dry-run)"; grep -q "\.recall-rules" <<<"$o" && [ -e "$F/.recall-rules" ] || fail "F68: uninstall dry-run"
+  "$ROOT/uninstall.sh" >/dev/null; [ ! -e "$F/.recall-rules" ] || fail "F68: uninstall left the marker"
+  # saved defaults
+  "$ROOT/install.sh" --save-defaults --recall-rules >/dev/null
+  grep -qx "recall_rules=1" "$DF" && [ -e "$F/.recall-rules" ] || fail "F68: --save-defaults --recall-rules"
+  "$ROOT/uninstall.sh" >/dev/null
+  o="$("$ROOT/install.sh" --dry-run)"; grep -q "saved defaults.*recall_rules" <<<"$o" && grep -q "recall rules marker" <<<"$o" || fail "F68: saved default not applied: $o"
+  "$ROOT/install.sh" >/dev/null; [ -e "$F/.recall-rules" ] || fail "F68: saved default did not install it"
+  "$ROOT/uninstall.sh" >/dev/null
+  "$ROOT/install.sh" --no-recall-rules >/dev/null
+  [ ! -e "$F/.recall-rules" ] && grep -qx "recall_rules=1" "$DF" || fail "F68: --no-recall-rules did not skip it, or touched the saved default"
+  "$ROOT/install.sh" --save-defaults --no-recall-rules >/dev/null
+  ! grep -q "recall_rules" "$DF" && [ ! -e "$F/.recall-rules" ] || fail "F68: --save-defaults --no-recall-rules"
+  grep -q -- "--recall-rules" <<<"$("$ROOT/install.sh" --help)" || fail "F68: --help lacks --recall-rules"
+  "$ROOT/uninstall.sh" >/dev/null
+  ok "F68: marker, rule line after the recall line (start, ledger, subagent), off switch, receipt flag, install, saved defaults, uninstall"
+)
+
+# F69: recall MCP tool (install, registration through the claude command, protocol, tools, limits, health)
+(
+  set -e
+  D="$T/f69"; mkdir -p "$D"; export HOME="$D/home"; W="$D/work"; mkdir -p "$HOME/.claude" "$W" "$D/fakebin"
+  F="$HOME/.claude/hooks"; DF="$HOME/.config/lossless-handoff/install-defaults"; MC="python3 $F/recall-mcp.py"
+  export HANDOFF_STATE_DIR="$D/state"
+  cat > "$D/fakebin/claude" <<'SH'
+#!/bin/sh
+echo "$*" >> "$FAKE_CLAUDE_LOG"
+exit 0
+SH
+  chmod +x "$D/fakebin/claude"; export FAKE_CLAUDE_LOG="$D/claude.args"; : > "$FAKE_CLAUDE_LOG"
+  # a PATH without any claude command (the real one may sit next to python3)
+  NC=""; IFS=: read -ra _pd <<<"$PATH"
+  for d in "${_pd[@]}"; do [ -x "$d/claude" ] || NC="${NC:+$NC:}$d"; done
+  command -v python3 >/dev/null || true
+  if ! PATH="$NC" command -v python3 >/dev/null 2>&1; then mkdir -p "$D/pybin"; ln -sf "$(command -v python3)" "$D/pybin/python3"; NC="$NC:$D/pybin"; fi
+  ! PATH="$NC" command -v claude >/dev/null 2>&1 || fail "F69: test setup: claude is still on PATH"
+  # default install: no file, no manifest entry, no claude call
+  PATH="$D/fakebin:$PATH" "$ROOT/install.sh" >/dev/null
+  [ ! -e "$F/recall-mcp.py" ] && ! grep -q "recall-mcp" "$F/.handoff-manifest.json" && [ ! -s "$FAKE_CLAUDE_LOG" ] || fail "F69: default install holds recall-mcp or called claude"
+  ! grep -q "recall-mcp" <<<"$(PATH="$D/fakebin:$PATH" "$ROOT/install.sh" --dry-run)" || fail "F69: default dry-run mentions recall-mcp"
+  grep -q -- "--recall-mcp" <<<"$("$ROOT/install.sh" --help)" || fail "F69: --help lacks --recall-mcp"
+  [ "$(grep -c '^HOOK_VERSION = "1.18.0"$' "$ROOT/hooks/recall-mcp.py")" = 1 ] || fail "F69: HOOK_VERSION"
+  # dry-run lists the file and the command; runs nothing
+  o="$(PATH="$D/fakebin:$PATH" "$ROOT/install.sh" --recall-mcp --dry-run)"
+  grep -q "install hook: .*/recall-mcp.py" <<<"$o" && grep -qF "claude mcp add --scope user lossless-recall -- $MC" <<<"$o" || fail "F69: dry-run: $o"
+  [ ! -e "$F/recall-mcp.py" ] && [ ! -s "$FAKE_CLAUDE_LOG" ] || fail "F69: dry-run changed something"
+  # install with the flag: the file, the manifest, the exact claude call, no direct edit of ~/.claude.json
+  PATH="$D/fakebin:$PATH" "$ROOT/install.sh" --recall-mcp >/dev/null
+  [ -x "$F/recall-mcp.py" ] && grep -q '"recall-mcp.py"' "$F/.handoff-manifest.json" || fail "F69: file or manifest entry missing"
+  grep -qxF "mcp add --scope user lossless-recall -- python3 $F/recall-mcp.py" "$FAKE_CLAUDE_LOG" || fail "F69: claude args: $(cat "$FAKE_CLAUDE_LOG")"
+  [ ! -e "$HOME/.claude.json" ] || fail "F69: the installer wrote ~/.claude.json"
+  # kept message
+  o="$(PATH="$D/fakebin:$PATH" "$ROOT/install.sh")"; grep -qx "recall-mcp: already installed, kept" <<<"$o" || fail "F69: kept message: $o"
+  o="$(PATH="$D/fakebin:$PATH" "$ROOT/install.sh" --no-recall-mcp)"; grep -qx "recall-mcp: already installed, kept" <<<"$o" && [ -e "$F/recall-mcp.py" ] || fail "F69: --no-recall-mcp removed it"
+  # the recall line names the tool, only when installed
+  printf '# Handoff\n- authority: x\n- recall: old line\n## Goal\nhi\n' > "$D/h.md"
+  mkdir -p "$HANDOFF_STATE_DIR"; cp "$D/h.md" "$HANDOFF_STATE_DIR/s69-latest.md"
+  echo "{\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"trigger\":\"auto\",\"degraded\":false,\"status\":\"ok\"}" > "$HANDOFF_STATE_DIR/s69-last-health.json"
+  o="$(printf '{"session_id":"s69","cwd":"/tmp","source":"compact"}' | python3 "$ROOT/hooks/postcompact-inject.py" --part 1)"
+  python3 - "$o" <<'PY'
+import json, sys
+c = json.loads(sys.argv[1])["hookSpecificOutput"]["additionalContext"]
+l = [x for x in c.split("\n") if x.startswith("- recall:")][0]
+assert l.endswith(" Or call the search_earlier_chat tool."), l
+PY
+  # uninstall: no claude on PATH still exits 0; with claude it runs the remove command
+  : > "$FAKE_CLAUDE_LOG"
+  o="$(PATH="$D/fakebin:$PATH" "$ROOT/uninstall.sh" --dry-run)"; grep -q "recall-mcp.py" <<<"$o" && [ ! -s "$FAKE_CLAUDE_LOG" ] || fail "F69: uninstall dry-run"
+  PATH="$D/fakebin:$PATH" "$ROOT/uninstall.sh" >/dev/null
+  [ ! -e "$F/recall-mcp.py" ] || fail "F69: uninstall left the file"
+  [ "$(cat "$FAKE_CLAUDE_LOG")" = "mcp remove lossless-recall --scope user" ] || fail "F69: uninstall claude args: $(cat "$FAKE_CLAUDE_LOG")"
+  o="$(printf '{"session_id":"s69","cwd":"/tmp","source":"compact"}' | python3 "$ROOT/hooks/postcompact-inject.py" --part 1)"
+  ! grep -q "search_earlier_chat" <<<"$o" || fail "F69: tool sentence without recall-mcp.py installed"
+  # no claude on PATH: the install prints the register command, installs the file, exits 0
+  r=0; o="$(PATH="$NC" "$ROOT/install.sh" --recall-mcp)" || r=$?
+  [ "$r" = 0 ] && [ -x "$F/recall-mcp.py" ] || fail "F69: install without claude: exit $r"
+  grep -qxF "recall-mcp: claude CLI not found; register it later with: claude mcp add --scope user lossless-recall -- $MC" <<<"$o" || fail "F69: no-claude message: $o"
+  r=0; PATH="$NC" "$ROOT/uninstall.sh" >/dev/null || r=$?
+  [ "$r" = 0 ] && [ ! -e "$F/recall-mcp.py" ] || fail "F69: uninstall without claude: exit $r"
+  # saved defaults
+  PATH="$D/fakebin:$PATH" "$ROOT/install.sh" --save-defaults --recall-mcp >/dev/null
+  grep -qx "recall_mcp=1" "$DF" && [ -x "$F/recall-mcp.py" ] || fail "F69: --save-defaults --recall-mcp"
+  PATH="$D/fakebin:$PATH" "$ROOT/uninstall.sh" >/dev/null
+  o="$(PATH="$D/fakebin:$PATH" "$ROOT/install.sh" --dry-run)"; grep -q "saved defaults.*recall_mcp" <<<"$o" && grep -q "recall-mcp.py" <<<"$o" || fail "F69: saved default not applied: $o"
+  PATH="$D/fakebin:$PATH" "$ROOT/install.sh" >/dev/null; [ -x "$F/recall-mcp.py" ] || fail "F69: saved default did not install it"
+  PATH="$D/fakebin:$PATH" "$ROOT/uninstall.sh" >/dev/null
+  PATH="$D/fakebin:$PATH" "$ROOT/install.sh" --no-recall-mcp >/dev/null
+  [ ! -e "$F/recall-mcp.py" ] && grep -qx "recall_mcp=1" "$DF" || fail "F69: --no-recall-mcp did not skip it, or touched the saved default"
+  PATH="$D/fakebin:$PATH" "$ROOT/install.sh" --save-defaults --no-recall-mcp >/dev/null
+  ! grep -q "recall_mcp" "$DF" && [ ! -e "$F/recall-mcp.py" ] || fail "F69: --save-defaults --no-recall-mcp"
+  ok "F69: install, registration command, no-claude message, kept message, recall line sentence, uninstall, saved defaults"
+)
+(
+  set -e
+  D="$T/f69p"; mkdir -p "$D"; export HOME="$D/home"; W="$D/work"; mkdir -p "$HOME/.claude" "$W"
+  export HANDOFF_STATE_DIR="$D/state"; MS="$ROOT/hooks/recall-mcp.py"
+  python3 - "$HOME" "$W" <<'PY'
+import json, os, re, sys
+home, w = sys.argv[1:3]
+real = os.path.realpath(w)
+pd = os.path.join(home, ".claude", "projects", re.sub(r"[^A-Za-z0-9]", "-", real))
+os.makedirs(pd)
+def rec(t, ts, text, n):
+    return {"type": t, "timestamp": ts, "cwd": real, "sessionId": "f69sess", "uuid": "u%d" % n,
+            "message": {"role": t, "content": text if t == "user" else [{"type": "text", "text": text}]}}
+rows = [rec("user", "2026-11-19T10:00:00Z", "Our staging database rotation policy is every ninety days for all credentials", 1),
+        rec("assistant", "2026-11-19T10:00:05Z", "Noted: the staging database rotation policy is every ninety days.", 2),
+        rec("user", "2026-11-19T10:01:00Z", "The deploy pipeline token is ghp_abcdefghijklmnopqrstuvwxyz0123456789 for the staging pipeline", 3),
+        rec("user", "2026-11-19T10:02:00Z", "LONGMARK " + ("lorem ipsum dolor " * 3000), 4)]
+open(os.path.join(pd, "f69sess.jsonl"), "w").write("".join(json.dumps(r) + "\n" for r in rows))
+PY
+  cat > "$D/drive.py" <<'PY'
+import json, subprocess, sys
+ms, cwd = sys.argv[1:3]
+def run(lines):
+    p = subprocess.run([sys.executable, ms], input="".join(l + "\n" for l in lines), capture_output=True, text=True, cwd=cwd, timeout=60)
+    assert p.returncode == 0, p.stderr
+    return [json.loads(x) for x in p.stdout.splitlines()], p.stdout
+def req(i, m, p=None):
+    return json.dumps({"jsonrpc": "2.0", "id": i, "method": m, **({"params": p} if p is not None else {})})
+def call(i, name, args):
+    return req(i, "tools/call", {"name": name, "arguments": args})
+txt = lambda r: r["result"]["content"][0]["text"]
+out, raw = run([
+    req(1, "initialize", {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "t", "version": "1"}}),
+    json.dumps({"jsonrpc": "2.0", "method": "notifications/initialized"}),
+    req(2, "ping"), req(3, "tools/list"),
+    call(4, "search_earlier_chat", {"query": "staging database rotation"}),
+    call(5, "search_earlier_chat", {"query": "staging", "role": "assistant", "limit": 1}),
+    call(6, "search_earlier_chat", {"query": "quantumunicorntelemetry"}),
+    call(7, "search_earlier_chat", {"query": "pipeline token"}),
+    call(8, "search_earlier_chat", {"query": ""}),
+    call(9, "search_earlier_chat", {"query": "x", "limit": 11}),
+    call(10, "search_earlier_chat", {"query": "x", "role": "tool"}),
+    call(11, "open_message", {"id": "f69sess:1"}),
+    call(12, "open_message", {"id": "zzzzzzzz:1"}),
+    call(13, "open_message", {"id": "f69sess:4", "full": True}),
+    call(14, "open_message", {}),
+    call(15, "nosuchtool", {}),
+    req(16, "nosuch/method"),
+    "this is not json",
+    req(17, "ping"),
+    call(18, "open_message", {"id": "f69sess:3"}),
+])
+by = {o.get("id"): o for o in out}
+assert [o.get("id") for o in out].count(2) == 1 and 99 not in by
+init = by[1]["result"]
+assert init["protocolVersion"] == "2025-06-18" and init["serverInfo"] == {"name": "lossless-recall", "version": "1.18.0"}, init
+ins = init["instructions"]
+assert len(ins) < 4096 and "recall rule: before you state an earlier number, path, name, command or decision, search for it. Do not answer from memory. If the search finds nothing, say so." in ins, ins
+assert by[2]["result"] == {}
+tools = {t["name"]: t for t in by[3]["result"]["tools"]}
+assert set(tools) == {"search_earlier_chat", "open_message"}
+assert all(t["_meta"] == {"anthropic/alwaysLoad": True} for t in tools.values())
+assert tools["search_earlier_chat"]["inputSchema"]["required"] == ["query"] and tools["open_message"]["inputSchema"]["required"] == ["id"]
+t = txt(by[4]); assert "isError" not in by[4]["result"] or by[4]["result"]["isError"] is False
+ls = t.splitlines(); assert 1 <= len(ls) <= 5 and all(x.startswith("f69sess") for x in ls) and "ninety days" in t, t
+assert len(txt(by[5]).splitlines()) == 1 and " assistant " in txt(by[5]), txt(by[5])
+assert txt(by[6]) == "no matches", txt(by[6])
+assert "ghp_abcdefghijklmnopqrstuvwxyz" not in txt(by[7]) and "[REDACTED:github]" in txt(by[7]), txt(by[7])
+for i in (8, 9, 10, 12, 14):
+    r = by[i]["result"]; assert r["isError"] is True and "\n" not in r["content"][0]["text"] and r["content"][0]["text"], (i, r)
+assert "ninety days" in txt(by[11]) and txt(by[11]).startswith("--- "), txt(by[11])
+assert len(txt(by[13])) <= 12000 and txt(by[13]).endswith("[cut at 12000 characters]"), (len(txt(by[13])), txt(by[13])[-60:])
+assert by[15].get("error", {}).get("code") == -32602 or by[15]["result"]["isError"] is True
+assert by[16]["error"]["code"] == -32601
+pe = [o for o in out if o.get("id") is None and "error" in o]
+assert len(pe) == 1 and pe[0]["error"]["code"] == -32700, pe
+assert 17 in by and "ghp_abcdefghijklmnopqrstuvwxyz" not in txt(by[18]) and "[REDACTED:github]" in txt(by[18]), by.get(18)
+# an unsupported client version gets the default; a supported older one is echoed
+o2, _ = run([req(1, "initialize", {"protocolVersion": "1999-01-01"}), req(2, "initialize", {"protocolVersion": "2025-03-26"})])
+assert o2[0]["result"]["protocolVersion"] == "2025-11-25" and o2[1]["result"]["protocolVersion"] == "2025-03-26", o2
+PY
+  python3 "$D/drive.py" "$MS" "$W" || fail "F69: scripted MCP session"
+  python3 - "$HANDOFF_STATE_DIR/recall-mcp.jsonl" <<'PY'
+import json, sys
+raw = open(sys.argv[1]).read()
+rows = [json.loads(x) for x in raw.splitlines() if x.strip()]
+assert len(rows) >= 10 and all(set(r) == {"ts", "tool", "hits", "ms"} and r["tool"] in ("search_earlier_chat", "open_message") for r in rows), rows[:3]
+assert all(isinstance(r["hits"], int) and isinstance(r["ms"], int) for r in rows)
+for bad in ("staging", "ninety", "ghp_", "quantum", "pipeline"):
+    assert bad not in raw, bad
+PY
+  # the server keeps running after bad input: a closed stdin ends it with exit 0
+  r=0; python3 "$MS" </dev/null || r=$?; [ "$r" = 0 ] || fail "F69: exit $r on empty stdin"
+  ok "F69: MCP protocol, both tools, limits, redaction, errors, parse error, version echo, health log without query text"
+)
+# F70: re-anchor hook (opt-in): interval, anchor state, compaction reset, no rules, off switch, env interval, health row, errors
+(
+  set -e
+  D="$T/f70"; mkdir -p "$D"; export HOME="$D/home"; W="$D/work"; mkdir -p "$HOME/.claude" "$W"
+  export HANDOFF_STATE_DIR="$D/state"; HK="$ROOT/hooks/reanchor.py"; unset HANDOFF_REANCHOR HANDOFF_REANCHOR_TOKENS
+  # a ledger with two rules for the project of $W (same key rule as the SubagentStart hook)
+  KEY="$(python3 -c 'import hashlib,os,re,sys; r=sys.argv[1]; print(re.sub(r"[^A-Za-z0-9._-]","_",os.path.basename(r))[:40]+"-"+hashlib.sha1(r.encode()).hexdigest()[:8])' "$W")"
+  mkdir -p "$HANDOFF_STATE_DIR/projects/$KEY"
+  cat > "$HANDOFF_STATE_DIR/projects/$KEY/decisions.md" <<'MD'
+- D2 [2026-11-01] [rule] Always run the linter before a commit | why: the user asked
+- D1 [2026-11-01] [rule] Never push to main | why: the user asked
+MD
+  python3 - "$D" <<'PY'
+import json, sys
+d = sys.argv[1]
+def tr(name, tokens):
+    rows = [{"type": "user", "message": {"role": "user", "content": "hi"}},
+            {"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": "ok"}],
+             "usage": {"input_tokens": 10, "cache_read_input_tokens": tokens, "cache_creation_input_tokens": 5, "output_tokens": 3}}}]
+    open("%s/%s.jsonl" % (d, name), "w").write("".join(json.dumps(r) + "\n" for r in rows))
+tr("t30k", 29985); tr("t60k", 59985); tr("t120k", 119985); tr("t20k", 19985)
+PY
+  ra() { python3 -c 'import json,sys; print(json.dumps({"session_id":sys.argv[1],"transcript_path":sys.argv[2],"cwd":sys.argv[3],"hook_event_name":"PostToolUse","tool_name":"Bash"}))' "$1" "$D/$2.jsonl" "$W" | python3 "$HK"; }
+  [ "$(grep -c '^HOOK_VERSION = "1.18.0"$' "$HK")" = 1 ] || fail "F70: HOOK_VERSION"
+  # below the interval: nothing, no state file
+  [ -z "$(ra s1 t30k)" ] && [ ! -e "$HANDOFF_STATE_DIR/reanchor-s1.json" ] || fail "F70: output below 50,000"
+  # at 60,000: exactly one JSON object, exact shape and first line, the rules block, the recall line is not required to exist here
+  o="$(ra s1 t60k)"
+  python3 - "$o" <<'PY'
+import json, sys
+d = json.loads(sys.argv[1])
+assert list(d) == ["hookSpecificOutput"] and d["hookSpecificOutput"]["hookEventName"] == "PostToolUse", d
+t = d["hookSpecificOutput"]["additionalContext"]
+assert t.split("\n")[0] == "Lossless Handoff re-anchor: the project's active rules, repeated so they stay near the end of your context.", t
+assert "Never push to main" in t and "Always run the linter" in t, t
+assert len(t) <= 4200, len(t)
+PY
+  # same count again: nothing (the anchor moved)
+  [ -z "$(ra s1 t60k)" ] || fail "F70: second output at the same count"
+  [ "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["anchor"])' "$HANDOFF_STATE_DIR/reanchor-s1.json")" = 60000 ] || fail "F70: anchor not stored"
+  # 120,000 is 60,000 above the anchor: output again
+  [ -n "$(ra s1 t120k)" ] || fail "F70: no output 60,000 above the anchor"
+  # compaction: a count below the anchor resets the anchor and prints nothing; then 20,000 is not enough, nothing
+  [ -z "$(ra s1 t20k)" ] || fail "F70: output on a compaction"
+  [ "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["anchor"])' "$HANDOFF_STATE_DIR/reanchor-s1.json")" = 20000 ] || fail "F70: anchor not reset"
+  # the interval env: 10,000 gives output at 30,000 from anchor 20,000? (10,000 above) and 600,000 is not valid (falls back to 50,000)
+  [ -n "$(HANDOFF_REANCHOR_TOKENS=10000 ra s2 t30k)" ] || fail "F70: HANDOFF_REANCHOR_TOKENS=10000"
+  [ -z "$(HANDOFF_REANCHOR_TOKENS=600000 ra s3 t30k)" ] && [ -z "$(HANDOFF_REANCHOR_TOKENS=abc ra s3 t30k)" ] || fail "F70: an invalid interval was used"
+  [ -n "$(HANDOFF_REANCHOR_TOKENS=600000 ra s4 t60k)" ] || fail "F70: an invalid interval did not fall back to 50,000"
+  # off switch
+  [ -z "$(HANDOFF_REANCHOR=0 ra s5 t60k)" ] && [ ! -e "$HANDOFF_STATE_DIR/reanchor-s5.json" ] || fail "F70: HANDOFF_REANCHOR=0"
+  # no active rules: no output
+  mkdir -p "$D/empty"
+  [ -z "$(python3 -c 'import json,sys; print(json.dumps({"session_id":"s6","transcript_path":sys.argv[1],"cwd":sys.argv[2]}))' "$D/t60k.jsonl" "$D/empty" | python3 "$HK")" ] || fail "F70: output with no rules"
+  # a subagent event is ignored
+  [ -z "$(python3 -c 'import json,sys; print(json.dumps({"session_id":"s7","agent_id":"a1","transcript_path":sys.argv[1],"cwd":sys.argv[2]}))' "$D/t60k.jsonl" "$W" | python3 "$HK")" ] || fail "F70: a subagent event printed"
+  # errors: bad stdin, missing transcript, no usage line: exit 0 and no output
+  r=0; o="$(echo "not json" | python3 "$HK")" || r=$?; [ "$r" = 0 ] && [ -z "$o" ] || fail "F70: bad stdin"
+  r=0; o="$(python3 -c 'import json; print(json.dumps({"session_id":"s8","transcript_path":"/no/such","cwd":"/"}))' | python3 "$HK")" || r=$?; [ "$r" = 0 ] && [ -z "$o" ] || fail "F70: missing transcript"
+  # health: one row per injection, exact fields
+  python3 - "$HANDOFF_STATE_DIR/health.jsonl" <<'PY'
+import json, sys
+rows = [json.loads(l) for l in open(sys.argv[1]) if '"reanchor"' in l]
+assert len(rows) == 4, rows
+assert all(set(r) == {"ts", "session_id", "event", "tokens", "chars"} and r["event"] == "reanchor" for r in rows), rows
+assert all(isinstance(r["tokens"], int) and isinstance(r["chars"], int) and r["chars"] > 0 for r in rows), rows
+assert "Never push" not in open(sys.argv[1]).read()
+PY
+  ok "F70: interval, anchor, compaction reset, env interval, off switch, no rules, subagent, errors, health row"
+)
+# F71: claim guard (opt-in Stop hook): cues, evidence, shadow, block, once per turn, loop guard, off switch
+(
+  set -e
+  D="$T/f71"; mkdir -p "$D"; export HOME="$D/home"; mkdir -p "$HOME/.claude"
+  export HANDOFF_STATE_DIR="$D/state"; HK="$ROOT/hooks/claim-guard.py"; LOG="$HANDOFF_STATE_DIR/claim-guard.jsonl"; unset HANDOFF_CLAIM_GUARD
+  [ "$(grep -c '^HOOK_VERSION = "1.18.0"$' "$HK")" = 1 ] || fail "F71: HOOK_VERSION"
+  python3 - "$D" <<'PY'
+import json, sys
+d = sys.argv[1]
+def user(u, text): return {"type": "user", "uuid": u, "message": {"role": "user", "content": text}}
+def tool(name, inp): return {"type": "assistant", "message": {"role": "assistant", "content": [{"type": "tool_use", "id": "x", "name": name, "input": inp}]}}
+def res(): return {"type": "user", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "x", "content": "ok"}]}}
+def txt(t): return {"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": t}]}}
+def w(name, rows): open("%s/%s.jsonl" % (d, name), "w").write("".join(json.dumps(r) + "\n" for r in rows))
+w("none", [user("u1", "what port?"), tool("Read", {"file_path": "/x"}), res()])
+w("bash", [user("u1", "what port?"), tool("Bash", {"command": "python3 ~/.claude/hooks/recall.py search port"}), res()])
+w("mcp", [user("u1", "what port?"), tool("mcp__lossless-recall__search_earlier_chat", {"query": "port"}), res()])
+w("auto", [user("u1", "what port?"), {"type": "attachment", "attachment": {"type": "hook_additional_context", "content": ["Lossless Handoff auto-recall: earlier messages that match your words. Verify them before you rely on them."]}}])
+w("old", [user("u0", "earlier"), tool("Bash", {"command": "python3 recall.py search x"}), res(), user("u1", "what port?"), tool("Read", {"file_path": "/x"}), res()])
+w("othertool", [user("u1", "what port?"), tool("Bash", {"command": "ls recall"}), res()])
+PY
+  cg() { python3 -c 'import json,sys; print(json.dumps({"session_id":sys.argv[1],"transcript_path":sys.argv[2],"stop_hook_active":sys.argv[4]=="1","last_assistant_message":sys.argv[3]}))' "$1" "$D/$2.jsonl" "$3" "${4:-0}" | python3 "$HK"; }
+  # shadow (default): one row, no output
+  o="$(cg a1 none "As we decided, the port is 8080.")"
+  [ -z "$o" ] || fail "F71: shadow mode printed: $o"
+  python3 - "$LOG" <<'PY'
+import json, sys
+rows = [json.loads(l) for l in open(sys.argv[1])]
+assert len(rows) == 1 and set(rows[0]) == {"ts", "session_id", "would_block", "cue"} and rows[0]["would_block"] is True and rows[0]["cue"] == "as we decided" and rows[0]["session_id"] == "a1", rows
+PY
+  ! grep -q "8080" "$LOG" || fail "F71: reply text in the log"
+  # every cue fires (case-insensitive); a part of a word does not
+  n0="$(wc -l < "$LOG")"
+  for c in "as we decided" "we decided" "as you said" "you said" "we agreed" "as agreed" "as discussed" "you told me" "you mentioned" "as mentioned earlier" "earlier you" "last time"; do
+    cg a2 none "Right. $(echo "$c" | tr a-z A-Z) it was fine." >/dev/null
+  done
+  [ "$(( $(wc -l < "$LOG") - n0 ))" = 12 ] || fail "F71: not every cue fired"
+  n0="$(wc -l < "$LOG")"
+  cg a3 none "The forecast is fine. Nothing was decided. We decidedly agree." >/dev/null
+  cg a3 none "No cue in this reply at all." >/dev/null
+  [ "$(wc -l < "$LOG")" = "$n0" ] || fail "F71: a non-cue reply was logged"
+  # evidence: bash recall.py, mcp tool, auto-recall injection: no row; evidence from an older turn does not count; a Bash call without recall.py does not count
+  for t in bash mcp auto; do cg a4 "$t" "As you said, the port is 8080." >/dev/null; done
+  [ "$(wc -l < "$LOG")" = "$n0" ] || fail "F71: evidence did not stop the row"
+  cg a5 old "As you said, the port is 8080." >/dev/null; cg a5 othertool "As you said, it is 8080." >/dev/null
+  [ "$(( $(wc -l < "$LOG") ))" = "$((n0 + 2))" ] || fail "F71: old or unrelated evidence counted"
+  # stop_hook_active: nothing
+  n0="$(wc -l < "$LOG")"; o="$(HANDOFF_CLAIM_GUARD=block cg a6 none "As you said." 1)"
+  [ -z "$o" ] && [ "$(wc -l < "$LOG")" = "$n0" ] || fail "F71: stop_hook_active was not honoured"
+  # block mode: the documented Stop output, once per user turn
+  o="$(HANDOFF_CLAIM_GUARD=block cg a7 none "As you said, it is 8080.")"
+  [ "$o" = '{"decision": "block", "reason": "You stated an earlier fact without searching. Search for it with recall, then correct or confirm it."}' ] || fail "F71: block output: $o"
+  o="$(HANDOFF_CLAIM_GUARD=block cg a7 none "As you said, it is 8080.")"; [ -z "$o" ] || fail "F71: second block in one turn"
+  o="$(HANDOFF_CLAIM_GUARD=block cg a8 none "As you said, it is 8080.")"; [ -n "$o" ] || fail "F71: a different session did not block"
+  o="$(HANDOFF_CLAIM_GUARD=block cg a7 bash "As you said, it is 8080.")"; [ -z "$o" ] || fail "F71: block with evidence"
+  # off switch: nothing and no row
+  n0="$(wc -l < "$LOG")"; o="$(HANDOFF_CLAIM_GUARD=0 cg a9 none "As you said.")"
+  [ -z "$o" ] && [ "$(wc -l < "$LOG")" = "$n0" ] || fail "F71: HANDOFF_CLAIM_GUARD=0"
+  # errors: exit 0, no output
+  r=0; o="$(echo "not json" | python3 "$HK")" || r=$?; [ "$r" = 0 ] && [ -z "$o" ] || fail "F71: bad stdin"
+  r=0; o="$(python3 -c 'import json; print(json.dumps({"session_id":"b","transcript_path":"/no/such","last_assistant_message":"As you said."}))' | HANDOFF_CLAIM_GUARD=block python3 "$HK")" || r=$?
+  [ "$r" = 0 ] && [ -z "$o" ] || fail "F71: missing transcript"
+  ok "F71: cues, evidence, shadow, block form, once per turn, stop_hook_active, off switch, errors"
+)
+# F70/F71: install, default off, dry-run, hook entries, kept message, uninstall, saved defaults
+(
+  set -e
+  export HOME="$T/f7071inst"; mkdir -p "$HOME/.claude"; F="$HOME/.claude/hooks"; FS="$HOME/.claude/settings.json"; DF="$HOME/.config/lossless-handoff/install-defaults"
+  echo '{"model": "opus"}' > "$FS"
+  for fl in reanchor claim-guard; do grep -q -- "--$fl" <<<"$("$ROOT/install.sh" --help)" || fail "F70/F71: --help lacks --$fl"; done
+  "$ROOT/install.sh" >/dev/null
+  [ ! -e "$F/reanchor.py" ] && [ ! -e "$F/claim-guard.py" ] && ! grep -Eq "reanchor|claim-guard" "$FS" "$F/.handoff-manifest.json" || fail "F70/F71: default install holds them"
+  ! grep -Eq "reanchor|claim-guard" <<<"$("$ROOT/install.sh" --dry-run)" || fail "F70/F71: default dry-run mentions them"
+  cp "$FS" "$T/f7071-before.json"
+  o="$("$ROOT/install.sh" --reanchor --claim-guard --dry-run)"
+  grep -q "install hook: .*/reanchor.py" <<<"$o" && grep -q "install hook: .*/claim-guard.py" <<<"$o" && grep -q "add PostToolUse reanchor hook" <<<"$o" && grep -q "add Stop claim-guard hook" <<<"$o" || fail "F70/F71: dry-run: $o"
+  [ ! -e "$F/reanchor.py" ] && cmp -s "$FS" "$T/f7071-before.json" || fail "F70/F71: dry-run changed something"
+  "$ROOT/install.sh" --reanchor --claim-guard >/dev/null
+  [ -x "$F/reanchor.py" ] && [ -x "$F/claim-guard.py" ] && grep -q '"reanchor.py"' "$F/.handoff-manifest.json" && grep -q '"claim-guard.py"' "$F/.handoff-manifest.json" || fail "F70/F71: file or manifest"
+  python3 - "$FS" "$F" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1])); f = sys.argv[2]
+ra = "python3 %s/reanchor.py" % f; cg = "python3 %s/claim-guard.py" % f
+g = [x for x in d["hooks"]["PostToolUse"] if any(h["command"] == ra for h in x["hooks"])]
+assert len(g) == 1 and g[0]["matcher"] == "*" and [h for h in g[0]["hooks"] if h["command"] == ra] == [{"type": "command", "command": ra, "timeout": 5}], g
+s = [x for x in d["hooks"]["Stop"] if any(h["command"] == cg for h in x["hooks"])]
+assert len(s) == 1 and [h for h in s[0]["hooks"] if h["command"] == cg] == [{"type": "command", "command": cg, "timeout": 5}], s
+assert d["model"] == "opus"
+PY
+  o="$("$ROOT/install.sh")"
+  grep -qx "reanchor: already installed, kept" <<<"$o" && grep -qx "claim-guard: already installed, kept" <<<"$o" || fail "F70/F71: kept message: $o"
+  o="$("$ROOT/install.sh" --no-reanchor --no-claim-guard)"
+  grep -qx "reanchor: already installed, kept" <<<"$o" && [ -x "$F/reanchor.py" ] && grep -q "reanchor.py" "$FS" || fail "F70/F71: --no-* removed it"
+  "$ROOT/install.sh" --reanchor --claim-guard >/dev/null
+  [ "$(grep -c "reanchor.py" "$FS")" = 1 ] && [ "$(grep -c "claim-guard.py" "$FS")" = 1 ] || fail "F70/F71: registered twice"
+  o="$("$ROOT/uninstall.sh" --dry-run)"; grep -q "reanchor.py" <<<"$o" && grep -q "claim-guard.py" <<<"$o" || fail "F70/F71: uninstall dry-run"
+  [ -e "$F/reanchor.py" ] || fail "F70/F71: uninstall dry-run removed a file"
+  "$ROOT/uninstall.sh" >/dev/null
+  [ ! -e "$F/reanchor.py" ] && [ ! -e "$F/claim-guard.py" ] && ! grep -Eq "reanchor|claim-guard" "$FS" || fail "F70/F71: uninstall left something"
+  python3 -c "import json,sys; d=json.load(open(sys.argv[1])); assert d == {'model': 'opus'}, d" "$FS" || fail "F70/F71: settings not restored"
+  # saved defaults
+  "$ROOT/install.sh" --save-defaults --reanchor --claim-guard >/dev/null
+  grep -qx "reanchor=1" "$DF" && grep -qx "claim_guard=1" "$DF" && [ -x "$F/reanchor.py" ] && [ -x "$F/claim-guard.py" ] || fail "F70/F71: --save-defaults"
+  "$ROOT/uninstall.sh" >/dev/null
+  o="$("$ROOT/install.sh" --dry-run)"; grep -q "saved defaults.*reanchor" <<<"$o" && grep -q "claim-guard.py" <<<"$o" || fail "F70/F71: saved default not applied: $o"
+  "$ROOT/install.sh" --no-reanchor --no-claim-guard >/dev/null
+  [ ! -e "$F/reanchor.py" ] && [ ! -e "$F/claim-guard.py" ] && grep -qx "reanchor=1" "$DF" || fail "F70/F71: --no-* did not skip, or touched the default"
+  "$ROOT/install.sh" --save-defaults --no-reanchor --no-claim-guard >/dev/null
+  ! grep -Eq "reanchor|claim_guard" "$DF" || fail "F70/F71: --save-defaults --no-* kept the lines"
+  ok "F70/F71: install, default off, dry-run, entries, kept message, uninstall, saved defaults"
+)
+
+# F72: HANDOFF_HOOKS_HOME replaces ~/.claude/hooks, with no fallback and no mixing of two trees.
+# HOME holds decoy files with other behaviour; a hook that reads one writes a line to $DECOY_LOG.
+(
+  set -e
+  D="$T/f72"; mkdir -p "$D"; export HOME="$D/home"; REAL="$HOME/.claude/hooks"; PRIV="$D/priv"; W="$D/work"
+  mkdir -p "$REAL" "$PRIV" "$W" "$D/state"; export HANDOFF_STATE_DIR="$D/state"; export DECOY_LOG="$D/decoy.log"; : > "$DECOY_LOG"
+  unset HANDOFF_HOOKS_HOME HANDOFF_RECALL_RULES
+  for f in recall.py postcompact-inject.py precompact-handoff.py reanchor.py; do
+    printf 'import os\nopen(os.environ["DECOY_LOG"], "a").write("%s\\n")\nprint("DECOYOUT")\n' "$f" > "$REAL/$f"
+  done
+  : > "$REAL/.recall-rules"; : > "$REAL/recall-mcp.py"
+  decoy_clean() { [ ! -s "$DECOY_LOG" ] || fail "F72: $1 read a decoy file: $(cat "$DECOY_LOG")"; }
+  POST="$ROOT/hooks/postcompact-inject.py"
+  sub() { printf '{"session_id":"s72","cwd":"%s","agent_id":"agx","agent_type":"general-purpose"}' "$W" | python3 "$POST" --subagent-start; }
+  ctx() { python3 -c "import sys,json; print(json.load(sys.stdin)['hookSpecificOutput']['additionalContext'])"; }
+  # postcompact-inject: a private folder without recall.py gives no recall line, although HOME has one (no fallback)
+  o="$(HANDOFF_HOOKS_HOME="$PRIV" sub)"; [ -z "$o" ] || fail "F72: postcompact-inject used a file outside HANDOFF_HOOKS_HOME: $o"
+  decoy_clean postcompact-inject
+  # with recall.py in the private folder: the recall line, and the HOME marker and HOME recall-mcp.py are not seen
+  cp "$ROOT/hooks/recall.py" "$PRIV/recall.py"
+  o="$(HANDOFF_HOOKS_HOME="$PRIV" sub | ctx)"
+  grep -q "^- recall: " <<<"$o" && ! grep -q "recall rule:" <<<"$o" && ! grep -q "search_earlier_chat" <<<"$o" || fail "F72: postcompact-inject saw the HOME marker or HOME recall-mcp.py: $o"
+  # the private folder holds the marker and recall-mcp.py: both are seen
+  : > "$PRIV/.recall-rules"; : > "$PRIV/recall-mcp.py"
+  o="$(HANDOFF_HOOKS_HOME="$PRIV" sub | ctx)"
+  grep -q "^- recall rule: " <<<"$o" && grep -q "search_earlier_chat" <<<"$o" || fail "F72: postcompact-inject ignored the private marker: $o"
+  # HOME marker alone (override unset): seen, as before. Override not a folder: as if unset.
+  o="$(sub | ctx)"; grep -q "^- recall rule: " <<<"$o" || fail "F72: unset override changed the behaviour: $o"
+  o="$(HANDOFF_HOOKS_HOME="$D/nonexistent" sub | ctx)"; grep -q "^- recall rule: " <<<"$o" || fail "F72: a missing folder was not ignored: $o"
+  o="$(HANDOFF_HOOKS_HOME="" sub | ctx)"; grep -q "^- recall rule: " <<<"$o" || fail "F72: an empty value was not ignored: $o"
+  rm -f "$PRIV/.recall-rules" "$PRIV/recall-mcp.py" "$PRIV/recall.py"
+  # auto-recall: the hook file sits in the repo next to a real recall.py, and HOME holds a decoy; neither is used
+  PR="what did we decide earlier about the staging database rotation policy"
+  o="$(printf '{"prompt":"%s","cwd":"%s","session_id":"s72"}' "$PR" "$W" | HANDOFF_HOOKS_HOME="$PRIV" python3 "$ROOT/hooks/auto-recall.py")"
+  [ -z "$o" ] || fail "F72: auto-recall printed with an empty private folder: $o"
+  decoy_clean auto-recall
+  printf '{"prompt":"%s","cwd":"%s","session_id":"s72"}' "$PR" "$W" | python3 "$ROOT/hooks/auto-recall.py" >/dev/null || true
+  grep -q "^recall.py$" "$DECOY_LOG" || fail "F72: control: without the override auto-recall should load the HOME copy"
+  : > "$DECOY_LOG"
+  # recall-mcp: a tool call with an empty private folder finds no recall.py (no HOME copy, no copy next to the file)
+  o="$(printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"search_earlier_chat","arguments":{"query":"staging"}}}' | (cd "$W" && HANDOFF_HOOKS_HOME="$PRIV" python3 "$ROOT/hooks/recall-mcp.py"))"
+  grep -q '"isError": true' <<<"$o" && grep -q "recall.py not found" <<<"$o" || fail "F72: recall-mcp used a recall.py outside HANDOFF_HOOKS_HOME: $o"
+  decoy_clean recall-mcp
+  # reanchor: it needs postcompact-inject.py from the private folder; none there means no output
+  python3 - "$D" <<'PY'
+import json, sys
+d = sys.argv[1]
+rows = [{"type": "user", "message": {"role": "user", "content": "hi"}},
+        {"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": "ok"}],
+         "usage": {"input_tokens": 10, "cache_read_input_tokens": 59985, "cache_creation_input_tokens": 5, "output_tokens": 3}}}]
+open(d + "/t60k.jsonl", "w").write("".join(json.dumps(r) + "\n" for r in rows))
+PY
+  o="$(printf '{"session_id":"s72r","transcript_path":"%s","cwd":"%s","hook_event_name":"PostToolUse","tool_name":"Bash"}' "$D/t60k.jsonl" "$W" | HANDOFF_HOOKS_HOME="$PRIV" python3 "$ROOT/hooks/reanchor.py")"
+  [ -z "$o" ] || fail "F72: reanchor printed with an empty private folder: $o"
+  decoy_clean reanchor
+  # claim-guard reads no file from the hooks folder: the same output with the override and with decoys
+  o="$(printf '{"session_id":"s72","transcript_path":"%s","stop_hook_active":false,"last_assistant_message":"Done."}' "$D/t60k.jsonl" | HANDOFF_HOOKS_HOME="$PRIV" python3 "$ROOT/hooks/claim-guard.py")"
+  [ -z "$o" ] || fail "F72: claim-guard output: $o"
+  decoy_clean claim-guard
+  # precompact-handoff (and its parts): the recall line of the handoff comes only from the private folder
+  python3 - "$D" "$W" <<'PY'
+import json, sys
+d = sys.argv[1]
+rows = [{"type": "user", "message": {"content": "PRIVMARK please fix the importer"}},
+        {"type": "assistant", "message": {"content": [{"type": "text", "text": "Noted."}]}}]
+open(d + "/pre72.jsonl", "w").write("\n".join(json.dumps(r) for r in rows) + "\n")
+PY
+  pre() { printf '{"session_id":"%s","cwd":"%s","transcript_path":"%s","trigger":"auto"}' "$1" "$W" "$D/pre72.jsonl" | HANDOFF_HOOKS_HOME="$PRIV" HANDOFF_LEDGER=0 python3 "$ROOT/hooks/precompact-handoff.py" >/dev/null 2>&1 || true; }
+  pre p72a
+  grep -q "PRIVMARK" "$D/state/p72a-latest.md" && ! grep -q "^- recall: " "$D/state/p72a-latest.md" || fail "F72: precompact-handoff used a recall.py outside HANDOFF_HOOKS_HOME"
+  cp "$ROOT/hooks/recall.py" "$PRIV/recall.py"; pre p72b
+  grep -q "^- recall: " "$D/state/p72b-latest.md" || fail "F72: precompact-handoff ignored the private recall.py"
+  decoy_clean precompact-handoff
+  ok "F72: no hook or part reads ~/.claude/hooks when HANDOFF_HOOKS_HOME is a folder; unset, empty or missing value: as before"
+)
+
+# PR #32 review fixes: parallel re-anchor, notification turns, foreign hook on a default install, override path in printed commands,
+# agents file under the override, F68 without a ledger, a query that starts with "-", the kept line, file modes
+(
+  set -e
+  D="$T/rv"; mkdir -p "$D"; export HOME="$D/home"; W="$D/work"; mkdir -p "$HOME/.claude" "$W" "$D/fakebin"
+  export HANDOFF_STATE_DIR="$D/state"; mkdir -p "$HANDOFF_STATE_DIR"; unset HANDOFF_HOOKS_HOME HANDOFF_RECALL_RULES HANDOFF_REANCHOR HANDOFF_REANCHOR_TOKENS HANDOFF_CLAIM_GUARD
+  mode_of() { python3 -c 'import os,sys; print(oct(os.stat(sys.argv[1]).st_mode & 0o777)[2:])' "$1"; }
+  # a ledger with one rule for $W, and a transcript past 50,000 tokens
+  KEY="$(python3 -c 'import hashlib,os,re,sys; r=os.path.realpath(sys.argv[1]); print(re.sub(r"[^A-Za-z0-9._-]","_",os.path.basename(r))[:40]+"-"+hashlib.sha1(r.encode()).hexdigest()[:8])' "$W")"
+  git -C "$W" init -q
+  KEY="$(python3 -c 'import hashlib,os,re,sys; r=os.path.realpath(sys.argv[1]); print(re.sub(r"[^A-Za-z0-9._-]","_",os.path.basename(r))[:40]+"-"+hashlib.sha1(r.encode()).hexdigest()[:8])' "$W")"
+  mkdir -p "$HANDOFF_STATE_DIR/projects/$KEY"
+  echo "- D1 [2026-11-01] [rule] Never push to main | why: the user asked" > "$HANDOFF_STATE_DIR/projects/$KEY/decisions.md"
+  python3 - "$D" <<'PY'
+import json, sys
+d = sys.argv[1]
+rows = [{"type": "user", "message": {"role": "user", "content": "hi"}},
+        {"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": "ok"}],
+         "usage": {"input_tokens": 10, "cache_read_input_tokens": 59985, "cache_creation_input_tokens": 5, "output_tokens": 3}}},
+        {"type": "assistant", "message": {"role": "assistant", "model": "<synthetic>", "content": [{"type": "text", "text": "x"}],
+         "usage": {"input_tokens": 0, "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0, "output_tokens": 0}}}]
+open(d + "/t60k.jsonl", "w").write("".join(json.dumps(r) + "\n" for r in rows))
+PY
+  # 8 parallel re-anchor runs inject once; the block has no SubagentStart preamble; the state files are 0600
+  for i in 1 2 3 4 5 6 7 8; do
+    printf '{"session_id":"par","transcript_path":"%s","cwd":"%s","hook_event_name":"PostToolUse","tool_name":"Bash"}' "$D/t60k.jsonl" "$W" | python3 "$ROOT/hooks/reanchor.py" > "$D/par$i.out" &
+  done
+  wait
+  n=0; for i in 1 2 3 4 5 6 7 8; do [ -s "$D/par$i.out" ] && n=$((n + 1)); done
+  [ "$n" = 1 ] || fail "F70: $n of 8 parallel runs injected"
+  cat "$D"/par*.out | grep -q "Never push to main" || fail "F70: the rule is missing from the injection"
+  ! cat "$D"/par*.out | grep -q "These are the user's standing rules for the main session" || fail "F70: the SubagentStart preamble is in the re-anchor text"
+  [ "$(mode_of "$HANDOFF_STATE_DIR/reanchor-par.json")" = 600 ] && [ "$(mode_of "$HANDOFF_STATE_DIR/reanchor-par.lock")" = 600 ] || fail "F70: state file mode"
+  [ "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["anchor"])' "$HANDOFF_STATE_DIR/reanchor-par.json")" = 60000 ] || fail "F70: a zero-usage entry set the anchor"
+  # F71: a task-notification entry and a compact summary are not user messages
+  python3 - "$D" <<'PY'
+import json, sys
+d = sys.argv[1]
+rows = [{"type": "user", "uuid": "u1", "message": {"role": "user", "content": "please check the config"}},
+        {"type": "assistant", "message": {"role": "assistant", "content": [{"type": "tool_use", "id": "t1", "name": "Bash", "input": {"command": "python3 ~/.claude/hooks/recall.py search config"}}]}},
+        {"type": "user", "uuid": "u2", "message": {"role": "user", "content": "<task-notification>done</task-notification>"}},
+        {"type": "user", "uuid": "u3", "isCompactSummary": True, "message": {"role": "user", "content": "This session is being continued from a summary"}}]
+open(d + "/cg.jsonl", "w").write("".join(json.dumps(r) + "\n" for r in rows))
+rows2 = rows[:1] + [{"type": "user", "uuid": "u4", "message": {"role": "user", "content": "and what else"}}]
+open(d + "/cg2.jsonl", "w").write("".join(json.dumps(r) + "\n" for r in rows2))
+PY
+  cg() { printf '{"session_id":"cg","transcript_path":"%s","stop_hook_active":false,"last_assistant_message":"As we decided, use sqlite."}' "$1" | python3 "$ROOT/hooks/claim-guard.py"; }
+  cg "$D/cg.jsonl" >/dev/null; [ ! -e "$HANDOFF_STATE_DIR/claim-guard.jsonl" ] || fail "F71: a notification or compact-summary entry reset the user turn"
+  cg "$D/cg2.jsonl" >/dev/null; [ -s "$HANDOFF_STATE_DIR/claim-guard.jsonl" ] || fail "F71: control: a cue with no evidence was not logged"
+  [ "$(mode_of "$HANDOFF_STATE_DIR/claim-guard.jsonl")" = 600 ] || fail "F71: claim-guard.jsonl mode"
+  # F71: no lookback before the last user message (an injection before it is not evidence)
+  python3 - "$D" <<'PY'
+import json, sys
+d = sys.argv[1]
+rows = [{"type": "attachment", "attachment": {"content": "Lossless Handoff auto-recall: earlier messages"}},
+        {"type": "user", "uuid": "u5", "message": {"role": "user", "content": "what did we decide"}}]
+open(d + "/cg3.jsonl", "w").write("".join(json.dumps(r) + "\n" for r in rows))
+PY
+  n0="$(wc -l < "$HANDOFF_STATE_DIR/claim-guard.jsonl" | tr -d " ")"; cg "$D/cg3.jsonl" >/dev/null
+  [ "$(wc -l < "$HANDOFF_STATE_DIR/claim-guard.jsonl" | tr -d " ")" = $((n0 + 1)) ] || fail "F71: an injection before the last user message counted as evidence"
+  # default install: a foreign reanchor.py or claim-guard.py hook keeps exit 0, as on main
+  mkdir -p "$HOME/.claude"
+  cat > "$HOME/.claude/settings.json" <<'JSON'
+{"hooks": {"PostToolUse": [{"matcher": "*", "hooks": [{"type": "command", "command": "python3 /opt/other/reanchor.py"}]}],
+           "Stop": [{"hooks": [{"type": "command", "command": "python3 /opt/other/claim-guard.py"}]}]}}
+JSON
+  r=0; "$ROOT/install.sh" >/dev/null 2>&1 || r=$?
+  [ "$r" = 0 ] || fail "F70/F71: a default install exited $r because of a foreign reanchor.py or claim-guard.py hook"
+  grep -q "/opt/other/reanchor.py" "$HOME/.claude/settings.json" || fail "F70: the foreign hook was removed"
+  "$ROOT/uninstall.sh" >/dev/null 2>&1 || true
+  # F72: printed recall commands, the footer and the agents file use the override folder
+  PRIV="$D/priv"; mkdir -p "$PRIV/agents"; cp "$ROOT/hooks/recall.py" "$PRIV/recall.py"
+  o="$(printf '{"session_id":"x","cwd":"%s","agent_id":"a","agent_type":"g"}' "$W" | HANDOFF_HOOKS_HOME="$PRIV" python3 "$ROOT/hooks/postcompact-inject.py" --subagent-start)"
+  python3 - "$o" "$PRIV" <<'PY'
+import json, sys
+c = json.loads(sys.argv[1])["hookSpecificOutput"]["additionalContext"]; p = sys.argv[2]
+assert "python3 %s/recall.py search" % p in c and "~/.claude/hooks/recall.py" not in c, c
+assert "ask the recall subagent" not in c, c
+PY
+  mkdir -p "$HOME/.claude/agents"; printf '<!-- lossless-handoff:recall-agent -->\n' > "$HOME/.claude/agents/recall.md"
+  o="$(printf '{"session_id":"x","cwd":"%s","agent_id":"a","agent_type":"g"}' "$W" | HANDOFF_HOOKS_HOME="$PRIV" python3 "$ROOT/hooks/postcompact-inject.py" --subagent-start)"
+  ! grep -q "ask the recall subagent" <<<"$o" || fail "F72: the HOME agents file was used under the override"
+  printf '<!-- lossless-handoff:recall-agent -->\n' > "$PRIV/agents/recall.md"
+  o="$(printf '{"session_id":"x","cwd":"%s","agent_id":"a","agent_type":"g"}' "$W" | HANDOFF_HOOKS_HOME="$PRIV" python3 "$ROOT/hooks/postcompact-inject.py" --subagent-start)"
+  grep -q "ask the recall subagent" <<<"$o" || fail "F72: the override agents file was not used"
+  # F68: with the marker and no ledger, startup prints the recall line and the rule line; without it, nothing
+  W2="$D/work2"; mkdir -p "$W2"; git -C "$W2" init -q; : > "$PRIV/.recall-rules"
+  o="$(printf '{"cwd":"%s"}' "$W2" | HANDOFF_HOOKS_HOME="$PRIV" python3 "$ROOT/hooks/postcompact-inject.py" --ledger --part 1)"
+  python3 - "$o" "$PRIV" <<'PY'
+import json, sys
+c = json.loads(sys.argv[1])["hookSpecificOutput"]["additionalContext"].split("\n")
+assert c[0].startswith("- recall: ") and "%s/recall.py" % sys.argv[2] in c[0], c
+assert c[1].startswith("- recall rule: ") and len(c) == 2, c
+PY
+  rm -f "$PRIV/.recall-rules"
+  [ -z "$(printf '{"cwd":"%s"}' "$W2" | HANDOFF_HOOKS_HOME="$PRIV" python3 "$ROOT/hooks/postcompact-inject.py" --ledger --part 1)" ] || fail "F68: output without the marker and without a ledger"
+  # F72: the auto-recall footer
+  python3 - "$HOME" "$W" <<'PY'
+import json, os, re, sys
+home, w = sys.argv[1:3]
+real = os.path.realpath(w)
+pd = os.path.join(home, ".claude", "projects", re.sub(r"[^A-Za-z0-9]", "-", real)); os.makedirs(pd)
+rows = [{"type": "user", "timestamp": "2026-11-19T10:00:00Z", "cwd": real, "sessionId": "rvsess", "uuid": "u1",
+         "message": {"role": "user", "content": "Our staging database rotation policy is every ninety days for all credentials"}}]
+open(os.path.join(pd, "rvsess.jsonl"), "w").write("".join(json.dumps(r) + "\n" for r in rows))
+PY
+  o="$(printf '{"prompt":"what did we decide earlier about the staging database rotation policy","cwd":"%s","session_id":"rvcur"}' "$W" | HANDOFF_HOOKS_HOME="$PRIV" python3 "$ROOT/hooks/auto-recall.py")"
+  [ "$(tail -n 1 <<<"$o")" = "Open one in full: python3 $PRIV/recall.py open <id>" ] || fail "F72: auto-recall footer: $o"
+  # F69: a query that starts with "-" is text; the project comes from CLAUDE_PROJECT_DIR; the fallback protocol
+  o="$(printf '%s\n%s\n' '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"search_earlier_chat","arguments":{"query":"-x"}}}' '{"jsonrpc":"2.0","id":2,"method":"initialize","params":{"protocolVersion":"1999-01-01"}}' | (cd "$D" && CLAUDE_PROJECT_DIR="$W" python3 "$ROOT/hooks/recall-mcp.py"))"
+  python3 - "$o" <<'PY'
+import json, sys
+rows = [json.loads(x) for x in sys.argv[1].splitlines()]
+assert rows[0]["result"].get("isError") in (None, False) and rows[0]["result"]["content"][0]["text"] == "no matches", rows[0]
+assert rows[1]["result"]["protocolVersion"] == "2025-11-25", rows[1]
+PY
+  printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"search_earlier_chat","arguments":{"query":"staging"}}}' | (cd "$D" && CLAUDE_PROJECT_DIR="$W" python3 "$ROOT/hooks/recall-mcp.py") | grep -q "ninety days" || fail "F69: CLAUDE_PROJECT_DIR was not used"
+  [ "$(mode_of "$HANDOFF_STATE_DIR/recall-mcp.jsonl")" = 600 ] || fail "F69: recall-mcp.jsonl mode"
+  # F69: the server is registered already: the kept line, and no add call
+  cat > "$D/fakebin/claude" <<'SH'
+#!/bin/sh
+echo "$*" >> "$FAKE_CLAUDE_LOG"
+if [ "$1 $2" = "mcp get" ]; then echo "lossless-recall:"; echo "  Status: Connected"; fi
+exit 0
+SH
+  chmod +x "$D/fakebin/claude"; export FAKE_CLAUDE_LOG="$D/claude.args"; : > "$FAKE_CLAUDE_LOG"
+  o="$(PATH="$D/fakebin:$PATH" "$ROOT/install.sh" --recall-mcp)"
+  grep -qx "recall-mcp: already installed, kept" <<<"$o" && ! grep -q "mcp add" "$FAKE_CLAUDE_LOG" || fail "F69: registered server: $o / $(cat "$FAKE_CLAUDE_LOG")"
+  PATH="$D/fakebin:$PATH" "$ROOT/uninstall.sh" >/dev/null 2>&1 || true
+  ok "PR #32 review fixes: parallel re-anchor, notification turns, no lookback, foreign hook, override paths, agents file, no-ledger rule line, -x query, kept line, file modes"
 )
 
 "$ROOT/uninstall.sh" >"$T/un.out"

@@ -41,8 +41,8 @@ RECALL_LINE = ("- recall: earlier chats in this project are searchable word for 
 
 def recall_path():
     """F44.11(a): ~/.claude/hooks/recall.py (HOME from the environment) or recall.py next to this hook; None if neither."""
-    for p in (os.path.join(os.path.expanduser("~"), ".claude", "hooks", "recall.py"),
-              os.path.join(os.path.dirname(os.path.abspath(__file__)), "recall.py")):
+    for p in _hook_candidates("recall.py", os.path.join(os.path.expanduser("~"), ".claude", "hooks", "recall.py"),
+                              os.path.join(os.path.dirname(os.path.abspath(__file__)), "recall.py")):
         if os.path.isfile(p):
             return p
     return None
@@ -55,9 +55,12 @@ RECALL_AGENT_SENTENCE = ("For wide lookups (many hits, long messages, or a whole
 
 
 def recall_agent_ours():
-    """F55.c: ~/.claude/agents/recall.md exists and holds our marker line."""
+    """F55.c: ~/.claude/agents/recall.md exists and holds our marker line. F72: with the override, only
+    <HANDOFF_HOOKS_HOME>/agents/recall.md."""
     try:
-        with open(os.path.join(os.path.expanduser("~"), ".claude", "agents", "recall.md"), encoding="utf-8",
+        h = _hooks_home()
+        ap = os.path.join(h, "agents", "recall.md") if h else os.path.join(os.path.expanduser("~"), ".claude", "agents", "recall.md")
+        with open(ap, encoding="utf-8",
                   errors="replace") as f:
             return RECALL_AGENT_MARK in f.read()
     except OSError:
@@ -67,7 +70,9 @@ def recall_agent_ours():
 def recall_line():
     if not recall_path():
         return ""
-    return RECALL_LINE[:-1] + (" " + RECALL_AGENT_SENTENCE if recall_agent_ours() else "") + "\n"
+    line = RECALL_LINE[:-1] + (" " + RECALL_AGENT_SENTENCE if recall_agent_ours() else "") + "\n"
+    h = _hooks_home()
+    return line.replace("~/.claude/hooks/recall.py", h.rstrip("/") + "/recall.py") if h else line
 
 
 def summary_enabled():

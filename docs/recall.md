@@ -68,6 +68,33 @@ Open one in full: python3 ~/.claude/hooks/recall.py open <id>
 - When the time runs out, the hook stops itself. A search child process (`rg` or `git`) can stay alive for a moment and then ends by itself.
 - Set `HANDOFF_AUTO_RECALL=0` to switch it off. Each run that passes the trigger adds one line to `~/.local/state/claude-handoffs/auto-recall.jsonl` (time, session id, the matched cue phrase or `quote`, number of hits, milliseconds, `timed_out`). The line holds no prompt text and no quotes.
 
+## Strict recall rule and the recall tool
+
+Two more opt-in parts help the model search. Neither one forces a search: the model still decides.
+
+**Strict recall rule (`./install.sh --recall-rules`).** The installer writes the empty marker file `~/.claude/hooks/.recall-rules`. While the marker exists, every place that injects the recall line (session start after a compaction, at startup and at resume, and a new subagent) adds this line directly after the recall line:
+
+```
+- recall rule: before you state an earlier number, path, name, command or decision, search for it. Do not answer from memory. If the search finds nothing, say so.
+```
+
+Set `HANDOFF_RECALL_RULES=0` to switch it off at run time. The output is then the same as without the marker. Each inject row in `receipts.jsonl` has `"recall_rules": true` or `false`.
+
+**Recall tool (`./install.sh --recall-mcp`).** The installer copies `recall-mcp.py` and registers it with `claude mcp add --scope user lossless-recall -- python3 ~/.claude/hooks/recall-mcp.py`. It is a local MCP server (stdio only). It has two tools, and Claude Code loads both at the start of a session:
+
+- `search_earlier_chat` with `query` (required), `role` (`user`, `assistant` or `any`, default `any`) and `limit` (1 to 10, default 5). It uses the scope and ranking of `recall.py search` and prints one line for each hit, with secrets masked. With no hits it prints `no matches`.
+- `open_message` with `id` (required, from a hit) and `full` (default false). It prints the same text as `recall.py open <id>`.
+
+A result has at most 12,000 characters. A bad input or an unknown id gives a tool result with `isError: true` and one line of text. When the tool is installed, the recall line ends with `Or call the search_earlier_chat tool.` Each call adds one row (`ts`, `tool`, `hits`, `ms`; no query text) to `recall-mcp.jsonl`. `./uninstall.sh` runs `claude mcp remove lossless-recall --scope user`.
+
+## Re-anchor and claim guard
+
+Both are opt-in. They help when the model forgets a rule or states an earlier fact from memory.
+
+**Re-anchor** (`./install.sh --reanchor`). A `PostToolUse` hook (`reanchor.py`, matcher `*`, timeout 5). It reads the token count of the context from the end of the transcript, the same way as the nudge. When the count is 50,000 tokens or more above the last anchor, it adds one note: a first line, the active rules of the project (the same block that a subagent gets), and the recall line. Then it stores the new anchor. After a compaction the count is below the anchor, so the anchor is reset and nothing is printed. If the project has no active rule, nothing is printed. Set `HANDOFF_REANCHOR=0` to switch it off and `HANDOFF_REANCHOR_TOKENS` (10,000 to 500,000) to change the interval. Each note adds one `event: "reanchor"` line to `health.jsonl` (tokens and characters only). On a 35 MB transcript, a run that prints nothing takes about 20 ms (p95 22 ms). A run that prints the note takes about 58 ms.
+
+**Claim guard** (`./install.sh --claim-guard`). A `Stop` hook (`claim-guard.py`, timeout 5). It looks at the last reply for 12 cue phrases such as "as we decided", "you said" and "last time". If there is a cue and, since your last message, no recall search (a Bash call with `recall.py`, a `mcp__lossless-recall__` tool call, or an auto-recall note), it acts by mode. In the default shadow mode it only adds one line to `claim-guard.jsonl` (time, session id, the cue; no text) and prints nothing. In live mode (`HANDOFF_CLAIM_GUARD=block`) it also asks the model to search, once per user turn. Read the log before you switch to live mode. See [limitations](limitations.md).
+
 ## Recall commands
 
 `recall.py` searches every earlier chat in the same project (all sessions whose folder is inside the git root of the project). It is read-only and works over the transcripts that Claude Code already keeps. A summary keeps decisions but loses exact commands, numbers, paths and your own wording. Recall gets them back.

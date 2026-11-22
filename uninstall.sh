@@ -30,7 +30,7 @@ hooks_dir = os.environ["HC_HOOKS"]
 ts = os.environ["HC_TS"]
 marker_path = os.path.join(hooks_dir, ".claude-handoff-install.json")
 tag = "[dry-run] " if dry else ""
-ours = {"python3 %s/%s" % (hooks_dir, s) for s in ("precompact-handoff.py", "handoff-nudge.py", "auto-recall.py")}
+ours = {"python3 %s/%s" % (hooks_dir, s) for s in ("precompact-handoff.py", "handoff-nudge.py", "auto-recall.py", "reanchor.py", "claim-guard.py")}
 ours |= {"python3 %s/postcompact-inject.py --part %d" % (hooks_dir, n) for n in (1, 2, 3)}
 ours |= {"python3 %s/postcompact-inject.py --ledger --part %d" % (hooks_dir, n) for n in (1, 2, 3)}
 ours.add("python3 %s/postcompact-inject.py --ledger" % hooks_dir)
@@ -184,7 +184,17 @@ if [ -e "$HOOKS_DIR/handoff-canary" ] || [ -e "$HOOKS_DIR/handoff-canary.sh" ]; 
   fi
 fi
 
-for f in precompact-handoff.py postcompact-inject.py handoff-nudge.py auto-recall.py recall.py claims.json .handoff-manifest.json .claude-handoff-install.json; do
+# F69: unregister the MCP server first (needs the claude command; a failure is ignored). Never edit ~/.claude.json directly.
+if [ -e "$HOOKS_DIR/recall-mcp.py" ]; then
+  if command -v claude >/dev/null 2>&1; then
+    say "run: claude mcp remove lossless-recall --scope user"
+    [ "$DRY" = 1 ] || claude mcp remove lossless-recall --scope user >/dev/null 2>&1 || true
+  else
+    echo "recall-mcp: claude CLI not found; unregister it yourself with: claude mcp remove lossless-recall --scope user"
+  fi
+fi
+
+for f in precompact-handoff.py postcompact-inject.py handoff-nudge.py auto-recall.py reanchor.py claim-guard.py recall-mcp.py .recall-rules recall.py claims.json .handoff-manifest.json .claude-handoff-install.json; do
   if [ -e "$HOOKS_DIR/$f" ]; then
     say "remove $HOOKS_DIR/$f"
     [ "$DRY" = 1 ] || rm "$HOOKS_DIR/$f"

@@ -2,6 +2,39 @@
 
 Lossless Handoff, formerly claude-handoff.
 
+## [0.16.0] - 2026-11-22
+
+Four opt-in search levers: a strict recall rule line, a recall MCP tool, a re-anchor hook and a claim guard (hooks 1.18.0). New F68 to F72 in `docs/spec.md`.
+
+### Upgrade notes
+
+- The default install is the same as before. All four levers are off. Add them with `./install.sh --recall-rules`, `--recall-mcp`, `--reanchor` and `--claim-guard` (or save them with `--save-defaults`).
+- `--no-recall-rules` and `--no-recall-mcp` skip a part for one run. A rerun never removes an installed part. The installer prints `recall-rules: already installed, kept` or `recall-mcp: already installed, kept`.
+- `--recall-mcp` runs `claude mcp add --scope user lossless-recall -- python3 <hooks dir>/recall-mcp.py`. If `claude` is not on the PATH, the installer prints the command and still installs the file. `./uninstall.sh` runs `claude mcp remove lossless-recall --scope user`.
+- No lever forces a search.
+- Restart open Claude Code sessions after the install.
+
+### Changes
+
+- F68: with the marker file `~/.claude/hooks/.recall-rules`, the recall line is followed by one rule line in every session start and subagent start. `HANDOFF_RECALL_RULES=0` switches it off. Inject rows in `receipts.jsonl` have `recall_rules`.
+- F69: new `hooks/recall-mcp.py`, a stdio MCP server (name `lossless-recall`) with the tools `search_earlier_chat` and `open_message`. Secrets are masked, a result has at most 12,000 characters, and `recall-mcp.jsonl` holds no query text. The recall line names the tool when it is installed.
+- F72: `HANDOFF_HOOKS_HOME` replaces `~/.claude/hooks` for every hook and helper when it names an existing folder. No file is read from `~/.claude/hooks` then, and no copy next to the hook is used.
+- F69: a tool result is at most 12,000 characters in total, including the cut marker (it was up to 12,026).
+- Review fixes (F68 to F72):
+  - Re-anchor holds a lock from the anchor read to the anchor save, so parallel tool calls inject once. Its rules block has no SubagentStart preamble, and a zero-usage entry is skipped.
+  - Claim guard: a `<task-notification>`, `<bash-input>`, `<bash-stdout>` or `<local-command-` entry and a compact summary are not user messages. An auto-recall injection before the last user message is no evidence.
+  - Recall tool: the project comes from `CLAUDE_PROJECT_DIR` (else the working directory), a query that starts with `-` is text, and the fallback protocol version is `2025-11-25`. A rerun with the server already registered prints `recall-mcp: already installed, kept` and skips `claude mcp add`.
+  - A default install no longer treats a foreign `reanchor.py` or `claim-guard.py` hook as a conflict (as on 0.15.0).
+  - `HANDOFF_HOOKS_HOME` also sets the path in every printed recall command (recall line, summary node line, auto-recall footer) and the folder of the recall subagent file (`<folder>/agents/recall.md`).
+  - With the `.recall-rules` marker, session start prints the recall line and the rule line also when the project has no decisions list.
+  - New state files (`recall-mcp.jsonl`, `claim-guard.jsonl`, `reanchor-*.json`, `reanchor-*.lock`) have mode 0600.
+- All hook versions are 1.18.0. Product version 0.16.0.
+### Re-anchor and claim guard (opt-in)
+
+- New hook `hooks/reanchor.py` (`PostToolUse`, `--reanchor`, hooks 1.18.0). Each 50,000 tokens of context growth it repeats the active rules of the project. `HANDOFF_REANCHOR=0` and `HANDOFF_REANCHOR_TOKENS` control it. New mode `postcompact-inject.py --rules-block`. New F70 in `docs/spec.md`.
+- New hook `hooks/claim-guard.py` (`Stop`, `--claim-guard`, hooks 1.18.0). It logs replies that state an earlier fact without a recall search (shadow mode, default). `HANDOFF_CLAIM_GUARD=block` makes it ask for a search once per turn. New F71 in `docs/spec.md`.
+- Saved keys `reanchor` and `claim_guard`. A rerun keeps an installed hook and prints `reanchor: already installed, kept` or `claim-guard: already installed, kept`. `./uninstall.sh` removes both.
+
 ## [0.15.0] - 2026-11-20
 
 Auto-recall: an opt-in hook that searches the earlier chats when your prompt refers to the past (hooks 1.17.0). New F67 in `docs/spec.md`.

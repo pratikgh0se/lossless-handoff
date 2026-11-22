@@ -89,6 +89,7 @@ These versions add parts to the system. [architecture.md](architecture.md) shows
 | 1.14.0 and 1.14.1 | `llm_map.py` and its skill (moved to the separate llm-map project in 0.14.0). | [llm-map](llm-map.md) |
 | 1.14.2 | The nudge learns its window from past compactions (else 200,000) when `CLAUDE_CODE_AUTO_COMPACT_WINDOW` is not set, and health rows hold `window` and `window_source`. Reconcile sets `format_drift` when a session has injects and no `compact_boundary` record. `--prove`, the claims and `--check` show it. | [Limitations](limitations.md) |
 | 1.15.0 | One redaction function masks secrets as `[REDACTED:<kind>]` in handoff files, the decisions list and recall output. The default install is the core only (release 0.13.0). | [Install](install.md#install), SECURITY.md |
+| 1.18.0 | The opt-in strict recall rule line (`--recall-rules`) and the opt-in recall MCP tool `recall-mcp.py` (`--recall-mcp`). Release 0.16.0. | [Strict recall rule and the recall tool](recall.md#strict-recall-rule-and-the-recall-tool) |
 | 1.17.0 | The opt-in `auto-recall.py` hook (`UserPromptSubmit`, `./install.sh --auto-recall`): when the prompt refers to the past, it adds the top 3 recall hits to the context. Release 0.15.0. | [Auto-recall](recall.md#auto-recall) |
 | 1.16.0 | A subagent gets a preamble line before the rules: apply only the rules that fit the task, the task brief comes first. llm_map is no longer part of this repository (release 0.14.0). | [Subagents](hooks-in-detail.md#subagents) |
 

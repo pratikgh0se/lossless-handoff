@@ -334,8 +334,8 @@ def resolve_boundary(rc):
 
 def _load_recall():
     """Import recall.py (next to this hook, else ~/.claude/hooks); None if it is not there."""
-    for q in (os.path.join(os.path.dirname(os.path.abspath(__file__)), "recall.py"),
-              os.path.join(os.path.expanduser("~"), ".claude", "hooks", "recall.py")):
+    for q in _hook_candidates("recall.py", os.path.join(os.path.dirname(os.path.abspath(__file__)), "recall.py"),
+                              os.path.join(os.path.expanduser("~"), ".claude", "hooks", "recall.py")):
         if os.path.isfile(q):
             import importlib.util
             spec = importlib.util.spec_from_file_location("lh_recall", q)
