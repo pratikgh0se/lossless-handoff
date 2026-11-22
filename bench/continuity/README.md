@@ -114,14 +114,16 @@ Do not move to the next step until the current step passes. Each step proves som
 | Step | Command | Cost (estimate) | What it proves | Pass rule |
 |---|---|---|---|---|
 | 1. Offline self-tests | `python3 bench/continuity/test_litm.py` and `test_grader.py` | $0 | The logic: positions, probes, grading, validity rule, gates, checklist, regression of old runs | All tests pass |
-| 2. Preflight | `run.sh preflight --lh-path <checkout with the levers>` | about $1.9 (target: under $3) | The plumbing, on Haiku with a 30000 window: a compaction happens, the handoff is written and injected, the hooks and the MCP server work, the logs have the lines the report needs, the cost matches the estimate | The checklist prints PASS on every line. `run.sh check <run-id>` prints it again. The exit code is non-zero on a FAIL |
-| 3. Smoke | `run.sh litm3-smoke --lh-path ...` | about $67 (see note) | The real model, at the real size, with all arms and both conditions, N=1 and 3: the no-compaction session reaches 300k tokens and stays valid, the model searches in arm K, the cost per unit | No invalid session, controls pass, cost ratio at most 1.3 |
-| 4. Pilot | `run.sh litm3-pilot --lh-path ...` | about $233 | The size of the effects and the cost per unit on 2 dev seeds; the stop rule for the levers (H6) | H6 holds (K searches more than B), or stop and remove the levers |
-| 5. Full | `run.sh litm3-full --lh-path ...` | about $2,420 | The claims, on 20 report seeds | Run only when the pilot is clean and the owner says go |
+| 2. Preflight | `run.sh preflight --lh-path <checkout with the levers>` | about $3.8 to $4.9 (target: about $5 at most) | The plumbing, on Haiku with a 30000 window: a compaction happens, the handoff is written and injected, the hooks and the MCP server work, the logs have the lines the report needs, the cost matches the estimate | The checklist prints PASS on every line. `run.sh check <run-id>` prints it again. The exit code is non-zero on a FAIL |
+| 3. Smoke | `run.sh litm3-smoke --lh-path ...` | about $47 (see note) | The real model, at the real size, with all arms and both conditions, N=1 and 3: the no-compaction session reaches 300k tokens and stays valid, the model searches in arm K, the cost per unit | No invalid session, controls pass, cost ratio at most 1.3 |
+| 4. Pilot | `run.sh litm3-pilot --lh-path ...` | about $194 | The size of the effects and the cost per unit on 2 dev seeds; the stop rule for the levers (H6) | H6 holds (K searches more than B), or stop and remove the levers |
+| 5. Full | `run.sh litm3-full --lh-path ...` | about $5,600, or about $4,400 without arm R in the compaction condition (23 seeds, N up to 30) | The claims, on 20 report seeds | Run only when the pilot is clean and the owner says go |
 
 Note on step 3: the owner expected $12 to $25. The estimate for 1 seed, arms A, B, R and K, both conditions, N=1 and 3, is about $67, because the no-compaction session of design 3 alone is about $8 for each arm. For about $16 use `litm3-nc-smoke` (arms A and R, no compaction only). The preflight checks all other parts first.
 
 What the preflight checklist tests (each line prints PASS or FAIL):
+
+Round 4 added lines to this list (see the Round 4 section): the row count of every probe fork class; arms A, Z and O; the sha256 of the hook files; no foreign instructions record; no auto-memory file; the environment allow-list; the arm K MCP check turn and the rule line in every K fork; the deny-rule selfcheck; the Sonnet 300k turn (size, price, call cap). The preflight is now probe design 3 on Haiku and costs about $3.8 to $4.9, not $3.
 
 - a compaction happened in each compaction session (`compact_boundary` count);
 - a handoff receipt is in `receipts.jsonl` of the arm, and its text is in the transcript after the compaction;
@@ -249,3 +251,70 @@ Run the same arm on the same seeds twice, with two run ids. Then run `run.sh aa 
 | `fixtures/legacy-run/` | stored old-design run and its expected report (regression fixture) |
 | `thresholds.json` | pre-registered pass thresholds |
 | `seeds-dev.txt`, `seeds-report.txt` | seed lists |
+
+
+## Round 4: fixes from the methods audit
+
+An independent methods audit of the benchmark (verdict: fix first) found the faults below. Each fix has a self-test.
+
+### One main session, forked with the settings of each arm
+
+In the design-3 no-compaction condition, one main session runs for each seed. It runs as arm A, with no Lossless Handoff hooks. After it ends, arm A and then arms B, R and K fork it at the probe point. Each fork uses the settings of its arm: its hooks (a private copy), its environment, its MCP config and its allowed tools. The arms answer on one context, so the comparison is paired, and arms B, R and K do not pay for their own 300k-token session. This saves about $18 for each seed.
+
+What each arm tests in this condition (the main session had no hooks, so no compaction handoff and no reanchor ran in it):
+
+- A: plain Claude Code.
+- B: the startup injection only (the SessionStart `resume` matcher runs at the fork: the decisions ledger and the recall line). It tests nothing from the compaction handoff. B minus A is the null control.
+- R: B plus the auto-recall hook (UserPromptSubmit).
+- K: R plus the recall rule line (F68, in the injected text) and the recall MCP tool (F69). K here forks the session of arm A, so the reanchor hook (F70, PostToolUse) cannot fire: the fork has one turn and no earlier tool call. H6 and H7 test "recall rule line plus MCP tool", not "all levers".
+
+The runner records, for each fork, whether the startup injection and the rule line are in the fork transcript (`fork_injected`, `fork_rule_line`). The preflight FAILS if the rule line is missing in a K fork. Whether Claude Code runs the SessionStart hooks of a forked session is not documented. The preflight finds out before the money is spent. If it does not, the K claim must read "auto-recall and MCP only".
+
+### Non-literal forks, fork keys and row counts
+
+The old fork key was the same for the cued and the non-literal phrasing, so every non-literal fork was skipped (finding 1). The key and the marker now hold the phrasing name. The preflight and the gates compare the rows with the expected forks (arm x phrasing x condition x type; exact for the design-3 no-compaction condition). A missing class FAILS the preflight and trips a gate.
+
+The non-literal probe is a two-step word bridge, not a meaning match. The question shares no content word with the plant sentence. A bridge turn links the question words to the plant words through an alias ("the amber ledger"). The model must follow two word links. It is a weaker test than meaning search. Embedding search is off in the run (`RECALL_EMBED_URL` points to a closed port), so this benchmark cannot show a meaning-search gain.
+
+### Hook isolation (F72)
+
+Each arm with hooks (B, R, K) gets its own copy of the hooks of `--lh-path` in its state folder. The environment variable `HANDOFF_HOOKS_HOME` points the hooks to that copy (contract F72: with it set, a hook never reads `~/.claude/hooks`). Arm K also gets the F68 marker `.recall-rules` in its copy. The sha256 of every hook file of each arm goes to `sessions.jsonl` (`hook_sha256`). The preflight checks that the files still match. A live install during a run cannot change the arms. This needs the levers branch (F72) in `--lh-path`.
+
+### Machine state
+
+- The work base must be outside HOME. The runner refuses a work base below HOME, because Claude Code reads the `CLAUDE.md` files of parent folders (`--setting-sources project` does not stop it). The default is the system temp folder.
+- The preflight FAILS if any `instructions` record in a transcript names a file from outside the project folder of the session. The record shape of Claude Code is not documented. The check reads the keys `path`, `filePath`, `file_path`, `source` and `file`, and a record with no path counts as foreign. If the first real run shows another shape, fix `gates.instruction_paths`.
+- Auto-memory is off for every arm. Source: the installed binary (claude 2.1.326) holds the environment variable name `CLAUDE_CODE_DISABLE_AUTO_MEMORY` and the settings key `autoMemoryEnabled`. The runner sets both (`CLAUDE_CODE_DISABLE_AUTO_MEMORY=1` in the environment of every call, `autoMemoryEnabled: false` in the project settings). I found the names by a byte search in the binary; the public docs were not read. A session is invalid if its project memory folder holds any file afterwards.
+- `claude` gets an allow-listed environment, not the shell environment (which holds `CLAUDE_EFFORT`, `CLAUDE_CODE_CHILD_SESSION` and more). The list is `runner.ENV_ALLOW` and is written to `config.json` (`env_allowlist`). Each session record in `sessions.jsonl` has `env_keys` (names only, never values).
+
+### Arm K tools
+
+- The preflight runs one fork of arm K that must make one `mcp__lossless-recall__` call (it FAILS if none).
+- Claude Code may defer MCP tools and load them through `ToolSearch` (the binary holds the variable `ENABLE_TOOL_SEARCH`). Arm K therefore allows `ToolSearch`. The MCP check turn proves that the call works.
+
+### Gates
+
+- A failed session now counts: more than 10% failed sessions trips a gate (checked after every session).
+- One session that costs more than 2 times its own estimate (and more than $0.25 above it) trips a gate.
+- Every preset has a default budget of 1.5 times its estimate; the run pauses there (exit code 3). `--budget-usd` overrides it.
+- `resume --ignore-gates` needs `--i-know` and prints a warning.
+- The full preset runs 23 seeds, so `min_pairs` 20 survives 3 lost seeds. It includes N=30.
+
+### Preflight covers the gaps
+
+The preflight now has: a design-3 mini session on Haiku (75 turns, about 15 forks for each of arms A, B, R and K, all phrasings); arms A, Z and O; the deny-rule selfcheck; and one Sonnet turn with a paste of about 300k tokens (sent through stdin, because the command line is too short for it). The Sonnet turn records the real cost, checks whether the price per token is above the standard price (the price above 200k tokens) and checks that one cold-cache call stays under the call cap of $1.50. Estimate: about $3.8 at the standard price and about $4.9 if the price above 200k tokens is double (the total of all lines, with the assumptions printed by `cost.py`).
+
+### Controls, margins and the pilot stop rule (registered in thresholds.json v5, before any data)
+
+- Design-3 controls (no compaction): arm O (all plant turns, no filler) must score at least 95% on every phrasing, so the probe is answerable at zero distance. Arm Z (no history) must score at most 2%, so the answer cannot be guessed. If not, do not read that phrasing (Table L7).
+- Null control: B minus A (no compaction, cued) passes if it is at most 5 points and the interval holds 0. If not, the harness has an arm effect without the core handoff.
+- H7 prints "TOO EASY: no claim" if the accuracy of arm B (no compaction, neutral) is above 95%.
+- H5 is true by construction (plumbing check): the hook trigger depends only on the cue words of the probe. It is not a result about the model.
+- Pilot stop rule, as counts. Run the full run only if all of these hold: each of arms A, B, R and K has at least 10 probe forks (2 seeds x 5 types) in each phrasing, no-compaction condition; the parse rate is at least 98%; the K search rate minus the B search rate (neutral, no compaction) has a point estimate above 0 (two seeds give no interval claim); the null control passes; the controls pass; the invalid-session rate is at most 10%.
+
+### Smaller fixes
+
+- The question order inside a probe is a seeded shuffle (design 3), so that the order is not the position.
+- A retry is idempotent: if the transcript already holds the prompt, the prompt is not sent again and the recorded answer is used.
+- A session whose temp folder is lost restarts from turn 0 with a higher `attempt`; the report, the gates and the preflight drop the rows of the older attempts.
+- Estimates (assumed prices, plus or minus 40%): preflight about $3.8 to $4.9; smoke (A, B, R, K, both conditions, N=1,3) about $47; no-compaction smoke (`litm3-nc-smoke`) about $10; pilot about $194; full (23 seeds, N=1,3,10,30) about $5,600, or about $4,400 without arm R in the compaction condition.

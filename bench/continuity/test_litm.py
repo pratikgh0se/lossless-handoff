@@ -682,7 +682,7 @@ class Design3(unittest.TestCase):
             kd = k.hooks_dir()
             self.assertTrue(os.path.isfile(os.path.join(kd, ".recall-rules")))             # F68 marker, in K's own copy
             self.assertTrue(os.path.isfile(os.path.join(kd, "recall-mcp.py")))
-            self.assertEqual(b.hooks_dir(), os.path.join(lh, "hooks"))
+            self.assertEqual(b.hooks_dir(), os.path.join(b.statedir, "hooks"))
             self.assertFalse(os.path.exists(os.path.join(lh, "hooks", ".recall-rules")))   # the shared checkout is untouched
             mcp = json.loads(k.mcp_config())["mcpServers"]["lossless-recall"]
             self.assertEqual(mcp["args"], [os.path.join(kd, "recall-mcp.py")])
@@ -770,12 +770,18 @@ class Design3(unittest.TestCase):
     def test_cost_of_the_three_runs(self):
         smoke, _, _ = cost.estimate3(1, ["A", "B", "R", "K"], [1, 3], ["compact", "nocompact"])
         nc_smoke, _, _ = cost.estimate3(1, ["A", "R"], [1, 3, 10], ["nocompact"])
-        self.assertTrue(12 < nc_smoke < 22, nc_smoke)
+        self.assertTrue(8 < nc_smoke < 12, nc_smoke)
         pilot, _, _ = cost.estimate3(2, ["A", "B", "R", "K"], [1, 3, 10], ["compact", "nocompact"])
         full, _, _ = cost.estimate3(20, ["A", "B", "R", "K", "Z", "O"], [1, 3, 10], ["compact", "nocompact"])
-        self.assertTrue(50 < smoke < 90, smoke)
-        self.assertTrue(180 < pilot < 300, pilot)
+        self.assertTrue(40 < smoke < 60, smoke)
+        self.assertTrue(150 < pilot < 250, pilot)
         self.assertTrue(1900 < full < 3000, full)
+        nc_main, nc_forks = cost.d3_nc_main(), cost.d3_nc_forks()
+        self.assertLess(nc_forks, nc_main)                           # one main session for each seed: the forks are cheaper than the session
+        self.assertLess(cost.estimate3(1, ["A", "B", "R", "K"], [10], ["nocompact"])[0], 4 * cost.d3_nc_unit())    # saving: B, R and K do not run their own session
+        f23, _, _ = cost.estimate3(23, ["A", "B", "R", "K", "Z", "O"], [1, 3, 10, 30], ["compact", "nocompact"])
+        f23r, _, _ = cost.estimate3(23, ["A", "B", "R", "K", "Z", "O"], [1, 3, 10, 30], ["compact", "nocompact"], skip=(("R", "compact"),))
+        self.assertTrue(f23r < f23 and f23 > full, (f23, f23r))
         self.assertGreater(cost.d3_nc_unit(), cost.NC_UNIT)        # a 300k session costs more than the short one of design 2
         self.assertGreater(cost.ARM_FACTOR["K"], cost.ARM_FACTOR["R"])
         txt = "\n".join(cost.ASSUMPTIONS3)
@@ -788,7 +794,7 @@ class Design3(unittest.TestCase):
         self.assertIn("probe design 3", out)
         self.assertIn("Assumptions of the design-3 estimate", out)
         out2 = subprocess.run([sys.executable, os.path.join(HERE, "cost.py")], capture_output=True, text=True).stdout
-        for w in ("SMOKE (litm3-smoke)", "PILOT (litm3-pilot)", "FULL (litm3-full)", "H1 power at 20 seeds"):
+        for w in ("SMOKE (litm3-smoke)", "PILOT (litm3-pilot)", "FULL (litm3-full, 23 seeds, N up to 30)", "FULL VARIANT without arm R in the compaction condition", "PREFLIGHT (preflight)", "H1 power at 20 seeds"):
             self.assertIn(w, out2)
 
     def test_presets(self):
@@ -796,7 +802,7 @@ class Design3(unittest.TestCase):
             k = runner.KINDS[name]
             self.assertEqual((k["arms"], k["conditions"], k["probe_design"]), (arms, conds, 3))
             self.assertEqual(k["phrasings"], "cued,neutral,nonliteral")
-        self.assertEqual((runner.KINDS["litm3-pilot"]["seeds"], runner.KINDS["litm3-full"]["seeds"]), (2, 20))
+        self.assertEqual((runner.KINDS["litm3-pilot"]["seeds"], runner.KINDS["litm3-full"]["seeds"]), (2, 23))
         self.assertIn("litm3-smoke", open(os.path.join(HERE, "run.sh")).read())
 
 
@@ -821,32 +827,58 @@ def d3_rows(k_search, b_search):
     return rows
 
 
+PF_ARMS = ("A", "B", "R", "K", "Z", "O")
+
+
 def make_pf_run(root, **flaws):
-    """A fixture preflight run (arms B, R, K; one compaction session and one no-compaction session each) that passes every line.
-    flaws switch one thing off or wrong. Returns (run folder, projects folder)."""
+    """A fixture preflight run (arms A B R K Z O, design 3, both conditions; B R K in the no-compaction condition are forks of the session of arm A)
+    that passes every line. flaws switch one thing off or wrong. Returns (run folder, projects folder)."""
     run_id, work, projects = "pf", os.path.join(root, "work"), os.path.join(root, "projects")
     rd = os.path.join(root, "res", run_id)
     for d in (rd, work, projects):
         os.makedirs(d, exist_ok=True)
-    cfg = {"run_id": run_id, "work_base": work, "nc_estimate_tokens": 72000, "kind": "preflight", "arms": ["B", "R", "K"], "seeds": [1]}
+    cfg = {"run_id": run_id, "work_base": work, "nc_estimate_tokens": 72000, "kind": "preflight", "arms": list(PF_ARMS), "seeds": [1],
+           "conditions": ["compact", "nocompact"], "probe_design": 3, "types": ["R", "X"], "phrasings": ["cued", "neutral", "nonliteral"],
+           "env_allowlist": list(runner.ENV_ALLOW)}
     json.dump(cfg, open(os.path.join(rd, "config.json"), "w"))
-    st = {"spent": 9.0 if flaws.get("cost_high") else 1.8, "status": "done", "sessions": {}}
+    est_total = cost.estimate_preflight(tuple(PF_ARMS), ("compact", "nocompact"))[0]
+    st = {"spent": est_total * (1.6 if flaws.get("cost_high") else 0.9), "status": "done", "sessions": {},
+          "selfcheck": {"ok": not flaws.get("selfcheck_fail"), "lines": ["x"]}}
+    if not flaws.get("no_big"):
+        st["big"] = {"cost_usd": 1.2, "tokens": 100000 if flaws.get("big_small") else 300000, "standard_price_usd": 1.1, "price_ratio": 1.09,
+                     "call_cap_usd": 1.5, "over_call_cap": bool(flaws.get("big_over_cap")), "docs": 40, "chars": 10}
     sess_rows, rows, calls = [], [], []
-    for arm in ("B", "R", "K"):
-        for cond in ("compact", "nocompact"):
-            name = "s1-%s%s" % (arm, "-nc" if cond == "nocompact" else "")
-            sid = "sid-%s-%s" % (arm, cond)
-            st["sessions"][name] = {"status": "done", "sid": sid, "cost": 0.1}
-            stem = "lhbench-pf-s1-%s%s" % (arm, "-nc" if cond == "nocompact" else "")
-            statedir = os.path.join(work, stem + "-state")
-            os.makedirs(statedir, exist_ok=True)
+    units = [(a, "compact", False) for a in PF_ARMS] + [("A", "nocompact", False), ("O", "nocompact", False), ("Z", "nocompact", False)] \
+        + [(a, "nocompact", True) for a in ("B", "R", "K")]
+    a_nc_sid = "sid-A-nocompact"
+    for arm, cond, view in units:
+        name = "s1-%s%s" % (arm, "-nc" if cond == "nocompact" else "")
+        sid = a_nc_sid if view else "sid-%s-%s" % (arm, cond)
+        st["sessions"][name] = {"status": "done", "sid": sid, "cost": 0.1}
+        stem = "lhbench-pf-s1-%s%s" % (arm, "-nc" if cond == "nocompact" else "")
+        statedir = os.path.join(work, stem + "-state")
+        os.makedirs(statedir, exist_ok=True)
+        hashes = None
+        if arm in runner.LH_ARMS:
+            hd = os.path.join(statedir, "hooks")
+            os.makedirs(hd, exist_ok=True)
+            open(os.path.join(hd, "postcompact-inject.py"), "w").write("# hook %s\n" % arm)
+            if arm == "K":
+                open(os.path.join(hd, ".recall-rules"), "w").close()
+            hashes = {f: runner.sha256_file(os.path.join(hd, f)) for f in sorted(os.listdir(hd))}
+            if flaws.get("hook_changed") and arm == "B" and cond == "compact":
+                hashes["postcompact-inject.py"] = "0" * 64
+        bounds, cost_u = 0, cost.preflight_unit(arm, cond, tuple(PF_ARMS))
+        if arm == "A" and cond == "nocompact":
+            cost_u *= 0.6
+        if view:
+            cost_u = cost.preflight_unit("A", "nocompact", tuple(PF_ARMS)) * 0.4 / 3
+        if not view and arm != "Z":
             proj = os.path.realpath(os.path.join(work, stem))
             tdir = os.path.join(projects, runner.slug(proj))
             os.makedirs(tdir, exist_ok=True)
             lines = [{"type": "user", "message": {"content": "hello"}}]
-            bounds = 0
-            cost_u = cost.preflight_unit(arm, cond) * 1.0
-            if cond == "compact":
+            if cond == "compact" and arm in runner.LH_ARMS:
                 bounds = 0 if flaws.get("no_compaction") else 1
                 head = "Handoff part one: goal alpha beta gamma delta"
                 text = "" if flaws.get("no_inject") else head + " "
@@ -855,28 +887,44 @@ def make_pf_run(root, **flaws):
                 lines += [{"subtype": "compact_boundary"}, {"type": "user", "message": {"content": text or "nothing"}}] if bounds else [{"type": "user", "message": {"content": "no boundary"}}]
                 if not flaws.get("no_receipt"):
                     open(os.path.join(statedir, "receipts.jsonl"), "w").write(json.dumps({"kind": "main", "part1_head": head}) + "\n")
-            else:
-                lines.append({"type": "user", "message": {"content": [{"type": "tool_result", "content": "[Old tool result content cleared]" if flaws.get("nc_cleared") else "data"}]}})
-                calls.append({"name": name, "kind": "turn", "in": 5, "cache_read": 30000 if flaws.get("nc_small") else 80000})
-                if arm == "K" and not flaws.get("k_no_reanchor"):
-                    open(os.path.join(statedir, "health.jsonl"), "w").write(json.dumps({"event": "reanchor", "tokens": 60000}) + "\n")
+                if arm == "K":
+                    calls.append({"name": name, "kind": "turn", "in": 5, "cache_read": 60000})
+                    if not flaws.get("k_no_reanchor"):
+                        open(os.path.join(statedir, "health.jsonl"), "w").write(json.dumps({"event": "reanchor", "tokens": 60000}) + "\n")
+            elif cond == "nocompact":
+                lines.append({"type": "user", "message": {"content": [{"type": "tool_result", "content": "[Old tool result content cleared]" if (flaws.get("nc_cleared") and arm == "A") else "data"}]}})
+                calls.append({"name": name, "kind": "turn", "in": 5, "cache_read": (30000 if flaws.get("nc_small") else 80000) if arm == "A" else 20000})
             with open(os.path.join(tdir, sid + ".jsonl"), "w") as f:
                 for ln in lines:
                     f.write(json.dumps(ln) + "\n")
-            sess_rows.append({"name": name, "seed": 1, "arm": arm, "condition": cond, "status": "done", "boundaries": bounds, "cost_usd": cost_u})
-            for t in ("R", "X"):
-                for ph in ("cued", "neutral"):
-                    fsid = "fork-%s-%s-%s-%s" % (arm, cond, t, ph)
-                    fired = None
-                    if arm in ("R", "K"):
-                        fired = (ph == "cued") and not (flaws.get("r_missing_fire") and arm == "R" and cond == "compact")
-                        if arm == "R" and flaws.get("r_neutral_fire") and ph == "neutral":
-                            fired = True
-                        if fired:
-                            open(os.path.join(statedir, "auto-recall.jsonl"), "a").write(json.dumps({"session_id": fsid, "fired": True, "hits": 1}) + "\n")
-                    rows.append({"seed": 1, "arm": arm, "condition": cond, "type": t, "phrasing": ph, "fork_sid": fsid, "parse_ok": not flaws.get("bad_parse"),
-                                 "correct": True, "used_lookup": None if flaws.get("no_used_lookup") else False, "auto_recall_fired": fired,
-                                 "search_kinds": ["mcp"] if (arm == "K" and ph == "cued") else []})
+        env_keys = ["PATH", "HOME", "CLAUDE_CODE_AUTO_COMPACT_WINDOW"] + (["CLAUDE_EFFORT"] if flaws.get("env_leak") else [])
+        sess_rows.append({"name": name, "seed": 1, "arm": arm, "condition": cond, "status": "done", "boundaries": bounds, "cost_usd": cost_u, "hook_sha256": hashes,
+                          "env_keys": env_keys, "memory_files": ["m.md"] if flaws.get("memory") else [], "foreign_instructions": ["/home/u/CLAUDE.md"] if flaws.get("foreign") else [],
+                          "view_of_arm_a": view, "mcp_check": ({"called": not flaws.get("k_no_mcp_call"), "kinds": ["mcp"]} if (arm == "K" and view) else None)})
+        # probe rows
+        if cond == "compact":
+            plan = [(t, ph, 1) for t in ("R", "X") for ph in ("cued", "neutral")]
+        else:
+            plan = [(t, ph, 0) for t in gen.L3_TYPES for ph in ("cued", "neutral", "nonliteral")]
+        if arm == "Z" and flaws.get("no_arm_Z"):
+            plan = []
+        for t, ph, n_t in plan:
+            if flaws.get("no_nonliteral") and arm == "B" and cond == "nocompact" and ph == "nonliteral":
+                continue
+            fsid = "fork-%s-%s-%s-%s" % (arm, cond, t, ph)
+            fired = None
+            if arm in ("R", "K"):
+                fired = (ph == "cued") and not (flaws.get("r_missing_fire") and arm == "R" and cond == "compact")
+                if arm == "R" and flaws.get("r_neutral_fire") and ph == "neutral":
+                    fired = True
+                if fired:
+                    open(os.path.join(statedir, "auto-recall.jsonl"), "a").write(json.dumps({"session_id": fsid, "fired": True, "hits": 1}) + "\n")
+            row = {"seed": 1, "arm": arm, "condition": cond, "type": t, "phrasing": ph, "n_target": n_t, "fork_sid": fsid, "parse_ok": not flaws.get("bad_parse"),
+                   "correct": True, "used_lookup": None if flaws.get("no_used_lookup") else False, "auto_recall_fired": fired,
+                   "search_kinds": ["mcp"] if (arm == "K" and ph == "cued") else []}
+            if view:
+                row.update(fork_injected=True, fork_rule_line=not (flaws.get("k_no_rule_fork") and arm == "K"))
+            rows.append(row)
     with open(os.path.join(rd, "results.jsonl"), "w") as f:
         for r in rows:
             f.write(json.dumps(r) + "\n")
@@ -919,36 +967,25 @@ class Preflight(unittest.TestCase):
     def test_clean_run_passes_every_line(self):
         res = self.run_check()
         self.assertEqual([x for x in res if x[1] == "FAIL"], [])
-        self.assertGreaterEqual(len(res), 13)
+        self.assertGreaterEqual(len(res), 24)
 
     def test_each_line_fails_when_its_fact_is_wrong(self):
         cases = [("no_compaction", "a compaction happened"), ("no_receipt", "receipt was written"), ("no_inject", "was injected after"),
                  ("no_decisions", "decisions list or the rules"), ("nc_cleared", "no-compaction sessions"), ("nc_small", "no-compaction sessions"),
-                 ("r_missing_fire", "arm R:"), ("r_neutral_fire", "arm R:"), ("k_no_reanchor", "reanchor health row"), ("k_no_rule", "recall-rule line"),
-                 ("no_used_lookup", "used_lookup is set"), ("bad_parse", "parsed and graded"), ("cost_high", "total cost under"), ("cost_high", "against the cost.py estimate")]
+                 ("r_missing_fire", "arm R:"), ("r_neutral_fire", "arm R:"), ("k_no_reanchor", "reanchor health row"), ("k_no_rule", "recall-rule line is in the injected text"),
+                 ("k_no_rule_fork", "every no-compaction fork"), ("k_no_mcp_call", "MCP check turn"), ("no_used_lookup", "used_lookup is set"),
+                 ("bad_parse", "parsed and graded"), ("no_nonliteral", "row count"), ("no_arm_Z", "arms A, Z and O produced rows"), ("hook_changed", "hooks of each arm"),
+                 ("foreign", "no instructions record"), ("memory", "auto-memory"), ("env_leak", "environment of"), ("selfcheck_fail", "deny-rule selfcheck"),
+                 ("no_big", "300k-token paste"), ("big_small", "300k-token paste"), ("big_over_cap", "300k-token paste"),
+                 ("cost_high", "total cost under"), ("cost_high", "against the cost.py estimate")]
         for flaw, word in cases:
-            if flaw == "cost_high" and "estimate" in word:
-                # the ratio line uses the cost of the sessions, so make the sessions expensive
-                import preflight
-                d = tempfile.mkdtemp()
-                try:
-                    rd, projects = make_pf_run(d)
-                    rows = [json.loads(x) for x in open(os.path.join(rd, "sessions.jsonl"))]
-                    with open(os.path.join(rd, "sessions.jsonl"), "w") as f:
-                        for r in rows:
-                            r["cost_usd"] *= 2
-                            f.write(json.dumps(r) + "\n")
-                    res = preflight.check(rd, projects, mcp=False)
-                finally:
-                    shutil.rmtree(d)
-            else:
-                res = self.run_check(**{flaw: True})
+            res = self.run_check(**{flaw: True})
             self.assertEqual(self.status(res, word), "FAIL", (flaw, word))
 
     def test_cost_ratio_is_printed(self):
         res = self.run_check()
         line = [x for x in res if "against the cost.py estimate" in x[0]][0]
-        self.assertIn("ratio 1.00", line[2])
+        self.assertIn("ratio 0.90", line[2])
 
     def test_mcp_probe_with_a_fake_server(self):
         import preflight
@@ -966,9 +1003,9 @@ class Preflight(unittest.TestCase):
     def test_exit_code_and_output(self):
         import preflight, io, contextlib
         d = tempfile.mkdtemp()
+        old = runner.PROJECTS
         try:
             rd, projects = make_pf_run(d)
-            old = runner.PROJECTS
             runner.PROJECTS = projects
             buf = io.StringIO()
             with contextlib.redirect_stdout(buf):
@@ -988,13 +1025,452 @@ class Preflight(unittest.TestCase):
 
     def test_preflight_preset_and_cost(self):
         k = runner.KINDS["preflight"]
-        self.assertEqual((k["model"], k["window"], k["seeds"], k["arms"], k["types"], k["n"]), ("haiku", 30000, 1, "B,R,K", "R,X", [1]))
-        self.assertEqual((k["conditions"], k["phrasings"]), ("compact,nocompact", "cued,neutral"))
+        self.assertEqual((k["model"], k["window"], k["seeds"], k["arms"], k["types"], k["n"]), ("haiku", 30000, 1, "A,B,R,K,Z,O", "R,X", [1]))
+        self.assertEqual((k["conditions"], k["phrasings"], k["probe_design"]), ("compact,nocompact", "cued,neutral,nonliteral", 3))
+        self.assertTrue(k["mcp_check"] and k["selfcheck"] and k["big_check"])
         total, lines = cost.estimate_preflight()
-        self.assertEqual(len(lines), 6)
-        self.assertLess(total, 3.0)
-        self.assertGreater(total, 1.0)
+        self.assertTrue(any("300k-token paste" in x for x in lines) and any("selfcheck" in x for x in lines))
+        self.assertTrue(3.0 < total < 5.0, total)
         self.assertIn("preflight", open(os.path.join(HERE, "run.sh")).read())
+
+
+def r4_cfg(d, **kw):
+    lh = os.path.join(d, "lh")
+    os.makedirs(os.path.join(lh, "hooks"), exist_ok=True)
+    for f in runner.K_FILES + ("recall.py", "precompact-handoff.py", "postcompact-inject.py"):
+        open(os.path.join(lh, "hooks", f), "w").write("# x\n")
+    cfg = {"run_id": "t", "work_base": d, "o_window": 200000, "window": 30000, "nc_window": 120000, "model": "haiku", "lh_path": lh,
+           "gen_version": gen.GEN_VERSION, "probe_design": 3, "nc_lines": 30, "nc_estimate_tokens": 1000, "arms": ["A", "B", "R", "K"], "seeds": [1],
+           "conditions": ["compact", "nocompact"], "phrasings": ["cued", "neutral", "nonliteral"], "types": ["R", "X"], "n": [1], "call_cap_usd": 1.5,
+           "turn_timeout_s": 60, "claude_version": "x", "lh_commit": "x", "budget_usd": None, "mcp_check": False, "kind": "litm3-pilot"}
+    cfg.update(kw)
+    rd = os.path.join(d, "run")
+    os.makedirs(rd, exist_ok=True)
+    return runner.Ctx(rd, cfg), cfg
+
+
+class Round4(unittest.TestCase):
+    # ---- P1: non-literal forks run, in the key and in the marker
+    def test_fork_key_and_marker_hold_the_phrasing(self):
+        keys = {runner.fork_key(0, "R", p) for p in ("cued", "neutral", "nonliteral")}
+        self.assertEqual(len(keys), 3)
+        self.assertEqual(runner.fork_key(0, "R", "cued"), "0:R")                 # old state files still work
+        self.assertEqual(runner.fork_key(0, "R", "neutral"), "0:R:neutral")
+        d = tempfile.mkdtemp()
+        try:
+            ctx, cfg = r4_cfg(d)
+            ss = runner.Session(ctx, "s1-A-nc", 1, "A", ctx.sess("s1-A-nc"), "nocompact")
+            seen = []
+
+            def call(self, prompt, kind, **kw):
+                seen.append(prompt)
+                return {"result": "", "session_id": None, "_delta": 0.0, "usage": {}}
+            old = runner.Session.call
+            runner.Session.call = call
+            try:
+                for ph in ("cued", "neutral", "nonliteral"):
+                    ss.probe("R", 0, fork_of="sid", phrasing=ph)
+            finally:
+                runner.Session.call = old
+            self.assertEqual([("PROBE-1-A-0-R" + s) in p for p, s in zip(seen, ("", "n", "l"))], [True, True, True])
+            self.assertNotIn("PROBE-1-A-0-Rn", seen[0] + seen[2])
+            rows = [json.loads(x) for x in open(os.path.join(ctx.dir, "results.jsonl"))]
+            self.assertEqual({r["phrasing"] for r in rows}, {"cued", "neutral", "nonliteral"})
+            self.assertEqual(set(ss.st["done_forks"]), keys)
+        finally:
+            shutil.rmtree(d)
+
+    def run_nc3(self, d, **kw):
+        ctx, cfg = r4_cfg(d, **kw)
+        ss = runner.Session(ctx, "s1-A-nc", 1, "A", ctx.sess("s1-A-nc"), "nocompact")
+        ss.proj = os.path.join(d, "proj")
+        ss.st["sid"] = "sid-main"
+        probes = []
+        saved = (runner.Session.turn, runner.Session.probe, runner.last_turn_context, runner.count_cleared)
+
+        def turn(self, prompt):
+            self.st["turns"] += 1
+            return {"result": ""}
+
+        def probe(self, ptype, ckpt, fork_of=None, z_sid=None, phrasing="cued"):
+            probes.append((self.arm, ptype, phrasing, self.view_of is not None, fork_of))
+            self.st["done_forks"].append(runner.fork_key(ckpt, ptype, phrasing))
+        runner.Session.turn, runner.Session.probe = turn, probe
+        runner.last_turn_context, runner.count_cleared = (lambda *a, **k: 10 ** 6), (lambda *a, **k: 0)
+        try:
+            runner.run_nc3_session(ctx, ss)
+        finally:
+            runner.Session.turn, runner.Session.probe, runner.last_turn_context, runner.count_cleared = saved
+        return ctx, ss, probes
+
+    def test_nc3_runs_every_phrasing_for_every_arm_on_one_main_session(self):
+        d = tempfile.mkdtemp()
+        try:
+            ctx, ss, probes = self.run_nc3(d)
+            for arm in ("A", "B", "R", "K"):
+                got = [p for p in probes if p[0] == arm]
+                self.assertEqual(len(got), 15, arm)                                  # 5 types x 3 phrasings
+                self.assertEqual({p[2] for p in got}, {"cued", "neutral", "nonliteral"}, arm)
+                self.assertTrue(all(p[4] == "sid-main" for p in got))                # all fork the one main session
+                self.assertEqual({p[3] for p in got}, {arm != "A"})                  # B R K are views, A is the main session
+            self.assertEqual(ctx.state["sessions"]["s1-K-nc"]["status"], "done")
+            exp = runner.expected_forks(ctx.cfg)
+            have = {(1, p[0], "nocompact", p[2], p[1], 0) for p in probes}
+            self.assertEqual({tuple(k) for k in exp["exact"] if k[2] == "nocompact" and k[1] in "ABRK"}, have)
+        finally:
+            shutil.rmtree(d)
+
+    def test_invalid_main_session_makes_its_views_invalid(self):
+        d = tempfile.mkdtemp()
+        try:
+            ctx, cfg = r4_cfg(d)
+            ss = runner.Session(ctx, "s1-A-nc", 1, "A", ctx.sess("s1-A-nc"), "nocompact")
+            ss.proj, ss.st["sid"] = os.path.join(d, "proj"), "sid-main"
+            saved = (runner.Session.turn, runner.last_turn_context, runner.count_cleared)
+            runner.Session.turn = lambda self, p: {"result": ""}
+            runner.last_turn_context, runner.count_cleared = (lambda *a, **k: 10), (lambda *a, **k: 0)    # far below the estimate
+            try:
+                runner.run_nc3_session(ctx, ss)
+            finally:
+                runner.Session.turn, runner.last_turn_context, runner.count_cleared = saved
+            self.assertEqual(ss.st["status"], "invalid")
+            self.assertEqual({ctx.state["sessions"]["s1-%s-nc" % a]["status"] for a in "BRK"}, {"invalid"})
+        finally:
+            shutil.rmtree(d)
+
+    def test_work_units_of_design_3_and_the_rest_unchanged(self):
+        cfg = {"seeds": [1, 2], "arms": ["A", "B", "R", "K", "Z", "O"], "conditions": ["compact", "nocompact"], "probe_design": 3}
+        u = runner.work_units(cfg)
+        self.assertIn((1, "A", "nocompact"), u)
+        self.assertNotIn((1, "B", "nocompact"), u)
+        self.assertNotIn((1, "K", "nocompact"), u)
+        self.assertIn((1, "B", "compact"), u)
+        self.assertIn((1, "Z", "nocompact"), u)
+        self.assertIn((1, "O", "nocompact"), u)
+        old = runner.work_units({"seeds": [1], "arms": ["A", "B", "R", "Z", "O"], "conditions": ["compact", "nocompact"], "probe_design": 2})
+        self.assertEqual(old, [(1, "A", "compact"), (1, "A", "nocompact"), (1, "B", "compact"), (1, "B", "nocompact"), (1, "R", "compact"), (1, "R", "nocompact"),
+                               (1, "Z", "compact"), (1, "O", "compact")])
+
+    # ---- P2: hook isolation
+    def test_each_arm_with_hooks_has_a_private_copy_and_hooks_home(self):
+        d = tempfile.mkdtemp()
+        try:
+            ctx, cfg = r4_cfg(d)
+            s = {a: runner.Session(ctx, "s1-" + a, 1, a, {}, "compact") for a in "ABRK"}
+            for a in "BRK":
+                hd = s[a].hooks_dir()
+                self.assertEqual(hd, os.path.join(s[a].statedir, "hooks"))
+                self.assertEqual(s[a].overrides["HANDOFF_HOOKS_HOME"], hd)
+                self.assertEqual(os.path.isfile(os.path.join(hd, ".recall-rules")), a == "K")      # F68 marker in K only
+                hs = s[a].hook_hashes()
+                self.assertIn("postcompact-inject.py", hs)
+                self.assertEqual(hs["postcompact-inject.py"], runner.sha256_file(os.path.join(hd, "postcompact-inject.py")))
+            self.assertNotIn("HANDOFF_HOOKS_HOME", s["A"].overrides)
+            self.assertIsNone(s["A"].hook_hashes())
+            self.assertEqual(s["B"].env()["HANDOFF_HOOKS_HOME"], s["B"].hooks_dir())
+            self.assertNotEqual(s["B"].hooks_dir(), s["R"].hooks_dir())
+        finally:
+            shutil.rmtree(d)
+
+    # ---- P3: machine state
+    def test_work_base_below_home_is_refused(self):
+        with self.assertRaises(SystemExit):
+            runner.work_base(os.path.join(runner.HOME, "lhbench-work"))
+        with self.assertRaises(SystemExit):
+            runner.work_base(runner.HOME)
+        self.assertTrue(runner.work_base(tempfile.gettempdir()))
+
+    def test_environment_is_an_allow_list_and_auto_memory_is_off(self):
+        d = tempfile.mkdtemp()
+        os.environ["CLAUDE_EFFORT"], os.environ["CLAUDE_CODE_CHILD_SESSION"], os.environ["HANDOFF_STATE_DIR"] = "high", "1", "/real/state"
+        try:
+            ctx, cfg = r4_cfg(d)
+            a = runner.Session(ctx, "s1-A", 1, "A", ctx.sess("s1-A"), "compact")
+            e = a.env()
+            for bad in ("CLAUDE_EFFORT", "CLAUDE_CODE_CHILD_SESSION", "HANDOFF_STATE_DIR"):
+                self.assertNotIn(bad, e)
+            self.assertIn("PATH", e)
+            self.assertEqual(e[runner.MEMORY_ENV], "1")
+            self.assertEqual(e["CLAUDE_CODE_AUTO_COMPACT_WINDOW"], "30000")
+            self.assertEqual(runner.MEMORY_ENV, "CLAUDE_CODE_DISABLE_AUTO_MEMORY")
+            a.prepare()
+            sj = json.load(open(os.path.join(a.proj, ".claude", "settings.json")))
+            self.assertIs(sj["autoMemoryEnabled"], False)
+            self.assertNotIn("hooks", sj)                                            # arm A has no Lossless Handoff hooks
+        finally:
+            for k in ("CLAUDE_EFFORT", "CLAUDE_CODE_CHILD_SESSION", "HANDOFF_STATE_DIR"):
+                os.environ.pop(k, None)
+            shutil.rmtree(d)
+
+    def test_memory_file_or_foreign_instructions_make_a_session_invalid(self):
+        d = tempfile.mkdtemp()
+        old = runner.PROJECTS
+        runner.PROJECTS = os.path.join(d, "projects")
+        try:
+            ctx, cfg = r4_cfg(d)
+            ss = runner.Session(ctx, "s1-A", 1, "A", {"sid": "sid1"}, "compact")
+            ss.proj = os.path.join(d, "proj")
+            os.makedirs(ss.proj)
+            self.assertEqual(runner.machine_state_problems(ss), [])
+            os.makedirs(os.path.join(runner.PROJECTS, runner.slug(ss.proj), "memory"))
+            open(os.path.join(runner.PROJECTS, runner.slug(ss.proj), "memory", "MEMORY.md"), "w").write("x")
+            self.assertTrue(any("auto-memory" in w for w in runner.machine_state_problems(ss)))
+            os.remove(os.path.join(runner.PROJECTS, runner.slug(ss.proj), "memory", "MEMORY.md"))
+            with open(ss.transcript("sid1"), "w") as f:
+                f.write(json.dumps({"type": "attachment", "attachment": {"type": "instructions_loaded", "path": os.path.join(ss.proj, "CLAUDE.md")}}) + "\n")
+            self.assertEqual(runner.machine_state_problems(ss), [])
+            with open(ss.transcript("sid1"), "a") as f:
+                f.write(json.dumps({"type": "attachment", "attachment": {"type": "instructions_loaded", "path": "/Users/x/.claude/CLAUDE.md"}}) + "\n")
+            self.assertTrue(any("outside the project" in w for w in runner.machine_state_problems(ss)))
+        finally:
+            runner.PROJECTS = old
+            shutil.rmtree(d)
+
+    def test_instruction_paths(self):
+        recs = [{"type": "instructions", "path": "/a/CLAUDE.md"}, {"type": "attachment", "attachment": {"type": "instructions_loaded"}}, {"type": "user"}]
+        self.assertEqual(gates.instruction_paths(recs), ["/a/CLAUDE.md", "?"])
+        self.assertEqual(gates.foreign_instructions(recs, "/a"), ["?"])         # unknown path counts as foreign (conservative)
+
+    # ---- P4: K in the no-compaction condition
+    def test_arm_k_tools_and_view_settings(self):
+        d = tempfile.mkdtemp()
+        try:
+            ctx, cfg = r4_cfg(d)
+            main = runner.Session(ctx, "s1-A-nc", 1, "A", ctx.sess("s1-A-nc"), "nocompact")
+            main.proj = os.path.join(d, "proj")
+            self.assertIn("ToolSearch", runner.Session(ctx, "s1-K", 1, "K", {}, "compact").allowed_tools())
+            self.assertIn("mcp__lossless-recall__search_earlier_chat", runner.Session(ctx, "s1-K", 1, "K", {}, "compact").allowed_tools())
+            self.assertNotIn("ToolSearch", main.allowed_tools())
+            views = {}
+            for a in "BRK":
+                v = runner.Session(ctx, "s1-%s-nc" % a, 1, a, ctx.sess("s1-%s-nc" % a), "nocompact")
+                v.proj, v.view_of = main.proj, main
+                views[a] = json.loads(v.settings_json())
+            self.assertNotIn("hooks", json.loads(main.settings_json()))
+            self.assertIn("UserPromptSubmit", views["R"]["hooks"])
+            self.assertIn("UserPromptSubmit", views["K"]["hooks"])
+            self.assertNotIn("UserPromptSubmit", views["B"]["hooks"])
+            self.assertEqual(len(views["K"]["hooks"]["PostToolUse"]), 2)              # reanchor registered (F70)
+            self.assertEqual(len(views["R"]["hooks"]["PostToolUse"]), 1)
+            self.assertIn("SessionStart", views["K"]["hooks"])                        # the resume matcher gives the startup injection at the fork
+            self.assertEqual([x.get("matcher") for x in views["K"]["hooks"]["SessionStart"]], ["compact", "startup", "resume"])
+            self.assertEqual(views["K"]["env"]["HANDOFF_HOOKS_HOME"], os.path.join(os.path.realpath(d), "lhbench-t-s1-K-nc-state", "hooks"))
+        finally:
+            shutil.rmtree(d)
+
+    def test_mcp_check_records_a_call(self):
+        d = tempfile.mkdtemp()
+        old = runner.PROJECTS
+        runner.PROJECTS = os.path.join(d, "projects")
+        try:
+            ctx, cfg = r4_cfg(d, mcp_check=True)
+            v = runner.Session(ctx, "s1-K-nc", 1, "K", ctx.sess("s1-K-nc"), "nocompact")
+            v.proj = os.path.join(d, "proj")
+            v.st["sid"] = "main"
+            os.makedirs(os.path.join(runner.PROJECTS, runner.slug(v.proj)))
+            for called in (True, False):
+                def call(self, prompt, kind, **kw):
+                    recs = [{"type": "user", "message": {"content": prompt}}]
+                    if called:
+                        recs.append({"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "mcp__lossless-recall__search_earlier_chat", "input": {}}]}})
+                    recs.append({"type": "assistant", "message": {"content": [{"type": "text", "text": "DONE"}]}})
+                    with open(self.transcript("fork1"), "w") as f:
+                        f.write("".join(json.dumps(r) + "\n" for r in recs))
+                    return {"result": "DONE", "session_id": "fork1", "_delta": 0.01, "usage": {}}
+                saved = runner.Session.call
+                runner.Session.call = call
+                try:
+                    runner.mcp_check(ctx, v)
+                finally:
+                    runner.Session.call = saved
+                self.assertIs(v.st["mcp_check"]["called"], called)
+                self.assertFalse(os.path.exists(v.transcript("fork1")))               # the probe transcript is deleted
+        finally:
+            runner.PROJECTS = old
+            shutil.rmtree(d)
+
+    # ---- P6: gates
+    def test_failed_sessions_and_session_cost_gates(self):
+        self.assertEqual(gates.session_reasons({"a": "done", "b": "done", "c": "done", "d": "done", "e": "done", "f": "done", "g": "done", "h": "done", "i": "done", "j": "failed"}, {}), [])
+        why = gates.session_reasons({"a": "done", "b": "failed"}, {})
+        self.assertTrue(any("failed-session rate" in w for w in why), why)
+        self.assertEqual(gates.session_reasons({"a": "done"}, {"a": (2.0, 1.0)}), [])             # exactly 2 x
+        why = gates.session_reasons({"a": "done"}, {"a": (2.6, 1.0)})
+        self.assertTrue(any("above 2.0 x its estimate" in w for w in why), why)
+        self.assertEqual(gates.session_reasons({"a": "done"}, {"a": (0.30, 0.10)}), [])           # floor: small sessions are noisy
+        self.assertEqual(gates.session_reasons({"a": "done"}, {"a": (9.0, None)}), [])            # no estimate: no gate
+
+    def test_runner_stops_on_a_failed_session_not_only_at_the_seed_end(self):
+        d = tempfile.mkdtemp()
+        try:
+            ctx, cfg = r4_cfg(d, arms=["B"], seeds=[1, 2], conditions=["compact"], probe_design=2, kind="full", n=[1, 3])
+            ctx.sess("s1-B")
+            ctx.sess("s2-B")
+
+            def stub(c, seed, arm, cond):
+                c.state["sessions"]["s%d-%s" % (seed, arm)]["status"] = "failed"
+            old = runner.run_unit
+            runner.run_unit = stub
+            try:
+                runner.run_unit_gated(ctx, 1, "B", "compact")
+            finally:
+                runner.run_unit = old
+            self.assertTrue(ctx.stop.is_set())
+            self.assertTrue(any("failed-session rate" in w for w in ctx.state["gate_abort"]))
+        finally:
+            shutil.rmtree(d)
+
+    def test_row_count_gate_names_a_missing_phrasing(self):
+        exp = {"exact": [(1, "B", "nocompact", ph, "R", 0) for ph in ("cued", "neutral", "nonliteral")], "classes": [(1, "A", "compact", "cued")]}
+        rows = [{"seed": 1, "arm": "B", "condition": "nocompact", "phrasing": ph, "type": "R", "n_target": 0} for ph in ("cued", "neutral")] \
+            + [{"seed": 1, "arm": "A", "condition": "compact", "phrasing": "cued", "type": "R", "n_target": 1}]
+        miss = gates.missing_forks(exp, rows, [1])
+        self.assertEqual(miss, [(1, "B", "nocompact", "nonliteral", "R", 0)])
+        why = gates.abort_reasons([], rows + [{"seed": 1, "arm": "B", "parse_ok": True}], None, [1], expected=exp)
+        self.assertTrue(any("probe fork" in w and "nonliteral" in w for w in why), why)
+        self.assertEqual(gates.missing_forks(exp, rows, [2]), [])                                   # unfinished seed: not judged
+        self.assertTrue(gates.missing_forks({"classes": [(1, "K", "compact", "cued")]}, rows, [1]))
+        self.assertEqual(runner.expected_forks({"seeds": [1], "arms": ["B"], "conditions": ["compact"], "probe_design": 2, "types": ["R"], "phrasings": ["cued"]})["classes"],
+                         [(1, "B", "compact", "cued")])
+
+    def test_ignore_gates_needs_i_know_and_warns(self):
+        import argparse, io, contextlib
+        d = tempfile.mkdtemp()
+        old = runner.RESULTS
+        runner.RESULTS = d
+        try:
+            os.makedirs(os.path.join(d, "x"))
+            json.dump({"run_id": "x", "arms": [], "seeds": []}, open(os.path.join(d, "x", "config.json"), "w"))
+            ns = argparse.Namespace(run_id="x", budget_usd=None, jobs=None, ignore_gates=True, i_know=False)
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err):
+                self.assertEqual(runner.cmd_resume(ns), 2)
+            self.assertIn("--i-know", err.getvalue())
+            self.assertFalse(json.load(open(os.path.join(d, "x", "config.json"))).get("gates") is False)
+        finally:
+            runner.RESULTS = old
+            shutil.rmtree(d)
+        src = open(os.path.join(HERE, "runner.py"), encoding="utf-8").read()
+        self.assertIn("WARNING: abort gates are OFF", src)
+
+    def test_default_budget_and_full_run_size(self):
+        d0 = tempfile.mkdtemp()
+        ctx0, _ = r4_cfg(d0)
+        out = __import__("subprocess").run([sys.executable, os.path.join(HERE, "runner.py"), "run", "litm3-full", "--lh-path", ctx0.cfg["lh_path"], "--dry-run"],
+                                           capture_output=True, text=True)
+        self.assertIn("budget_usd", out.stdout, out.stdout + out.stderr)
+        self.assertIn("default", out.stdout)
+        k = runner.KINDS["litm3-full"]
+        self.assertEqual((k["seeds"], k["n"]), (23, [1, 3, 10, 30]))
+        self.assertEqual(len(runner.seed_list("litm3-full", 23)), 23)
+        self.assertGreaterEqual(23 - 3, json.load(open(os.path.join(HERE, "thresholds.json")))["min_pairs"])        # 3 lost seeds still leave min_pairs
+
+    # ---- P8, P9: preflight covers the gaps, controls and rules are registered
+    def test_thresholds_register_the_new_rules(self):
+        lt = json.load(open(os.path.join(HERE, "thresholds.json")))["litm"]
+        self.assertEqual(lt["null_control_margin_points"], 5)
+        self.assertEqual(lt["h7_ceiling_max_accuracy"], 0.95)
+        self.assertEqual((lt["d3_oracle_min_accuracy"], lt["d3_amnesia_max_accuracy"]), (0.95, 0.02))
+        r = lt["pilot_stop_rule"]
+        self.assertEqual(r["forks_per_arm_phrasing_nocompact_min"], 10)
+        self.assertTrue(r["null_control_pass_required"] and r["controls_pass_required"])
+
+    def test_null_control_verdict_h7_ceiling_and_controls_table(self):
+        th = json.load(open(os.path.join(HERE, "thresholds.json")))
+        rows = d3_rows(0.9, 0.1)
+        md, out = litm.section(rows, [], th, 100)
+        self.assertIn("Registered rule: |B minus A| <= 5 points", "\n".join(md))
+        self.assertIn(out["tables"]["null_control_verdict"].split(":")[0], ("PASS", "FAIL"))
+        # a large B minus A with no compaction is a FAIL
+        bad = [dict(r, correct=(r["arm"] != "A")) if r["phrasing"] == "cued" and r["arm"] in ("A", "B") else r for r in rows]
+        self.assertTrue(litm.section(bad, [], th, 100)[1]["tables"]["null_control_verdict"].startswith("FAIL"))
+        # H7 is TOO EASY when B is above the ceiling
+        easy = [dict(r, correct=True) if r["arm"] == "B" else r for r in rows]
+        res = {h["name"][:2]: h["result"] for h in litm.section(easy, [], th, 100)[1]["hypotheses"]}
+        self.assertEqual(res["H7"], "TOO EASY: no claim")
+        # controls: arm O passes, arm Z fails when it guesses
+        ctl = []
+        for arm, ok in (("O", True), ("Z", True)):
+            for r in rows:
+                if r["arm"] == "A":
+                    ctl.append(dict(r, arm=arm, correct=ok))
+        md2, out2 = litm.section(rows + ctl, [], th, 100)
+        text = "\n".join(md2)
+        self.assertIn("Table L7", text)
+        self.assertIn("PASS", text.split("Table L7")[1].split("###")[0])
+        self.assertIn("FAIL", text.split("Table L7")[1].split("###")[0])
+        self.assertIn("K = R + recall rules + MCP tool", text)
+
+    # ---- P10
+    def test_question_order_is_a_seeded_shuffle_and_not_position(self):
+        sc = gen.build_litm3(1000)
+        items = gen.select(sc, "R", None)
+        a, b = gen.shuffle3(items, 1000, "R", "cued"), gen.shuffle3(items, 1000, "R", "cued")
+        self.assertEqual([x["id"] for x in a], [x["id"] for x in b])
+        self.assertEqual(sorted(x["id"] for x in a), sorted(x["id"] for x in items))
+        orders = {tuple(x["position"] for x in gen.shuffle3(items, s, "R", "cued")) for s in range(1000, 1010)}
+        self.assertGreater(len(orders), 3)
+        self.assertNotEqual([x["id"] for x in gen.shuffle3(items, 1000, "R", "cued")], [x["id"] for x in gen.shuffle3(items, 1000, "R", "nonliteral")])
+
+    def test_retry_is_idempotent(self):
+        d = tempfile.mkdtemp()
+        old = (runner.PROJECTS, runner.subprocess.Popen)
+        runner.PROJECTS = os.path.join(d, "projects")
+        try:
+            ctx, cfg = r4_cfg(d)
+            ss = runner.Session(ctx, "s1-A", 1, "A", ctx.sess("s1-A"), "compact")
+            ss.proj = os.path.join(d, "proj")
+            os.makedirs(os.path.join(runner.PROJECTS, runner.slug(ss.proj)))
+            prompt = "PLANT TURN: the answer is in this sentence " * 3
+            with open(ss.transcript("sid1"), "w") as f:
+                f.write(json.dumps({"type": "user", "message": {"content": prompt}}) + "\n")
+                f.write(json.dumps({"type": "assistant", "message": {"content": [{"type": "text", "text": "noted"}]}}) + "\n")
+            n = []
+
+            class P:
+                def __init__(self, *a, **k):
+                    n.append(1)
+                    self.returncode, self.pid = 1, 1
+
+                def communicate(self, input=None, timeout=None):
+                    return "not json", ""
+            runner.subprocess.Popen = P
+            o = ss.call(prompt, "turn", sid="sid1", first=False)
+            self.assertEqual(len(n), 1)                                                # attempt 2 did not send the prompt again
+            self.assertEqual(o["result"], "noted")
+            self.assertTrue(o["_replayed"])
+            self.assertEqual(o["_delta"], 0.0)
+        finally:
+            runner.PROJECTS, runner.subprocess.Popen = old
+            shutil.rmtree(d)
+
+    def test_lost_folder_restarts_without_duplicate_rows(self):
+        d = tempfile.mkdtemp()
+        try:
+            ctx, cfg = r4_cfg(d)
+            st = ctx.sess("s1-A")
+            st.update({"next_turn": 5, "first": False})
+            ss = runner.Session(ctx, "s1-A", 1, "A", st, "compact")
+            ss.prepare()                                                               # folder gone: restart from turn 0
+            self.assertEqual((st["restarts"], st["next_turn"]), (1, 0))
+            rows = [{"seed": 1, "arm": "A", "type": "R", "attempt": 0}] * 3 + [{"seed": 1, "arm": "A", "type": "R", "attempt": 1}] * 2 + [{"seed": 2, "arm": "A", "type": "R"}]
+            kept = gates.dedupe_rows(rows)
+            self.assertEqual(len(kept), 3)                                             # 2 rows of the new attempt, and the other seed
+            old_rows = [{"seed": 1, "arm": "A"}] * 4
+            self.assertIs(gates.dedupe_rows(old_rows), old_rows)                       # old runs: unchanged
+        finally:
+            shutil.rmtree(d)
+
+    def test_big_prompt_goes_through_stdin(self):
+        src = open(os.path.join(HERE, "runner.py"), encoding="utf-8").read()
+        self.assertIn("stdin=subprocess.PIPE if big", src)
+        self.assertIn("run_big_check", src)
+
+    def test_readme_states_the_audit_fixes(self):
+        t = open(os.path.join(HERE, "README.md"), encoding="utf-8").read()
+        for w in ("two-step word bridge", "CLAUDE_CODE_DISABLE_AUTO_MEMORY", "autoMemoryEnabled", "HANDOFF_HOOKS_HOME", "true by construction",
+                  "forks the session of arm A", "ToolSearch", "--i-know", "pilot stop rule", "below HOME"):
+            self.assertIn(w, t, w)
 
 
 class AbortGates(unittest.TestCase):
@@ -1044,7 +1520,7 @@ class AbortGates(unittest.TestCase):
     def test_runner_stops_after_a_seed_and_resumes(self):
         d = tempfile.mkdtemp()
         try:
-            cfg = {"run_id": "g", "kind": "full", "arms": ["B"], "seeds": [1, 2], "n": [1, 3], "conditions": ["compact"], "phrasings": ["cued"], "gates": True}
+            cfg = {"run_id": "g", "kind": "full", "arms": ["B"], "seeds": [1, 2], "n": [1, 3], "conditions": ["compact"], "phrasings": ["cued"], "gates": True, "types": ["R"]}
             ctx = runner.Ctx(d, cfg)
             for n_ in ("s1-B", "s2-B"):
                 ctx.sess(n_)

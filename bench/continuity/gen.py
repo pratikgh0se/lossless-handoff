@@ -572,6 +572,15 @@ def prose3(r, lo=600, hi=1200):
     return out
 
 
+def shuffle3(items, seed, ptype, phrasing):
+    """Design 3: the order of the questions inside one probe is a seeded shuffle, so that the order in the probe is not the position
+    in the session (the old order was oldest first, which is the position). The same order for every arm."""
+    r = random.Random("lhbench-order3-%d-%s-%s" % (seed, ptype, phrasing))
+    out = list(items)
+    r.shuffle(out)
+    return out
+
+
 def filler_doc_prompt(script, k, lines):
     """Filler turn of design 3: a pasted document and one small task. Returns (prompt, expected first token of the task)."""
     name, text = filler_file(script["seed"], 1000 + k, 0, lines=lines)

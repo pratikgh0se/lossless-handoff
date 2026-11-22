@@ -11,6 +11,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 SCORED = ["R", "D", "X", "S", "E", "C"]      # scored types that have one plant turn, so a position tag. M has no position.
 POS = ["start", "middle", "end"]
+PHR = ("cued", "neutral", "nonliteral")
 NAMES = {"A": "A plain", "B": "B Lossless Handoff", "R": "R auto-recall", "K": "K recall levers", "Z": "Z no history", "O": "O no compaction"}
 
 
@@ -209,6 +210,36 @@ def section(rows, sessions, th, draws, helpers=None):
     dnull = boot.diff(*cells.vec(base("B", "nocompact", "cued")), *cells.vec(base("A", "nocompact", "cued")))
     md.append("B minus A, no compaction, cued: %s\n" % fmt_diff(dnull))
     out["tables"]["null_control"] = list(dnull)
+    mg = lt.get("null_control_margin_points", 5)
+    if dnull[0] is None:
+        nverdict = "NO DATA"
+    elif abs(100 * dnull[0]) <= mg and dnull[1] <= 0 <= dnull[2]:
+        nverdict = "PASS"
+    else:
+        nverdict = "FAIL: the harness shows an arm effect without the core handoff. Find the cause before any claim from arms R or K."
+    md.append("Registered rule: |B minus A| <= %d points and the interval holds 0. Result: **%s**\n" % (mg, nverdict))
+    out["tables"]["null_control_verdict"] = nverdict
+
+    # ---- design-3 controls: the non-literal probe must be answerable at zero distance (arm O) and not by guessing (arm Z)
+    omin, zmax = lt.get("d3_oracle_min_accuracy", 0.95), lt.get("d3_amnesia_max_accuracy", 0.02)
+    ctl = []
+    for phr in PHR:
+        row = []
+        for a_, rule in (("O", lambda x: x >= omin), ("Z", lambda x: x <= zmax)):
+            cs_, ts_ = cells.vec(lambda r, a_=a_, phr=phr: r["arm"] == a_ and cond_of(r) == "nocompact" and phr_of(r) == phr)
+            if not sum(ts_):
+                row.append("no data")
+                continue
+            x = sum(cs_) / sum(ts_)
+            row.append("%s (%d/%d) %s" % (pct(x), sum(cs_), sum(ts_), "PASS" if rule(x) else "FAIL"))
+            out.setdefault("controls", {})["%s/%s" % (a_, phr)] = [sum(cs_), sum(ts_)]
+        ctl.append("| %s | %s | %s |" % (phr, row[0], row[1]))
+    if any("no data" not in c.split("|")[2] or "no data" not in c.split("|")[3] for c in ctl):
+        md.append("### Table L7: design-3 controls, no compaction (O oracle: all plant turns, no filler, accuracy >= %s; Z amnesia: no history, accuracy <= %s)\n" % (pct(omin), pct(zmax)))
+        md.append("| Phrasing | O short oracle (zero distance) | Z amnesia |\n|---|---|---|")
+        md += ctl
+        md.append("\nIf O fails for non-literal probes, the probe cannot be answered even with the plant next to it: do not read the non-literal rows. "
+                  "If Z passes above the limit, the answer can be guessed.\n")
 
     # ---- hypotheses
     md.append("### Table L4: pre-registered hypotheses (thresholds in thresholds.json, committed before any data)\n")
@@ -292,12 +323,16 @@ def section(rows, sessions, th, draws, helpers=None):
     vk = cells.vec(lambda r: base("K", "nocompact", "neutral")(r), val=lambda r: bool(r.get("used_lookup")))
     vb = cells.vec(lambda r: base("B", "nocompact", "neutral")(r), val=lambda r: bool(r.get("used_lookup")))
     d6 = boot.diff(*vk, *vb)
-    hyp("H6 search rate: K minus B, no compaction, neutral probes", "> 0 pts and CI lower bound > 0 (%s)" % lt.get("h6_note", "stop rule: if K does not search more than B in the pilot, stop and remove the levers"),
+    hyp("H6 search rate: K minus B, no compaction, neutral probes (K = R + recall rules + MCP tool at the start of the fork; reanchor cannot fire here)", "> 0 pts and CI lower bound > 0 (%s)" % lt.get("h6_note", "stop rule: if K does not search more than B in the pilot, stop and remove the levers"),
         fmt_diff(d6), "NO DATA" if d6[0] is None else ("SUPPORTED" if d6[0] > 0 and d6[1] > 0 else "NOT SUPPORTED"))
     d7 = boot.diff(*cells.vec(lambda r: base("K", "nocompact", "neutral")(r)), *cells.vec(lambda r: base("B", "nocompact", "neutral")(r)))
     p7 = lt.get("h7_k_minus_b_neutral_accuracy_min_points", 5)
-    hyp("H7 accuracy: K minus B, no compaction, neutral probes", ">= %+d pts and CI lower bound > 0" % p7, fmt_diff(d7),
-        "NO DATA" if d7[0] is None else ("SUPPORTED" if 100 * d7[0] >= p7 and d7[1] > 0 else "NOT SUPPORTED"))
+    cb7, tb7 = cells.vec(lambda r: base("B", "nocompact", "neutral")(r))
+    ceil7 = lt.get("h7_ceiling_max_accuracy", 0.95)
+    too_easy7 = bool(sum(tb7)) and sum(cb7) / sum(tb7) > ceil7
+    hyp("H7 accuracy: K minus B, no compaction, neutral probes (K = R + recall rules + MCP tool; no claim about all levers)",
+        ">= %+d pts and CI lower bound > 0; TOO EASY if B accuracy > %s" % (p7, pct(ceil7)), fmt_diff(d7) + (" (B accuracy %s)" % pct(sum(cb7) / sum(tb7)) if sum(tb7) else ""),
+        "NO DATA" if d7[0] is None else ("TOO EASY: no claim" if too_easy7 else ("SUPPORTED" if 100 * d7[0] >= p7 and d7[1] > 0 else "NOT SUPPORTED")))
     md.append("\nA hypothesis that is NOT SUPPORTED or REFUTED stays in the report. The thresholds do not change after a run.\n")
 
     # ---- gate: no-compaction sessions must not compact
