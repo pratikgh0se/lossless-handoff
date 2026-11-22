@@ -9,7 +9,7 @@ Health: one row per tool call in recall-mcp.jsonl (ts, tool, hits, ms; no query 
 """
 import contextlib, json, os, sys, time
 
-HOOK_VERSION = "1.18.0"
+HOOK_VERSION = "1.19.0"
 SERVER_NAME = "lossless-recall"
 HOME = os.path.expanduser("~")
 
@@ -35,19 +35,30 @@ RULE = ("- recall rule: before you state an earlier number, path, name, command 
         "Do not answer from memory. If the search finds nothing, say so.")
 INSTRUCTIONS = (RULE + "\n"
                 "Use search_earlier_chat to find exact earlier messages of this project (word for word, secrets masked). "
-                "Use open_message with a hit id to read the full message.")
+                "Use open_message with a hit id to read the full message.\n"
+                "For the current value of a setting, key or decision, call key_history and read every mention: the newest "
+                "mention can be a rejected proposal.")
 
 ALWAYS = {"anthropic/alwaysLoad": True}
 TOOLS = [
     {"name": "search_earlier_chat",
      "description": ("Search the earlier chats of this project word for word (and by meaning if the meaning index exists). "
                      "Returns one line per hit: <id> <time> <role> [tag]: <snippet>. Use it before you state an earlier "
-                     "number, path, name, command or decision."),
+                     "number, path, name, command or decision. Hits are newest first. A newer hit can be a rejected "
+                     "proposal or a dry run. For the history of one identifier, use key_history."),
      "inputSchema": {"type": "object",
                      "properties": {"query": {"type": "string", "description": "Words or a regex to search for."},
                                     "role": {"type": "string", "enum": ["user", "assistant", "any"], "default": "any"},
                                     "limit": {"type": "integer", "minimum": 1, "maximum": 10, "default": 5}},
                      "required": ["query"]},
+     "_meta": ALWAYS},
+    {"name": "key_history",
+     "description": ("Every mention of one identifier (a key, file, service, setting or name) in this project's chats, "
+                     "oldest first. Use it before you state the current value of anything that can change."),
+     "inputSchema": {"type": "object",
+                     "properties": {"identifier": {"type": "string", "description": "The identifier, matched as a whole token."},
+                                    "role": {"type": "string", "enum": ["user", "assistant", "any"], "default": "any"}},
+                     "required": ["identifier"]},
      "_meta": ALWAYS},
     {"name": "open_message",
      "description": "Open one earlier message, with its neighbours, by the id of a search hit (for example 1a2b3c4d:57).",
@@ -71,7 +82,7 @@ def load_recall():
             spec = importlib.util.spec_from_file_location("lh_recall", p)
             mod = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(mod)
-            for n in ("redact", "cmd_search", "cmd_open", "build_parser", "project_root"):
+            for n in ("redact", "cmd_search", "cmd_open", "build_parser", "project_root", "history_for", "current_cutoff"):
                 if not hasattr(mod, n):
                     raise RuntimeError("recall.py is too old or a stub")
             _mod[0] = mod
@@ -119,11 +130,30 @@ def tool_search(args):
     a.subagents = True
     root = mod.project_root(os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd())
     with contextlib.redirect_stdout(sys.stderr):
-        lines = mod.cmd_search(a, root)
+        mod.CURRENT_CUTOFF = mod.current_cutoff(mod.in_scope_transcripts(root, True))  # F74.c: not the current prompt
+        try:
+            lines = mod.cmd_search(a, root)
+        finally:
+            mod.CURRENT_CUTOFF = None
     hits = [x for x in lines[1:-1] if x]  # drop the mode line and the count line
     if not hits:
         return "no matches", 0
     return mod.redact("\n".join(hits)), len(hits)
+
+
+def tool_history(args):
+    ident = args.get("identifier")
+    if not isinstance(ident, str) or not ident.strip():
+        raise ToolError("identifier must be a non-empty string")
+    role = args.get("role", "any")
+    if role not in ("user", "assistant", "any"):
+        raise ToolError("role must be user, assistant or any")
+    mod = load_recall()
+    root = mod.project_root(os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd())
+    with contextlib.redirect_stdout(sys.stderr):
+        ts = mod.in_scope_transcripts(root, True)
+        lines, n = mod.history_for(ts, ident.strip(), role, mod.current_cutoff(ts), mod.HISTORY_CAP)
+    return mod.redact("\n".join(lines)), n
 
 
 def tool_open(args):
@@ -146,7 +176,7 @@ def call_tool(params):
     """-> result dict, or raises KeyError for an unknown tool name."""
     name = params.get("name")
     args = params.get("arguments")
-    fn = {"search_earlier_chat": tool_search, "open_message": tool_open}.get(name)
+    fn = {"search_earlier_chat": tool_search, "key_history": tool_history, "open_message": tool_open}.get(name)
     if fn is None:
         raise KeyError(name)
     t0 = time.monotonic()

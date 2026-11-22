@@ -10,7 +10,7 @@ Off switch: HANDOFF_AUTO_RECALL=0. The health log (auto-recall.jsonl) holds no p
 """
 import json, os, re, sys, threading, time
 
-HOOK_VERSION = "1.18.0"
+HOOK_VERSION = "1.19.0"
 HOME = os.path.expanduser("~")
 
 
@@ -44,7 +44,37 @@ WORD_RE = re.compile(r"[A-Za-z0-9_]{4,}")
 HEADER = "Lossless Handoff auto-recall: earlier messages that match your words. Verify them before you rely on them."
 FOOTER = "Open one in full: python3 ~/.claude/hooks/recall.py open <id>"
 
-_state = {"lock": threading.Lock(), "done": False, "t0": time.monotonic(), "sid": "", "hits": 0, "logged": False, "cue": "quote"}
+_state = {"lock": threading.Lock(), "done": False, "t0": time.monotonic(), "sid": "", "hits": 0, "logged": False, "mode": "search", "idents": 0, "cue": "quote"}
+
+
+STOP = {"previous", "replaced", "rejected", "proposal", "remember", "current", "earlier", "value", "values", "answer",
+        "answers", "setting", "settings", "before", "which", "there", "their", "about", "would", "could", "should"}
+HIST_HEADER = ("Lossless Handoff auto-recall: the history of the identifiers in your prompt, oldest first. A later mention "
+               "can be rejected, a dry run or undone. This can be partial; search for the rest.")
+MAX_IDENTS, PER_IDENT_CAP, TOTAL_CAP = 3, 1500, 4000
+URL_RE = re.compile(r"(?:https?://|www\.)\S+", re.I)
+IDENT_TOKEN_RE = re.compile(r"`([^`\s]+)`|([A-Za-z0-9_./-]+)")
+IDENT_FULL_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_./-]*[_./-][A-Za-z0-9_./-]*[A-Za-z0-9]")
+NOT_IDENT = {"e.g", "i.e"}  # abbreviations, not identifiers
+
+
+def identifiers(prompt):
+    """F75: identifiers in prompt order, no duplicates: a token in backticks, or a token of 3+ characters that holds
+    -, _, . or / inside. A URL and a cue word are not identifiers."""
+    rest = URL_RE.sub(" ", prompt)
+    seen, out = set(), []
+    for m in IDENT_TOKEN_RE.finditer(rest):
+        tok = m.group(1) if m.group(1) is not None else m.group(2).strip("._/-")
+        if m.group(1) is None and not IDENT_FULL_RE.fullmatch(tok):
+            continue
+        if m.group(1) is not None:
+            tok = tok.strip()
+        k = tok.lower()
+        if len(tok) < 1 or k in seen or k in NOT_IDENT or k in CUES:
+            continue
+        seen.add(k)
+        out.append(tok)
+    return out
 
 
 def quoted_phrases(prompt):
@@ -69,7 +99,7 @@ def query_words(prompt):
     seen, words = set(), []
     for w in WORD_RE.findall(rest):
         k = w.lower()
-        if k not in seen:
+        if k not in seen and k not in STOP:
             seen.add(k)
             words.append(w)
     words = sorted(words, key=lambda w: -len(w))[:MAX_WORDS]  # stable: ties keep prompt order
@@ -91,7 +121,8 @@ def write_health(hits, timed_out):
             pass
         with os.fdopen(fd, "a", encoding="utf-8") as f:
             f.write(json.dumps({"ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "session_id": str(_state["sid"])[:36],
-                                "fired": True, "cue": _state["cue"], "hits": int(hits),
+                                "fired": True, "cue": _state["cue"], "mode": _state["mode"],
+                                "identifiers": int(_state["idents"]), "hits": int(hits),
                                 "ms": int((time.monotonic() - _state["t0"]) * 1000), "timed_out": bool(timed_out)}) + "\n")
     except BaseException:
         pass
@@ -222,6 +253,41 @@ def search(mod, prompt, words, cwd, sid, transcript_path=None):
     return picked
 
 
+def recall_cmd():
+    h = hooks_home()
+    return (h.rstrip("/") + "/recall.py") if h else "~/.claude/hooks/recall.py"
+
+
+def history_output(mod, prompt, idents, cwd, transcript_path):
+    """F75: -> (text, number of mentions); ('', 0) when no identifier has a mention. Same scope and exclusions as
+    `recall.py history`, with the current prompt and everything after it left out."""
+    if not hasattr(mod, "history_for") or not hasattr(mod, "current_cutoff"):
+        return "", 0
+    root = mod.project_root(cwd)
+    narrow_scope(mod, root, transcript_path)
+    ts = mod.in_scope_transcripts(root, True)
+    if not ts:
+        return "", 0
+    cutoff = mod.current_cutoff(ts, transcript_path if isinstance(transcript_path, str) and transcript_path else None, prompt)
+    blocks, total, mentions, first = [], len(HIST_HEADER) + 1, 0, None
+    for ident in idents[:MAX_IDENTS]:
+        lines, n = mod.history_for(ts, ident, "any", cutoff, PER_IDENT_CAP)
+        if n == 0:
+            continue
+        block = "\n".join(lines)
+        foot = len("Full history: python3 %s history %s --all" % (recall_cmd(), first or ident)) + 1
+        if blocks and total + len(block) + 1 + foot > TOTAL_CAP:
+            break
+        blocks.append(block)
+        total += len(block) + 1
+        mentions += n
+        first = first or ident
+    if not blocks:
+        return "", 0
+    out = HIST_HEADER + "\n" + "\n".join(blocks) + "\nFull history: python3 %s history %s --all\n" % (recall_cmd(), first)
+    return out, mentions
+
+
 def format_output(mod, hits):
     lines = [HEADER]
     for h in hits:
@@ -249,11 +315,19 @@ def main():
     timer.start()
     out, hits = "", []
     try:
-        words = query_words(prompt)
         cwd = d.get("cwd")
-        if words and isinstance(cwd, str) and cwd.strip():
-            mod = load_recall()
-            if mod is not None:
+        idents = identifiers(prompt)
+        _state["idents"] = len(idents)
+        mod = load_recall() if isinstance(cwd, str) and cwd.strip() else None
+        if mod is not None and idents:
+            out, n = history_output(mod, prompt, idents, cwd, d.get("transcript_path"))
+            if out:
+                _state["mode"] = "history"
+                hits = [None] * n
+        if not out:
+            _state["mode"] = "search"
+            words = query_words(prompt)
+            if words and mod is not None:
                 hits = search(mod, prompt, words, cwd, _state["sid"], d.get("transcript_path"))
                 if hits:
                     out = format_output(mod, hits)

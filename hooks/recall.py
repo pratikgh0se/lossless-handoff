@@ -424,9 +424,261 @@ def rg_candidates(files, pattern, fixed):
     return hits
 
 
+# ---------------------------------------------------------------- exclusions, whole tokens, key history (F73, F74)
+
+AR_HEADER = "Lossless Handoff auto-recall:"
+CURRENT_CUTOFF = None  # F74.c: {realpath: line}; set by recall-mcp.py and auto-recall.py, never by the CLI
+HISTORY_CAP = 4000
+_TOK_RE = re.compile(r"[A-Za-z0-9_./-]")
+
+
+def boundary_ok(text, s, e):
+    """F73: the characters next to text[s:e] are not token characters [A-Za-z0-9_./-]. A final `.` that is not followed
+    by a token character (a sentence end) is allowed."""
+    if s > 0 and _TOK_RE.match(text[s - 1]):
+        return False
+    if e < len(text):
+        c = text[e]
+        if c == "." and (e + 1 >= len(text) or not _TOK_RE.match(text[e + 1])):
+            return True
+        if _TOK_RE.match(c):
+            return False
+    return True
+
+
+def ident_rx(ident):
+    return re.compile(re.escape(ident), re.I)
+
+
+def whole_matches(rx, text, limit=50):
+    """-> (first match or None, first whole-token match or None)."""
+    first = None
+    for i, m in enumerate(rx.finditer(text)):
+        if first is None:
+            first = m
+        if boundary_ok(text, m.start(), m.end()):
+            return first, m
+        if i >= limit:
+            break
+    return first, None
+
+
+def _is_recall_use(b):
+    if not isinstance(b, dict) or b.get("type") != "tool_use":
+        return False
+    name = b.get("name")
+    if isinstance(name, str) and name.startswith("mcp__lossless-recall__"):
+        return True
+    inp = b.get("input")
+    cmd = inp.get("command") if isinstance(inp, dict) else None
+    return name == "Bash" and isinstance(cmd, str) and "recall.py" in cmd
+
+
+def recall_tool_ids(path):
+    """Ids of the tool calls of recall itself in one transcript (F73.a)."""
+    ids = set()
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            for line in f:
+                if "recall.py" not in line and "lossless-recall" not in line:
+                    continue
+                rec = parse_line(line)
+                c = ((rec or {}).get("message") or {}).get("content") if isinstance(rec, dict) else None
+                if isinstance(c, list):
+                    for b in c:
+                        if _is_recall_use(b) and isinstance(b.get("id"), str):
+                            ids.add(b["id"])
+    except OSError:
+        pass
+    return ids
+
+
+def strip_recall_blocks(rec, ids):
+    msg = rec.get("message")
+    c = msg.get("content") if isinstance(msg, dict) else None
+    if not ids or not isinstance(c, list):
+        return rec
+    keep = [b for b in c if not (isinstance(b, dict) and ((b.get("type") == "tool_use" and b.get("id") in ids)
+                                                          or (b.get("type") == "tool_result" and b.get("tool_use_id") in ids)))]
+    if len(keep) == len(c):
+        return rec
+    r = dict(rec)
+    m = dict(msg)
+    m["content"] = keep
+    r["message"] = m
+    return r
+
+
+def _norm(t):
+    return re.sub(r"\s+", " ", t or "").strip().lower()
+
+
+class Clean:
+    """F73/F74 exclusions: (a) recall's own tool calls and results, (b) auto-recall injections, (c) the current prompt and
+    everything after it (`cutoff`), (d) duplicates (same uuid, then same text and timestamp)."""
+
+    def __init__(self, cutoff=None):
+        self.cutoff = cutoff or {}
+        self.ids = {}
+        self.cut = {}
+        self.seen_u, self.seen_t = set(), set()
+
+    def segments(self, t, n, rec):
+        cut = self.cut.get(t.path)
+        if cut is None:
+            cut = self.cut[t.path] = self.cutoff.get(os.path.realpath(t.path))
+        if cut is not None and n >= cut:
+            return []
+        if t.path not in self.ids:
+            self.ids[t.path] = recall_tool_ids(t.path)
+        out = []
+        for role, text in segments(strip_recall_blocks(rec, self.ids[t.path])):
+            if text.lstrip().startswith(AR_HEADER):
+                continue
+            uid = rec.get("uuid")
+            if isinstance(uid, str) and uid:
+                k = (uid, role, text)
+                if k in self.seen_u:
+                    continue
+                self.seen_u.add(k)
+            k = (rec.get("timestamp") or "", role, _norm(text))
+            if k in self.seen_t:
+                continue
+            self.seen_t.add(k)
+            out.append((role, text))
+        return out
+
+
+def current_cutoff(ts, transcript_path=None, prompt=None):
+    """F73.c: {realpath: line} of the last user prompt of the current session. Without a path: the newest main transcript
+    in scope. With a prompt text: only when the last user message is that prompt. Else {}."""
+    try:
+        path = transcript_path
+        if not path:
+            mains = [t for t in ts if not t.sub]
+            if not mains:
+                return {}
+            path = max(mains, key=lambda t: t.mtime).path
+        if not os.path.isfile(path):
+            return {}
+        last = None
+        with open(path, encoding="utf-8", errors="replace") as f:
+            for n, line in enumerate(f, 1):
+                if '"user"' not in line:
+                    continue
+                rec = parse_line(line)
+                if rec is None or rec.get("type") != "user":
+                    continue
+                for role, text in segments(rec):
+                    if role == "user":
+                        last = (n, text)
+        if last is None:
+            return {}
+        if prompt is not None:
+            p, x = _norm(prompt), _norm(last[1])
+            if not p or not x or not (x in p or p[:80] in x):
+                return {}
+        return {os.path.realpath(path): last[0]}
+    except Exception:
+        return {}
+
+
+SENT_RE = re.compile(r"(?<=[.?!])[ \t]+|\n+")
+
+
+def history_entries(ts, ident, role="any", cutoff=None):
+    """F73: -> list of entries (dicts with ts, path, line, label, role, text), oldest first."""
+    rx = ident_rx(ident)
+    cand = rg_candidates(ts, ident, True)
+    clean = Clean(cutoff)
+    out = []
+    for t in ts:
+        want = None
+        if cand is not None:
+            want = cand.get(t.path)
+            if not want:
+                continue
+        for n, rec in t.records(want):
+            if not t.visible(rec, True):
+                continue
+            for r, text in clean.segments(t, n, rec):
+                if role != "any" and r != role:
+                    continue
+                sents = [x for x in SENT_RE.split(text) if x.strip()]
+                idx = [i for i, x in enumerate(sents) if any(boundary_ok(x, m.start(), m.end()) for m in rx.finditer(x))]
+                wins = []
+                for i in idx:
+                    a, b = max(0, i - 1), min(len(sents) - 1, i + 1)
+                    if wins and a <= wins[-1][1]:
+                        wins[-1][1] = b
+                    else:
+                        wins.append([a, b])
+                for a, b in wins:
+                    out.append({"ts": rec.get("timestamp") or "", "path": t.path, "line": n, "label": t.label, "role": r,
+                                "text": " ".join(sents[a:b + 1])})
+    out.sort(key=lambda e: e["ts"])  # stable: ties keep the file order
+    return out
+
+
+def _cut(s, n):
+    return s if len(s) <= n else s[:max(0, n - 1)] + "…"
+
+
+def history_lines(ident, entries, cap=HISTORY_CAP):
+    """F73: the output lines. `cap` None: no cap. Over the cap: line 1, the 2 oldest entries, an omission line, and as
+    many of the newest entries as fit."""
+    n = len(entries)
+    if n == 0:
+        return ["history of %s: no mentions" % ident]
+    l1 = ("history of %s: %d mention(s), oldest first. A later mention can be a rejected proposal, a dry run or an undo; "
+          "read all of them." % (ident, n))
+    rows = ["- %s:%d %s %s: %s" % (e["label"], e["line"], fmt_ts(e["ts"]), e["role"], redact(_norm_keep(e["text"])))
+            for e in entries]
+    if cap is None or len("\n".join([l1] + rows)) <= cap:
+        return [l1] + rows
+    for lim in (600, 300, 150, 80, 40):
+        rr = [_row_cut(entries[i], rows[i], lim) for i in range(n)]
+        if len("\n".join([l1] + rr)) <= cap:
+            return [l1] + rr
+        if n < 3:
+            continue
+        for m in range(n - 2 - 1, -1, -1):
+            k = n - 2 - m
+            om = "[%d mention(s) omitted in the middle; run: python3 %s history %s --all]" % (k, _recall_cmd(), ident)
+            lines = [l1] + rr[:2] + [om] + (rr[n - m:] if m else [])
+            if len("\n".join(lines)) <= cap:
+                return lines
+    return ["\n".join([l1] + rows)[:cap]]
+
+
+def _norm_keep(t):
+    return re.sub(r"\s+", " ", t or "").strip()
+
+
+def _row_cut(e, row, lim):
+    head = row[:len(row) - len(redact(_norm_keep(e["text"])))]
+    return head + _cut(redact(_norm_keep(e["text"])), lim)
+
+
+def history_for(ts, ident, role="any", cutoff=None, cap=HISTORY_CAP):
+    """-> (lines, number of mentions)."""
+    ents = history_entries(ts, ident, role, cutoff)
+    return history_lines(ident, ents, cap), len(ents)
+
+
+def cmd_history(a, root):
+    ident = (a.identifier or "").strip()
+    if not ident:
+        raise UsageError("identifier must not be empty")
+    ts = in_scope_transcripts(root, True)
+    lines, _n = history_for(ts, ident, a.role, CURRENT_CUTOFF, None if a.all else HISTORY_CAP)
+    return lines
+
+
 def keyword_hits(a, ts, rx, pattern, fixed):
     """F44.1 keyword hits, newest first, one per (message line, role). Each: dict."""
     cand = rg_candidates(ts, pattern, fixed)
+    clean = Clean(CURRENT_CUTOFF)
     hits = []
     for t in ts:
         want = None
@@ -437,14 +689,15 @@ def keyword_hits(a, ts, rx, pattern, fixed):
         for n, rec in t.records(want):
             if not t.visible(rec, a.subagents):
                 continue
-            for role, text in segments(rec):
+            for role, text in clean.segments(t, n, rec):
                 if a.role != "any" and role != a.role:
                     continue
-                m = rx.search(text)
-                if not m:
+                first, whole = whole_matches(rx, text)
+                if first is None:
                     continue
+                m = whole or first
                 hits.append({"ts": rec.get("timestamp") or "", "path": t.path, "line": n, "sid8": t.label,
-                             "agent8": t.agent8, "sid": t.sid, "role": role, "tag": "word",
+                             "agent8": t.agent8, "sid": t.sid, "role": role, "tag": "word", "whole": whole is not None,
                              "snippet": redacted_snippet(text, m.start(), m.end())})
     hits.sort(key=lambda h: (h["ts"], h["path"], h["line"]), reverse=True)
     seen, uniq = set(), []
@@ -600,6 +853,10 @@ def cmd_search(a, root):
     if node:
         merged = [h for h in merged if os.path.realpath(h["path"]) == os.path.realpath(node["transcript"])
                   and node["first_line"] <= h["line"] <= node["last_line"]]
+    if CURRENT_CUTOFF:  # F74.c: meaning hits inside the current prompt or after it
+        merged = [h for h in merged if os.path.realpath(h["path"]) not in CURRENT_CUTOFF
+                  or h["line"] < CURRENT_CUTOFF[os.path.realpath(h["path"])]]
+    merged = [h for h in merged if h.get("whole")] + [h for h in merged if not h.get("whole")]  # F74: whole tokens first
     shown = merged[:limit]
     fill_meaning_snippets(shown, ts)
     add_result_pointers(shown, ts, rx)
@@ -1650,6 +1907,11 @@ def build_parser():
     p.add_argument("--meaning", action="store_true")
     p.add_argument("--node", default=None)
     common(p)
+    p = sub.add_parser("history")
+    p.add_argument("identifier")
+    p.add_argument("--role", choices=["user", "assistant", "any"], default="any")
+    p.add_argument("--all", action="store_true")
+    common(p)
     p = sub.add_parser("open")
     p.add_argument("id")
     p.add_argument("--around", type=int, default=2)
@@ -1700,9 +1962,9 @@ def main(argv):
         cwd = os.path.expanduser(a.cwd) if a.cwd else os.getcwd()
         root = project_root(cwd)
         fn = {"search": cmd_search, "open": cmd_open, "user": cmd_user, "index": cmd_index, "handoffs": cmd_handoffs,
-              "map": cmd_map, "describe": cmd_describe, "nodes": cmd_nodes}[a.cmd]
+              "map": cmd_map, "describe": cmd_describe, "nodes": cmd_nodes, "history": cmd_history}[a.cmd]
         big = a.cmd == "open" and (a.full or a.from_ is not None)
-        emit(fn(a, root), OPEN_FULL_CAP if big else OUT_CAP)
+        emit(fn(a, root), 10 ** 9 if a.cmd == "history" and a.all else OPEN_FULL_CAP if big else OUT_CAP)
         return 0
     except UsageError as e:
         sys.stderr.write("recall.py: %s\n" % e)

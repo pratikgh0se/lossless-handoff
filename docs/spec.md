@@ -1167,3 +1167,36 @@ Why: a benchmark arm runs a private copy of the hooks. It must not read the live
 **F70.f Conflict check.** A default install (no flag) does not count a foreign `reanchor.py` or `claim-guard.py` hook as a conflict. The two names count only when the flag is on or the file is installed.
 
 **Modes.** `recall-mcp.jsonl`, `claim-guard.jsonl`, `claim-guard-<session>.json`, `reanchor-<session>.json` and `reanchor-<session>.lock` are created with mode 0600.
+
+## F73 Key history (2026-11-22)
+
+Why: on update chains, search returns one window for each message, newest first, with look-alike keys mixed in. A 14-step chain came back complete in 0 of 9 cases. A history of one identifier, oldest first, shows the whole chain.
+
+**F73.a CLI.** `python3 recall.py history <identifier> [--role user|assistant|any] [--all]`. Default role `any` (all segments, as `search` does). Scope: as `recall.py search` (this project, main chats and subagents).
+
+**F73.b Match.** The identifier matches as a whole token, case does not matter. The characters next to the match are not in `[A-Za-z0-9_./-]`. So `invoice-mailer` does not match `invoice-mailer-eu`, `invoice-mailer.v2` or `xinvoice-mailer`, and does match `` `invoice-mailer` ``, `invoice-mailer,` and `(invoice-mailer)`. Reading chosen: a final `.` that is not followed by a token character (a sentence end) is allowed after the match, so `use invoice-mailer.` matches.
+
+**F73.c Unit.** Each sentence with a match, plus the sentence before and the sentence after it in the same message. Sentences split at `. `, `? `, `! `, a newline or the message end. Reading chosen: windows of one message that overlap merge into one entry, so no text repeats.
+
+**F73.d Excluded.** (a) tool calls and results of recall itself (a Bash command that holds `recall.py`, any `mcp__lossless-recall__` call, and the tool results of those calls, matched by tool id); (b) text that starts with `Lossless Handoff auto-recall:`; (c) in the MCP tool and in auto-recall, the last user prompt of the current session and everything after it (MCP: the newest main transcript of the project; auto-recall: the transcript of the hook input, and only when its last user message is the current prompt); (d) duplicates: the same uuid with the same text in two files, then the same timestamp, role and normalized text.
+
+**F73.e Output.** Line 1: `history of <identifier>: <N> mention(s), oldest first. A later mention can be a rejected proposal, a dry run or an undo; read all of them.` Then `- <id> <YYYY-MM-DD HH:MM> <role>: <text>` for each entry (id and role as in `recall.py search`; spaces collapsed; through `redact()`), oldest first by timestamp, ties in file order. No match: `history of <identifier>: no mentions`.
+
+**F73.f Cap.** At most 4,000 characters in total. Over the cap without `--all`: line 1, the 2 oldest entries, the line `[<K> mention(s) omitted in the middle; run: python3 <hooks>/recall.py history <identifier> --all]` (path as in F72), and as many of the newest entries as fit. Reading chosen: if the entries are too long, each entry text is cut to 600, then 300, 150, 80 or 40 characters (with `…`) until it fits. `--all`: no cap.
+
+**F73.g MCP tool.** `key_history` with `{identifier: string (required), role?: "user"|"assistant"|"any"}` and `_meta: {"anthropic/alwaysLoad": true}`. Same output, 4,000-character cap always on, then the 12,000-character cap of F69. Description: `Every mention of one identifier (a key, file, service, setting or name) in this project's chats, oldest first. Use it before you state the current value of anything that can change.` Health row in `recall-mcp.jsonl` with `tool: "key_history"`. The server instructions (F69) add: `For the current value of a setting, key or decision, call key_history and read every mention: the newest mention can be a rejected proposal.`
+
+## F74 Search fixes (2026-11-22)
+
+`recall.py search` and `search_earlier_chat` apply the exclusions (a), (b) and (d) of F73.d. The tool also applies (c). Hits that match as whole tokens (F73.b rule) rank above hits that match only as substrings; inside each group the old order stays. Meaning-only hits count as substring hits. The description of `search_earlier_chat` adds: `Hits are newest first. A newer hit can be a rejected proposal or a dry run. For the history of one identifier, use key_history.` The hit line format does not change.
+
+## F75 Auto-recall query (2026-11-22)
+
+Amends F67.c. The trigger (F67.b) does not change.
+
+- **Identifier.** A token in backticks, or a token of 3 or more characters that matches `[A-Za-z0-9][A-Za-z0-9_./-]*[_./-][A-Za-z0-9_./-]*[A-Za-z0-9]` (trailing `.`, `_`, `/` and `-` of a run are dropped first). Prompt order, no duplicates. A URL, a cue word, and `e.g` and `i.e` (a choice) are not identifiers.
+- **History mode.** If the prompt has 1 or more identifiers, the hook injects the F73 history of the first 3 (in-process, same scope and exclusions, the current prompt left out), at most 1,500 characters for each identifier and 4,000 in total (an identifier block that does not fit is dropped). Output: line 1 `Lossless Handoff auto-recall: the history of the identifiers in your prompt, oldest first. A later mention can be rejected, a dry run or undone. This can be partial; search for the rest.`, then each block (F73 line 1 and entries), then one last line `Full history: python3 <hooks>/recall.py history <identifier> --all` (choice: the first identifier that has mentions). An identifier with no mention is left out. If none has a mention, the F67.c word search runs.
+- **Word search.** With no identifier, the word search as before, and the query words leave out: `previous, replaced, rejected, proposal, remember, current, earlier, value, values, answer, answers, setting, settings, before, which, there, their, about, would, could, should`.
+- **Health.** The row of `auto-recall.jsonl` adds `"mode": "history"|"search"` and `"identifiers": <n>` (the number of identifiers found, never the text). `hits` counts mentions in history mode. The 2.0-second budget and the no-error rule do not change.
+
+**F75.a Versions.** Product 0.17.0 (`install.sh`). `HOOK_VERSION` is `1.19.0` in every hook that has it. The default install does not change.

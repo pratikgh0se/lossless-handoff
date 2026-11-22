@@ -75,7 +75,7 @@ python3 - "$H" <<'PY'
 import hashlib, json, sys
 h = sys.argv[1]
 m = json.load(open(h + "/.handoff-manifest.json"))
-assert m["version"] == "1.18.0" and m["installed_at"], m
+assert m["version"] == "1.19.0" and m["installed_at"], m
 pkg = ["lossless_handoff/%s.py" % n for n in "__init__ transcript summary ledger handoff runtime redaction pipeline reconcile prove claims".split()]
 assert sorted(m["files"]) == sorted(["claims.json", "handoff-nudge.py", "postcompact-inject.py", "precompact-handoff.py", "recall.py"] + pkg), m
 for n, want in m["files"].items():
@@ -857,8 +857,8 @@ PY
   [ ! -e "$F/precompact-handoff.py" ] || fail "F66.a: uninstall did not finish its other work"
   rm "$F/llm_map.py" "$SK"; rmdir "$(dirname "$SK")"; o="$("$ROOT/uninstall.sh")"; ! grep -q "llm-map: kept" <<<"$o" || fail "F66.a: kept line without llm-map files"
   # F66.d versions
-  [ "$("$ROOT/install.sh" --version)" = "Lossless Handoff 0.16.0" ] || fail "F66.d: product version"
-  [ "$(grep -c '^HOOK_VERSION = "1.18.0"$' "$ROOT/hooks/precompact-handoff.py" "$ROOT/hooks/postcompact-inject.py" | grep -c ':1$')" = 2 ] || fail "F66.d: HOOK_VERSION"
+  [ "$("$ROOT/install.sh" --version)" = "Lossless Handoff 0.17.0" ] || fail "F66.d: product version"
+  [ "$(grep -c '^HOOK_VERSION = "1.19.0"$' "$ROOT/hooks/precompact-handoff.py" "$ROOT/hooks/postcompact-inject.py" | grep -c ':1$')" = 2 ] || fail "F66.d: HOOK_VERSION"
   # F66.c: README holds no claim markers; evidence page does; claims-lint default path
   ! grep -qE '\[C[1-8]\]' "$ROOT/README.md" && ! grep -qiE '^#+ .*proof|\*\*proof' "$ROOT/README.md" || fail "F66.c: README holds Proof or claim markers"
   grep -qE '\[C1\]' "$ROOT/docs/evidence.md" || fail "F66.c: docs/evidence.md has no markers"
@@ -905,7 +905,7 @@ rows = {json.loads(x)["sid"]: json.loads(x) for x in open(sys.argv[1]) if x.stri
 a, b = rows["f56a"], rows["f56b"]
 assert a["excerpt_chars"] > 0 and a["excerpt_dropped"] == 0, a
 assert b["excerpt_dropped"] > 0 and 0 < b["excerpt_chars"] <= 120000, b
-assert a["hook_version"] == "1.18.0"
+assert a["hook_version"] == "1.19.0"
 PY
   p="$(python3 "$ROOT/hooks/precompact-handoff.py" --prove --days 1; echo "rc=$?")"
   grep -qE "^excerpt cut: 1 of 2 compactions, median dropped [0-9]+ chars$" <<<"$p" || fail "F56.b: prove line: $p"
@@ -1071,7 +1071,7 @@ PY
 import json, sys
 rows = [json.loads(x) for x in open(sys.argv[1]) if x.strip()]
 r = [x for x in rows if x.get("event") == "subagent_start"][-1]
-assert r["rules"] == 2 and r["chars"] > 0 and r["hook_version"] == "1.18.0" and r["agent_type"] == "general-purpose", r
+assert r["rules"] == 2 and r["chars"] > 0 and r["hook_version"] == "1.19.0" and r["agent_type"] == "general-purpose", r
 PY
   # AC 262: no handoff text, no agent notes
   printf '# Handoff\n- cwd: %s\nLATESTTOKEN\n' "$PROJ" > "$STF/s58-latest.md"; printf 'AGENTTOKEN\n' > "$STF/s58-agent.md"
@@ -1795,7 +1795,7 @@ import json, sys
 raw = open(sys.argv[1]).read()
 assert all(json.loads(l)["cue"] for l in raw.splitlines()), "cue missing"
 rows = [json.loads(l) for l in raw.splitlines()]
-assert rows and all(set(r) == {"ts", "session_id", "fired", "cue", "hits", "ms", "timed_out"} for r in rows), rows
+assert rows and all(set(r) == {"ts", "session_id", "fired", "cue", "mode", "identifiers", "hits", "ms", "timed_out"} for r in rows), rows
 assert all(r["fired"] is True and isinstance(r["hits"], int) and isinstance(r["ms"], int) and r["timed_out"] is False for r in rows), rows
 assert any(r["hits"] >= 1 for r in rows) and any(r["hits"] == 0 for r in rows), rows
 for bad in ("ninety", "staging", "ghp_", "tangerine", "purple"):
@@ -1845,7 +1845,7 @@ PY
   CMD="python3 $F/auto-recall.py"
   echo '{"model": "opus"}' > "$FS"
   grep -q -- "--auto-recall" <<<"$("$ROOT/install.sh" --help)" || fail "F67.a: --help lacks --auto-recall"
-  [ "$(grep -c '^HOOK_VERSION = "1.18.0"$' "$ROOT/hooks/auto-recall.py")" = 1 ] || fail "F67.e: auto-recall HOOK_VERSION"
+  [ "$(grep -c '^HOOK_VERSION = "1.19.0"$' "$ROOT/hooks/auto-recall.py")" = 1 ] || fail "F67.e: auto-recall HOOK_VERSION"
   # default install: not installed, not registered
   "$ROOT/install.sh" >/dev/null
   [ ! -e "$F/auto-recall.py" ] && ! grep -q "auto-recall" "$FS" && ! grep -q "auto-recall" "$F/.handoff-manifest.json" || fail "F67.a: default install holds auto-recall"
@@ -1991,7 +1991,7 @@ SH
   [ ! -e "$F/recall-mcp.py" ] && ! grep -q "recall-mcp" "$F/.handoff-manifest.json" && [ ! -s "$FAKE_CLAUDE_LOG" ] || fail "F69: default install holds recall-mcp or called claude"
   ! grep -q "recall-mcp" <<<"$(PATH="$D/fakebin:$PATH" "$ROOT/install.sh" --dry-run)" || fail "F69: default dry-run mentions recall-mcp"
   grep -q -- "--recall-mcp" <<<"$("$ROOT/install.sh" --help)" || fail "F69: --help lacks --recall-mcp"
-  [ "$(grep -c '^HOOK_VERSION = "1.18.0"$' "$ROOT/hooks/recall-mcp.py")" = 1 ] || fail "F69: HOOK_VERSION"
+  [ "$(grep -c '^HOOK_VERSION = "1.19.0"$' "$ROOT/hooks/recall-mcp.py")" = 1 ] || fail "F69: HOOK_VERSION"
   # dry-run lists the file and the command; runs nothing
   o="$(PATH="$D/fakebin:$PATH" "$ROOT/install.sh" --recall-mcp --dry-run)"
   grep -q "install hook: .*/recall-mcp.py" <<<"$o" && grep -qF "claude mcp add --scope user lossless-recall -- $MC" <<<"$o" || fail "F69: dry-run: $o"
@@ -2097,12 +2097,12 @@ out, raw = run([
 by = {o.get("id"): o for o in out}
 assert [o.get("id") for o in out].count(2) == 1 and 99 not in by
 init = by[1]["result"]
-assert init["protocolVersion"] == "2025-06-18" and init["serverInfo"] == {"name": "lossless-recall", "version": "1.18.0"}, init
+assert init["protocolVersion"] == "2025-06-18" and init["serverInfo"] == {"name": "lossless-recall", "version": "1.19.0"}, init
 ins = init["instructions"]
 assert len(ins) < 4096 and "recall rule: before you state an earlier number, path, name, command or decision, search for it. Do not answer from memory. If the search finds nothing, say so." in ins, ins
 assert by[2]["result"] == {}
 tools = {t["name"]: t for t in by[3]["result"]["tools"]}
-assert set(tools) == {"search_earlier_chat", "open_message"}
+assert set(tools) == {"search_earlier_chat", "key_history", "open_message"}
 assert all(t["_meta"] == {"anthropic/alwaysLoad": True} for t in tools.values())
 assert tools["search_earlier_chat"]["inputSchema"]["required"] == ["query"] and tools["open_message"]["inputSchema"]["required"] == ["id"]
 t = txt(by[4]); assert "isError" not in by[4]["result"] or by[4]["result"]["isError"] is False
@@ -2160,7 +2160,7 @@ def tr(name, tokens):
 tr("t30k", 29985); tr("t60k", 59985); tr("t120k", 119985); tr("t20k", 19985)
 PY
   ra() { python3 -c 'import json,sys; print(json.dumps({"session_id":sys.argv[1],"transcript_path":sys.argv[2],"cwd":sys.argv[3],"hook_event_name":"PostToolUse","tool_name":"Bash"}))' "$1" "$D/$2.jsonl" "$W" | python3 "$HK"; }
-  [ "$(grep -c '^HOOK_VERSION = "1.18.0"$' "$HK")" = 1 ] || fail "F70: HOOK_VERSION"
+  [ "$(grep -c '^HOOK_VERSION = "1.19.0"$' "$HK")" = 1 ] || fail "F70: HOOK_VERSION"
   # below the interval: nothing, no state file
   [ -z "$(ra s1 t30k)" ] && [ ! -e "$HANDOFF_STATE_DIR/reanchor-s1.json" ] || fail "F70: output below 50,000"
   # at 60,000: exactly one JSON object, exact shape and first line, the rules block, the recall line is not required to exist here
@@ -2212,7 +2212,7 @@ PY
   set -e
   D="$T/f71"; mkdir -p "$D"; export HOME="$D/home"; mkdir -p "$HOME/.claude"
   export HANDOFF_STATE_DIR="$D/state"; HK="$ROOT/hooks/claim-guard.py"; LOG="$HANDOFF_STATE_DIR/claim-guard.jsonl"; unset HANDOFF_CLAIM_GUARD
-  [ "$(grep -c '^HOOK_VERSION = "1.18.0"$' "$HK")" = 1 ] || fail "F71: HOOK_VERSION"
+  [ "$(grep -c '^HOOK_VERSION = "1.19.0"$' "$HK")" = 1 ] || fail "F71: HOOK_VERSION"
   python3 - "$D" <<'PY'
 import json, sys
 d = sys.argv[1]
@@ -2498,7 +2498,9 @@ home, w = sys.argv[1:3]
 real = os.path.realpath(w)
 pd = os.path.join(home, ".claude", "projects", re.sub(r"[^A-Za-z0-9]", "-", real)); os.makedirs(pd)
 rows = [{"type": "user", "timestamp": "2026-11-19T10:00:00Z", "cwd": real, "sessionId": "rvsess", "uuid": "u1",
-         "message": {"role": "user", "content": "Our staging database rotation policy is every ninety days for all credentials"}}]
+         "message": {"role": "user", "content": "Our staging database rotation policy is every ninety days for all credentials"}},
+        {"type": "user", "timestamp": "2026-11-19T10:05:00Z", "cwd": real, "sessionId": "rvsess", "uuid": "u2",
+         "message": {"role": "user", "content": "A later prompt about something else"}}]
 open(os.path.join(pd, "rvsess.jsonl"), "w").write("".join(json.dumps(r) + "\n" for r in rows))
 PY
   o="$(printf '{"prompt":"what did we decide earlier about the staging database rotation policy","cwd":"%s","session_id":"rvcur"}' "$W" | HANDOFF_HOOKS_HOME="$PRIV" python3 "$ROOT/hooks/auto-recall.py")"
@@ -2525,6 +2527,132 @@ SH
   grep -qx "recall-mcp: already installed, kept" <<<"$o" && ! grep -q "mcp add" "$FAKE_CLAUDE_LOG" || fail "F69: registered server: $o / $(cat "$FAKE_CLAUDE_LOG")"
   PATH="$D/fakebin:$PATH" "$ROOT/uninstall.sh" >/dev/null 2>&1 || true
   ok "PR #32 review fixes: parallel re-anchor, notification turns, no lookback, foreign hook, override paths, agents file, no-ledger rule line, -x query, kept line, file modes"
+)
+
+# F73 key history, F74 search fixes, F75 auto-recall identifiers
+(
+  set -e
+  D="$T/f73"; mkdir -p "$D"; export HOME="$D/home"; W="$D/work"; mkdir -p "$HOME/.claude" "$W"
+  export HANDOFF_STATE_DIR="$D/state"; unset HANDOFF_HOOKS_HOME HANDOFF_AUTO_RECALL
+  git -C "$W" init -q; RC="$ROOT/hooks/recall.py"
+  python3 - "$HOME" "$W" <<'PY'
+import json, os, re, sys
+home, w = sys.argv[1:3]
+real = os.path.realpath(w)
+pd = os.path.join(home, ".claude", "projects", re.sub(r"[^A-Za-z0-9]", "-", real)); os.makedirs(pd)
+def rec(t, ts, text, sess, uuid):
+    return {"type": t, "timestamp": ts, "cwd": real, "sessionId": sess, "uuid": uuid,
+            "message": {"role": t, "content": text if t == "user" else [{"type": "text", "text": text}]}}
+rows = [rec("user", "2026-11-19T10:00:00Z", "Set the invoice-mailer batch size to 50. Nothing else changes. Thanks.", "aaaaaaaa", "U1"),
+        rec("assistant", "2026-11-19T10:01:00Z", "Done: invoice-mailer batch size is now 50.", "aaaaaaaa", "U2"),
+        rec("user", "2026-11-19T10:02:00Z", "Also invoice-mailer-eu uses 10, invoice-mailer.v2 uses 5 and xinvoice-mailer uses 1.", "aaaaaaaa", "U3"),
+        rec("user", "2026-11-19T10:03:00Z", "Change `invoice-mailer` batch size to 75, (invoice-mailer), invoice-mailer, ok.", "aaaaaaaa", "U4"),
+        {"type": "assistant", "timestamp": "2026-11-19T10:04:00Z", "uuid": "U5", "message": {"role": "assistant", "content": [
+            {"type": "tool_use", "id": "tc1", "name": "Bash", "input": {"command": "python3 recall.py history invoice-mailer"}},
+            {"type": "tool_use", "id": "tc2", "name": "mcp__lossless-recall__key_history", "input": {"identifier": "invoice-mailer"}}]}},
+        {"type": "user", "timestamp": "2026-11-19T10:04:01Z", "uuid": "U6", "message": {"role": "user", "content": [
+            {"type": "tool_result", "tool_use_id": "tc1", "content": "RECALLRESULT invoice-mailer stale"},
+            {"type": "tool_result", "tool_use_id": "tc2", "content": "MCPRESULT invoice-mailer stale"}]}},
+        rec("user", "2026-11-19T10:04:30Z", "Lossless Handoff auto-recall: earlier messages INJECTED invoice-mailer", "aaaaaaaa", "U8"),
+        rec("user", "2026-11-19T10:05:00Z", "Rollback invoice-mailer to 50 (dry run only).", "aaaaaaaa", "U7")]
+open(os.path.join(pd, "aaaaaaaa.jsonl"), "w").write("".join(json.dumps(r) + "\n" for r in rows))
+fork = [dict(r) for r in rows[:4]] + [rec("user", "2026-11-19T11:00:00Z", "Final: invoice-mailer batch size is 100.", "bbbbbbbb", "U9")]
+open(os.path.join(pd, "bbbbbbbb.jsonl"), "w").write("".join(json.dumps(r) + "\n" for r in fork))
+PY
+  cd "$W"
+  o="$(python3 "$RC" history invoice-mailer)"
+  [ "$(head -n 1 <<<"$o")" = "history of invoice-mailer: 5 mention(s), oldest first. A later mention can be a rejected proposal, a dry run or an undo; read all of them." ] || fail "F73: line 1: $o"
+  [ "$(grep -c '^- ' <<<"$o")" = 5 ] || fail "F73: entry count: $o"
+  grep -q "^- aaaaaaaa:1 2026-11-19 10:00 user: Set the invoice-mailer batch size to 50. Nothing else changes.$" <<<"$o" && ! grep -q "Thanks" <<<"$o" || fail "F73: entry 1 (sentence window): $o"
+  ! grep -q "invoice-mailer-eu\|invoice-mailer.v2\|xinvoice" <<<"$o" || fail "F73: a look-alike key matched: $o"
+  ! grep -q "RECALLRESULT\|MCPRESULT\|INJECTED\|recall.py history" <<<"$o" || fail "F73: an excluded text is in the history: $o"
+  grep -q '`invoice-mailer`' <<<"$o" && grep -q "bbbbbbbb:5 2026-11-19 11:00 user: Final" <<<"$o" || fail "F73: backtick entry or fork entry missing: $o"
+  [ "$(grep -c "Change" <<<"$o")" = 1 ] || fail "F73: the fork copy of the parent history was not removed"
+  [ "$(grep '^- ' <<<"$o" | sed -n '5p' | cut -c1-29)" = "- bbbbbbbb:5 2026-11-19 11:00" ] || fail "F73: not oldest first"
+  [ "$(python3 "$RC" history nothing-here)" = "history of nothing-here: no mentions" ] || fail "F73: no-match line"
+  [ "$(python3 "$RC" history INVOICE-MAILER --role assistant | grep -c '^- ')" = 1 ] || fail "F73: --role or case"
+  [ "$(python3 "$RC" history invoice-mailer.v2 | grep -c '^- ')" = 1 ] || fail "F73: a dotted identifier"
+  # the cap: 4,000 characters; 2 oldest + newest + an omission line; --all has no cap
+  python3 - "$HOME" "$W" <<'PY'
+import json, os, re, sys
+home, w = sys.argv[1:3]
+real = os.path.realpath(w)
+pd = os.path.join(home, ".claude", "projects", re.sub(r"[^A-Za-z0-9]", "-", real))
+rows = [{"type": "user", "timestamp": "2026-11-20T10:%02d:00Z" % i, "cwd": real, "sessionId": "cccccccc", "uuid": "C%d" % i,
+         "message": {"role": "user", "content": "capkey step %d is %s" % (i, "word " * 40)}} for i in range(40)]
+open(os.path.join(pd, "cccccccc.jsonl"), "w").write("".join(json.dumps(r) + "\n" for r in rows))
+PY
+  o="$(python3 "$RC" history capkey)"
+  [ "${#o}" -le 4000 ] || fail "F73: cap: ${#o}"
+  python3 - "$o" "$RC" <<'PY'
+import sys
+L = sys.argv[1].split("\n")
+assert L[0].startswith("history of capkey: 40 mention(s)"), L[0]
+om = [i for i, x in enumerate(L) if x.startswith("[") and "omitted in the middle; run: python3 " in x and x.endswith("history capkey --all]")]
+assert len(om) == 1 and om[0] == 3, L[:5]
+assert "step 0 " in L[1] and "step 1 " in L[2] and "step 39 " in L[-1], (L[1], L[2], L[-1])
+k = int(L[3].split("]")[0].split()[0][1:]); assert k == 40 - 2 - (len(L) - 4), (k, len(L))
+PY
+  [ "$(python3 "$RC" history capkey --all | grep -c '^- ')" = 40 ] || fail "F73: --all"
+  # F74: whole tokens rank above substrings (inside a group, the old order), exclusions apply to search
+  o="$(python3 "$RC" search "invoice-mailer" --limit 10 --keyword)"
+  ! grep -q "RECALLRESULT\|MCPRESULT\|INJECTED" <<<"$o" || fail "F74: an excluded text is in the search: $o"
+  [ "$(grep -c "Change" <<<"$o")" = 1 ] || fail "F74: duplicate from the fork"
+  python3 - "$o" <<'PY'
+import sys
+L = [x for x in sys.argv[1].split("\n") if " [word]: " in x]
+whole = [i for i, x in enumerate(L) if "Also invoice-mailer-eu" not in x]
+sub = [i for i, x in enumerate(L) if "Also invoice-mailer-eu" in x]
+assert whole and sub and max(whole) < min(sub), L
+PY
+  touch -t 203001010000 "$HOME"/.claude/projects/*/bbbbbbbb.jsonl
+  # MCP: key_history, descriptions, instructions, the current prompt is left out
+  cat > "$D/mcp.py" <<'PY'
+import json, subprocess, sys
+ms, cwd = sys.argv[1:3]
+msgs = [{"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2025-06-18"}},
+        {"jsonrpc": "2.0", "id": 2, "method": "tools/list"},
+        {"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "key_history", "arguments": {"identifier": "invoice-mailer"}}},
+        {"jsonrpc": "2.0", "id": 4, "method": "tools/call", "params": {"name": "key_history", "arguments": {}}},
+        {"jsonrpc": "2.0", "id": 5, "method": "tools/call", "params": {"name": "key_history", "arguments": {"identifier": "capkey"}}}]
+p = subprocess.run([sys.executable, ms], input="".join(json.dumps(m) + "\n" for m in msgs), capture_output=True, text=True, cwd=cwd, timeout=60)
+by = {o["id"]: o for o in map(json.loads, p.stdout.splitlines())}
+assert "For the current value of a setting, key or decision, call key_history and read every mention: the newest mention can be a rejected proposal." in by[1]["result"]["instructions"]
+t = {x["name"]: x for x in by[2]["result"]["tools"]}
+assert set(t) == {"search_earlier_chat", "key_history", "open_message"}
+assert t["key_history"]["_meta"] == {"anthropic/alwaysLoad": True} and t["key_history"]["inputSchema"]["required"] == ["identifier"]
+assert t["key_history"]["description"] == "Every mention of one identifier (a key, file, service, setting or name) in this project's chats, oldest first. Use it before you state the current value of anything that can change."
+assert "Hits are newest first. A newer hit can be a rejected proposal or a dry run. For the history of one identifier, use key_history." in t["search_earlier_chat"]["description"]
+x = by[3]["result"]["content"][0]["text"]
+assert x.startswith("history of invoice-mailer: 4 mention(s)") and "Final: invoice-mailer batch size is 100" not in x, x  # the newest user prompt of the newest session is the current prompt
+assert by[4]["result"]["isError"] is True
+assert len(by[5]["result"]["content"][0]["text"]) <= 4000
+PY
+  python3 "$D/mcp.py" "$ROOT/hooks/recall-mcp.py" "$W" || fail "F73: MCP key_history"
+  grep -q '"tool": "key_history"' "$HANDOFF_STATE_DIR/recall-mcp.jsonl" || fail "F73: key_history health row"
+  # F75: identifiers
+  ar() { python3 -c 'import json,sys; print(json.dumps({"prompt":sys.argv[1],"cwd":sys.argv[2],"session_id":"f75","transcript_path":""}))' "$1" "$W" | python3 "$ROOT/hooks/auto-recall.py"; }
+  o="$(ar "what did we decide earlier about invoice-mailer and nothing.else/at-all")"
+  [ "$(head -n 1 <<<"$o")" = "Lossless Handoff auto-recall: the history of the identifiers in your prompt, oldest first. A later mention can be rejected, a dry run or undone. This can be partial; search for the rest." ] || fail "F75: header: $o"
+  [ "$(tail -n 1 <<<"$o")" = "Full history: python3 ~/.claude/hooks/recall.py history invoice-mailer --all" ] || fail "F75: last line: $o"
+  grep -q "^history of invoice-mailer: 5 mention" <<<"$o" && ! grep -q "nothing.else" <<<"$o" || fail "F75: block: $o"
+  [ "${#o}" -le 4200 ] || fail "F75: output too long"
+  o="$(ar "what did we decide earlier about https://example.com/a-b and the invoice batch rejected values")"
+  [ "$(head -n 1 <<<"$o")" = "Lossless Handoff auto-recall: earlier messages that match your words. Verify them before you rely on them." ] || fail "F75: no identifier must use the word search: $o"
+  python3 - "$HANDOFF_STATE_DIR/auto-recall.jsonl" <<'PY'
+import json, sys
+rows = [json.loads(x) for x in open(sys.argv[1]) if x.strip()]
+assert rows[0]["mode"] == "history" and rows[0]["identifiers"] == 2 and rows[0]["hits"] == 5, rows
+assert rows[1]["mode"] == "search" and rows[1]["identifiers"] == 0, rows
+PY
+  python3 - <<PY
+import importlib.util
+spec = importlib.util.spec_from_file_location("ar", "$ROOT/hooks/auto-recall.py"); m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+assert m.identifiers("fix \`foo\` in a/b.c, see x_y and e.g. 2026-11-19 or https://h.io/p-q") == ["foo", "a/b.c", "x_y", "2026-11-19"], m.identifiers("fix \`foo\` in a/b.c, see x_y and e.g. 2026-11-19 or https://h.io/p-q")
+assert m.identifiers("plain words only") == []
+assert m.query_words("what did we decide earlier about previous rejected proposal values staging database") == ["database", "staging"] or set(m.query_words("what did we decide earlier about previous rejected proposal values staging database")) == {"staging", "database"}
+PY
+  ok "F73-F75: history output, token boundary, exclusions, fork dedupe, cap, search ranking, key_history tool, auto-recall identifiers and health"
 )
 
 "$ROOT/uninstall.sh" >"$T/un.out"

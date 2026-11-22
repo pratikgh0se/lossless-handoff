@@ -2,6 +2,22 @@
 
 Lossless Handoff, formerly claude-handoff.
 
+## [0.17.0] - 2026-11-22
+
+Key history and retrieval fixes (hooks 1.19.0). New F73 to F75 in `docs/spec.md`.
+
+### Upgrade notes
+
+- The default install is the same as before. Auto-recall and the recall tool stay opt-in.
+- Restart open Claude Code sessions after the install.
+
+### Changes
+
+- F73: new `recall.py history <identifier> [--role] [--all]` and the MCP tool `key_history`. Every mention of one identifier as a whole token, oldest first, as sentence windows. Output cap 4,000 characters (middle cut).
+- F74: `recall.py search` and `search_earlier_chat` leave out the tool calls and results of recall itself, auto-recall injections and duplicates (a fork copies its parent history). The MCP tool also leaves out the current prompt. Hits that match as whole tokens rank above substring hits.
+- F75: auto-recall builds the history of the first 3 identifiers of the prompt (1,500 characters each, 4,000 in total). Without an identifier it uses the word search with a stop list of generic words. The health row has `mode` and `identifiers`.
+- The MCP server instructions and the tool descriptions name `key_history`.
+
 ## [0.16.0] - 2026-11-22
 
 Four opt-in search levers: a strict recall rule line, a recall MCP tool, a re-anchor hook and a claim guard (hooks 1.18.0). New F68 to F72 in `docs/spec.md`.
