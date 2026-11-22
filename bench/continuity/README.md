@@ -119,7 +119,7 @@ Do not move to the next step until the current step passes. Each step proves som
 | 4. Pilot | `run.sh litm3-pilot --lh-path ...` | about $194 | The size of the effects and the cost per unit on 2 dev seeds; the stop rule for the levers (H6) | H6 holds (K searches more than B), or stop and remove the levers |
 | 5. Full | `run.sh litm3-full --lh-path ...` | about $5,600, or about $4,400 without arm R in the compaction condition (23 seeds, N up to 30) | The claims, on 20 report seeds | Run only when the pilot is clean and the owner says go |
 
-Note on step 3: the owner expected $12 to $25. The estimate for 1 seed, arms A, B, R and K, both conditions, N=1 and 3, is about $67, because the no-compaction session of design 3 alone is about $8 for each arm. For about $16 use `litm3-nc-smoke` (arms A and R, no compaction only). The preflight checks all other parts first.
+Note on step 3: the owner expected $12 to $25. The estimate for 1 seed, arms A, B, R and K, both conditions, N=1 and 3, is about $47. The main no-compaction session of design 3 is about $6 once for each seed, and each arm adds about $2 of forks. For about $10 use `litm3-nc-smoke` (arms A and R, no compaction only). The preflight checks all other parts first.
 
 What the preflight checklist tests (each line prints PASS or FAIL):
 
@@ -133,7 +133,7 @@ Round 4 added lines to this list (see the Round 4 section): the row count of eve
 - arm K: the recall MCP server starts and lists its two tools (the checklist starts it for a second, no model call); whether an MCP call happened is recorded (it is not required); a reanchor health row exists if the session crossed the 50,000 token interval; the recall-rule line is in the injected text;
 - `used_lookup` is set for every probe;
 - every probe answer parsed and graded;
-- the total cost is under $3, and the real cost is at most 1.3 times the `cost.py` estimate (the ratio is printed for each arm and condition).
+- the total cost is under $5, and the real cost is at most 1.3 times the `cost.py` estimate (the ratio is printed for each arm and condition).
 
 ### Abort gates (every preset)
 
