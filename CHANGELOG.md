@@ -15,10 +15,10 @@ Auto-recall: an opt-in hook that searches the earlier chats when your prompt ref
 
 ### Changes
 
-- New hook `hooks/auto-recall.py` (`UserPromptSubmit`, timeout 5). It acts only when the prompt does not start with `/` and refers to the past (16 phrases, or a double-quoted phrase of 3 or more words). It searches the transcripts of the project with the code of `recall.py` (word, plus meaning when the index exists), and prints the top 3 hits (300 characters each, secrets masked) with the exact first and last line in F67.c.
+- New hook `hooks/auto-recall.py` (`UserPromptSubmit`, timeout 5). It acts only when the prompt does not start with `/` and refers to the past (30 phrases such as `what did we decide` and `you mentioned`, matched as whole words, or a double-quoted phrase of 3 or more words; the bare words `before`, `earlier` and `remember` are not cues). It searches the transcripts of the project with the code of `recall.py` (word, plus meaning when the index exists), and prints the top 3 hits (300 characters each, secrets masked) with the exact first and last line in F67.c.
 - Time budget 2.0 seconds for the whole hook. On a timeout, no hits, fewer than 2 query words, a missing `recall.py` or any error: no output and exit 0.
 - `HANDOFF_AUTO_RECALL=0` switches it off at run time.
-- Each run that passes the trigger appends one line to `~/.local/state/claude-handoffs/auto-recall.jsonl` (`ts`, `session_id`, `fired`, `hits`, `ms`, `timed_out`). The line holds no prompt text and no quotes.
+- Each run that passes the trigger appends one line to `~/.local/state/claude-handoffs/auto-recall.jsonl` (`ts`, `session_id`, `fired`, `cue`, `hits`, `ms`, `timed_out`). The line holds no prompt text and no quotes.
 - Docs: README, `docs/install.md`, `docs/configuration.md`, `docs/recall.md` (how it decides and its limits), `docs/architecture.md` and its diagram, `SECURITY.md`.
 - `HOOK_VERSION` is `1.17.0`; the product version is `0.15.0`.
 

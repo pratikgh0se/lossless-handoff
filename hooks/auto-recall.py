@@ -20,8 +20,10 @@ TOP_HITS = 3
 SNIPPET_MAX = 300
 MAX_WORDS = 8
 
-CUES = ["what did i say", "what did we decide", "we decided", "i told you", "i said", "you said", "earlier", "before",
-        "last time", "previously", "remember", "as we discussed", "did we", "did i", "which one did", "what was the"]
+CUES = ["what did i say", "what did you say", "what did we decide", "did we decide", "did we agree", "did i say", "did i tell you",
+        "we decided", "we agreed", "i told you", "i said", "you said", "you mentioned", "i mentioned", "last time", "previously",
+        "as we discussed", "as discussed", "which one did", "earlier you", "earlier i", "earlier we", "said earlier", "said before",
+        "as before", "like before", "same as before", "do you remember", "remember when", "remember what"]
 CUE_RE = re.compile(r"\b(?:%s)\b" % "|".join(re.escape(c) for c in sorted(CUES, key=len, reverse=True)), re.I)
 QUOTE_RE = re.compile(r'"([^"\n]+)"')
 WORD_RE = re.compile(r"[A-Za-z0-9_]{4,}")
@@ -29,7 +31,7 @@ WORD_RE = re.compile(r"[A-Za-z0-9_]{4,}")
 HEADER = "Lossless Handoff auto-recall: earlier messages that match your words. Verify them before you rely on them."
 FOOTER = "Open one in full: python3 ~/.claude/hooks/recall.py open <id>"
 
-_state = {"lock": threading.Lock(), "done": False, "t0": time.monotonic(), "sid": "", "hits": 0, "logged": False}
+_state = {"lock": threading.Lock(), "done": False, "t0": time.monotonic(), "sid": "", "hits": 0, "logged": False, "cue": "quote"}
 
 
 def quoted_phrases(prompt):
@@ -40,7 +42,12 @@ def triggered(prompt):
     """F67.b: True when the prompt may refer to the past."""
     if not isinstance(prompt, str) or not prompt.strip() or prompt.lstrip().startswith("/"):
         return False
-    return bool(CUE_RE.search(prompt)) or bool(quoted_phrases(prompt))
+    m = CUE_RE.search(prompt)
+    if m:
+        _state["cue"] = re.sub(r"\s+", " ", m.group(0).lower())  # a fixed list value, never prompt text
+        return True
+    _state["cue"] = "quote"
+    return bool(quoted_phrases(prompt))
 
 
 def query_words(prompt):
@@ -66,7 +73,7 @@ def write_health(hits, timed_out):
         os.makedirs(STATE_DIR, exist_ok=True)
         with open(os.path.join(STATE_DIR, "auto-recall.jsonl"), "a", encoding="utf-8") as f:
             f.write(json.dumps({"ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "session_id": str(_state["sid"])[:36],
-                                "fired": True, "hits": int(hits),
+                                "fired": True, "cue": _state["cue"], "hits": int(hits),
                                 "ms": int((time.monotonic() - _state["t0"]) * 1000), "timed_out": bool(timed_out)}) + "\n")
     except BaseException:
         pass

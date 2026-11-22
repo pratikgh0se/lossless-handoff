@@ -1711,6 +1711,22 @@ PY
   grep -Eq '^- f67sess?[^ ]*:[0-9]+ 2026-11-19 10:0[0-9] (user|assistant): ' <<<"$o" || fail "F67.c: hit line format: $o"
   grep -q "ninety days" <<<"$o" || fail "F67.c: hit text missing: $o"
   [ "$(awk 'length($0) > 400' <<<"$o" | wc -l | tr -d ' ')" = 0 ] || fail "F67.c: a hit line is too long"
+  # F67.b (amended): one case per cue class fires, and the health line holds the matched cue
+  for cue in "what did you say" "did we decide" "did we agree" "did i say" "did i tell you" "we agreed" "you mentioned" "i mentioned" \
+             "as discussed" "earlier you" "earlier we" "said before" "like before" "same as before" "do you remember" "remember when" "remember what"; do
+    o="$(ar "$cue the staging database rotation policy")"
+    grep -q "ninety days" <<<"$o" || fail "F67.b: cue '$cue' did not fire: $o"
+    [ "$(tail -n 1 "$AL" | python3 -c 'import json,sys; print(json.load(sys.stdin)["cue"])')" = "$cue" ] || fail "F67.d: health cue is not '$cue'"
+  done
+  o="$(ar "WHAT DID I SAY about the staging database rotation policy")"; grep -q "ninety days" <<<"$o" || fail "F67.b: cue is case sensitive"
+  [ "$(tail -n 1 "$AL" | python3 -c 'import json,sys; print(json.load(sys.stdin)["cue"])')" = "what did i say" ] || fail "F67.d: health cue lower case"
+  # whole words: a cue inside another word does not fire
+  [ -z "$(ar "the staging database rotation policy was mentioned, as discussedly")" ] || fail "F67.b: a cue inside a word fired"
+  # the old bare cues no longer fire
+  for q in "run the tests before you commit" "remember to rotate the staging database credentials" "did we ship the staging database rotation policy" \
+           "did I rotate the staging database credentials" "what was the staging database rotation policy" "earlier staging database rotation policy"; do
+    [ -z "$(ar "$q")" ] || fail "F67.b: a bare cue fired: $q"
+  done
   # no cue: no output
   [ -z "$(ar "Please rotate the staging database credentials now")" ] || fail "F67.b: output without a cue"
   # slash command: no output even with a cue
@@ -1718,9 +1734,10 @@ PY
   # quoted phrase of 3 or more words fires without a cue phrase; 2 words does not
   o="$(ar 'Find "purple elephant migration" in the notes')"
   grep -q "purple elephant migration" <<<"$o" || fail "F67.b/c: quoted phrase: $o"
+  [ "$(tail -n 1 "$AL" | python3 -c 'import json,sys; print(json.load(sys.stdin)["cue"])')" = "quote" ] || fail "F67.d: health cue for a quote"
   [ -z "$(ar 'Find "purple elephant" in the notes')" ] || fail "F67.b: a 2-word quote fired"
   # fewer than 2 words of 4+ characters after the cues are removed: no output
-  [ -z "$(ar "what did I say earlier about the zebra")" ] || fail "F67.c: fewer than 2 words fired"
+  [ -z "$(ar "what did I say on the zebra")" ] || fail "F67.c: fewer than 2 words fired"
   # no hits: no output
   [ -z "$(ar "what did we decide earlier about quantum unicorn telemetry")" ] || fail "F67.c: no hits gave output"
   # the current prompt is not a hit
@@ -1728,10 +1745,10 @@ PY
 import glob, json, os, sys
 p = glob.glob(os.path.join(sys.argv[1], ".claude", "projects", "*", "f67sess.jsonl"))[0]
 r = {"type": "user", "timestamp": "2026-11-20T09:00:00Z", "cwd": os.path.realpath(os.path.dirname(p) and json.loads(open(p).readline())["cwd"]), "sessionId": "f67sess", "uuid": "u9",
-     "message": {"role": "user", "content": "did we ever choose the tangerine hovercraft mechanism"}}
+     "message": {"role": "user", "content": "did we decide on the tangerine hovercraft mechanism"}}
 open(p, "a").write(json.dumps(r) + "\n")
 PY
-  [ -z "$(ar "did we ever choose the tangerine hovercraft mechanism")" ] || fail "F67.c: the current prompt was a hit"
+  [ -z "$(ar "did we decide on the tangerine hovercraft mechanism")" ] || fail "F67.c: the current prompt was a hit"
   # redaction: the secret never reaches the output
   o="$(ar "what did we decide earlier about the deploy pipeline token staging")"
   grep -q "REDACTED" <<<"$o" && ! grep -q "ghp_abcdefghijkl" <<<"$o" || fail "F67.c: secret not masked: $o"
@@ -1745,8 +1762,9 @@ PY
   python3 - "$AL" <<'PY'
 import json, sys
 raw = open(sys.argv[1]).read()
+assert all(json.loads(l)["cue"] for l in raw.splitlines()), "cue missing"
 rows = [json.loads(l) for l in raw.splitlines()]
-assert rows and all(set(r) == {"ts", "session_id", "fired", "hits", "ms", "timed_out"} for r in rows), rows
+assert rows and all(set(r) == {"ts", "session_id", "fired", "cue", "hits", "ms", "timed_out"} for r in rows), rows
 assert all(r["fired"] is True and isinstance(r["hits"], int) and isinstance(r["ms"], int) and r["timed_out"] is False for r in rows), rows
 assert any(r["hits"] >= 1 for r in rows) and any(r["hits"] == 0 for r in rows), rows
 for bad in ("ninety", "staging", "ghp_", "tangerine", "purple"):

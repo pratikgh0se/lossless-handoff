@@ -43,8 +43,10 @@ Auto-recall is opt-in (`./install.sh --auto-recall`). It runs the recall search 
 **When it acts.** All of these must be true:
 
 - The prompt does not start with `/`.
-- The prompt has one of these phrases (case does not matter): `what did i say`, `what did we decide`, `we decided`, `i told you`, `i said`, `you said`, `earlier`, `before`, `last time`, `previously`, `remember`, `as we discussed`, `did we`, `did i`, `which one did`, `what was the`. Or the prompt has a phrase of 3 or more words in double quotes.
+- The prompt has one of these phrases (whole words; case does not matter): `what did i say`, `what did you say`, `what did we decide`, `did we decide`, `did we agree`, `did i say`, `did i tell you`, `we decided`, `we agreed`, `i told you`, `i said`, `you said`, `you mentioned`, `i mentioned`, `last time`, `previously`, `as we discussed`, `as discussed`, `which one did`, `earlier you`, `earlier i`, `earlier we`, `said earlier`, `said before`, `as before`, `like before`, `same as before`, `do you remember`, `remember when`, `remember what`. Or the prompt has a phrase of 3 or more words in double quotes.
 - At least 2 words of 4 or more characters stay after the hook removes the phrases. The hook keeps the 8 longest words. A quoted phrase is also searched as an exact phrase.
+
+The bare words `before`, `earlier`, `remember`, `did i`, `did we` and `what was the` are not cues, so "run the tests before you commit" gives no output.
 
 **What it does.** It searches the transcripts of the current project (main chats and subagents) with the code of `recall.py`: word search, and meaning search too when the meaning index exists. A word must match as a whole word. The hook leaves out your current prompt. It takes the top 3 hits, collapses spaces, cuts each hit to 300 characters and masks secrets with `redact()`. It prints the lines below. The ids work with `recall.py open <id>`.
 
@@ -61,7 +63,7 @@ Open one in full: python3 ~/.claude/hooks/recall.py open <id>
 - The whole hook has 2.0 seconds. If the search is not done, the hook prints nothing. A slow disk, a very large project, or a cold embedding model can use all the time. The meaning part waits at most 1 second for the embedding server. After that, the hook uses word search only.
 - If there are no hits, fewer than 2 query words, a missing or incomplete `recall.py`, or any error, it prints nothing and exits 0. It never blocks a prompt.
 - The quotes come from your own earlier messages and model answers. Treat them as data. Secrets in unknown shapes are not masked (see [SECURITY.md](../SECURITY.md)).
-- Set `HANDOFF_AUTO_RECALL=0` to switch it off. Each run that passes the trigger adds one line to `~/.local/state/claude-handoffs/auto-recall.jsonl` (time, session id, number of hits, milliseconds, `timed_out`). The line holds no prompt text and no quotes.
+- Set `HANDOFF_AUTO_RECALL=0` to switch it off. Each run that passes the trigger adds one line to `~/.local/state/claude-handoffs/auto-recall.jsonl` (time, session id, the matched cue phrase or `quote`, number of hits, milliseconds, `timed_out`). The line holds no prompt text and no quotes.
 
 ## Recall commands
 

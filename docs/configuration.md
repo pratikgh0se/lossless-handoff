@@ -32,7 +32,7 @@ Every setting and every file that the hooks write. This page is part of the [doc
 | `<sid>-agent.md` | The model's own handoff (written by the model). |
 | `<sid>-agent.meta.json` | Nudge state and timestamps (numbers only, no text). |
 | `recall-index.json`, `recall/` | Recall caches: which transcripts belong to which project, and the meaning index (`<project>.sqlite`, `index.log`). Safe to delete. |
-| `auto-recall.jsonl` | Only with `--auto-recall`. One JSON line for each prompt that refers to the past: `ts`, `session_id`, `fired`, `hits`, `ms`, `timed_out`. It holds no prompt text and no quotes. |
+| `auto-recall.jsonl` | Only with `--auto-recall`. One JSON line for each prompt that refers to the past: `ts`, `session_id`, `fired`, `cue` (the matched phrase from a fixed list, or `quote`), `hits`, `ms`, `timed_out`. It holds no prompt text and no quotes. |
 | `health.jsonl` | One JSON line for each compaction: time, trigger, agent file fresh/stale/absent, fallback result, decisions update result (`ok`, `unchanged`, `failed`, `locked`, `disabled`) and counts, duration, size, status `ok` / `reduced` / `degraded`. No message text or paths. It rotates at 5,000 lines. |
 | `<sid>-last-health.json`, `<sid>-degraded.json` | Per-session status and degraded reasons. |
 | `<sid>-pending.json` | Marker while PreCompact runs. The health line removes it. |

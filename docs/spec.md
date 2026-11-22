@@ -1073,7 +1073,7 @@ Why: Claude often answers from its own memory (possibly lost in the middle, or c
 - `uninstall.sh` removes the file and its `settings.json` entry. `--dry-run` lists it. The settings edit keeps a backup, like the other hooks.
 - `HANDOFF_AUTO_RECALL=0` makes the hook print nothing and exit 0.
 
-**F67.b Trigger.** The hook reads the hook JSON on stdin (`prompt`, `transcript_path`, `cwd`, `session_id`). It fires only if all of these hold: the prompt does not start with `/`; and the prompt matches a cue (case does not matter). A cue is one of these phrases: `what did i say`, `what did we decide`, `we decided`, `i told you`, `i said`, `you said`, `earlier`, `before`, `last time`, `previously`, `remember`, `as we discussed`, `did we`, `did i`, `which one did`, `what was the`; or a double-quoted phrase of 3 or more words. Otherwise: no output, exit 0.
+**F67.b Trigger.** The hook reads the hook JSON on stdin (`prompt`, `transcript_path`, `cwd`, `session_id`). It fires only if all of these hold: the prompt does not start with `/`; and the prompt matches a cue (case does not matter). A cue is one of these phrases: `what did i say`, `what did you say`, `what did we decide`, `did we decide`, `did we agree`, `did i say`, `did i tell you`, `we decided`, `we agreed`, `i told you`, `i said`, `you said`, `you mentioned`, `i mentioned`, `last time`, `previously`, `as we discussed`, `as discussed`, `which one did`, `earlier you`, `earlier i`, `earlier we`, `said earlier`, `said before`, `as before`, `like before`, `same as before`, `do you remember`, `remember when`, `remember what`; or a double-quoted phrase of 3 or more words. A phrase matches as whole words, and case does not matter. The bare words `before`, `earlier`, `remember`, `did i`, `did we` and `what was the` are not cues: "run the tests before you commit" gives no output. Otherwise: no output, exit 0.
 
 **F67.c Search and output.**
 - Query: the prompt with the cue phrases removed, then the 8 longest remaining words of 4 or more characters. If fewer than 2 such words remain: no output, exit 0. A double-quoted phrase is also searched as an exact phrase.
@@ -1083,6 +1083,6 @@ Why: Claude often answers from its own memory (possibly lost in the middle, or c
 - No hits: no output, exit 0. A missing or incomplete `recall.py`: no output, exit 0.
 - Time budget: 2.0 seconds for the whole hook. If the search is not done in time, no output, exit 0. The hook never fails a prompt: every error gives no output and exit 0.
 
-**F67.d Health.** Each run that passes the trigger appends one JSON line to `~/.local/state/claude-handoffs/auto-recall.jsonl`: `{"ts", "session_id", "fired": true, "hits": <n>, "ms": <int>, "timed_out": <bool>}`. No prompt text and no snippets are in this log.
+**F67.d Health.** Each run that passes the trigger appends one JSON line to `~/.local/state/claude-handoffs/auto-recall.jsonl`: `{"ts", "session_id", "fired": true, "cue": <the matched phrase from the list, or "quote">, "hits": <n>, "ms": <int>, "timed_out": <bool>}`. The `cue` value is always a fixed list phrase or `quote`, never prompt text. No prompt text and no snippets are in this log.
 
 **F67.e Versions.** Product 0.15.0 (`install.sh`). `HOOK_VERSION` is `1.17.0` in every hook that has it, `auto-recall.py` too. This amends the version value in ACs 136, 150, 172, 180, 188 and 267 again.
