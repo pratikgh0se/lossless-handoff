@@ -1167,3 +1167,91 @@ Why: a benchmark arm runs a private copy of the hooks. It must not read the live
 **F70.f Conflict check.** A default install (no flag) does not count a foreign `reanchor.py` or `claim-guard.py` hook as a conflict. The two names count only when the flag is on or the file is installed.
 
 **Modes.** `recall-mcp.jsonl`, `claim-guard.jsonl`, `claim-guard-<session>.json`, `reanchor-<session>.json` and `reanchor-<session>.lock` are created with mode 0600.
+
+## F73 Key history (2026-11-22)
+
+Why: on update chains, search returns one window for each message, newest first, with look-alike keys mixed in. A 14-step chain came back complete in 0 of 9 cases. A history of one identifier, oldest first, shows the whole chain.
+
+**F73.a CLI.** `python3 recall.py history <identifier> [--role user|assistant|any] [--all]`. Default role `any` (all segments, as `search` does). Scope: as `recall.py search` (this project, main chats and subagents).
+
+**F73.b Match.** The identifier matches as a whole token, case does not matter. The characters next to the match are not in `[A-Za-z0-9_./-]`. So `invoice-mailer` does not match `invoice-mailer-eu`, `invoice-mailer.v2` or `xinvoice-mailer`, and does match `` `invoice-mailer` ``, `invoice-mailer,` and `(invoice-mailer)`. Reading chosen: a final `.` that is not followed by a token character (a sentence end) is allowed after the match, so `use invoice-mailer.` matches.
+
+**F73.c Unit.** Each sentence with a match, plus the sentence before and the sentence after it in the same message. Sentences split at `. `, `? `, `! `, a newline or the message end. Reading chosen: windows of one message that overlap merge into one entry, so no text repeats.
+
+**F73.d Excluded.** (a) tool calls and results of recall itself (a Bash command that holds `recall.py`, any `mcp__lossless-recall__` call, and the tool results of those calls, matched by tool id); (b) text that starts with `Lossless Handoff auto-recall:`; (c) in the MCP tool and in auto-recall, only the record of the last user prompt of the current session (the records after it stay visible). MCP: the main transcript whose session id equals env `CLAUDE_CODE_SESSION_ID`; if the variable is missing, no transcript has that id, or the file was last written more than 600 seconds ago, (c) does not apply (no guess, no newest-transcript rule). Auto-recall: the `transcript_path` of the hook input, and only when its last user message is the current prompt, matched by equal text or, for a prompt of 20 or more characters, by its first 80 characters found in that message. `redact()` runs on the full message text before the sentence split; (d) duplicates: the same uuid with the same text in two files, then the same timestamp, role and normalized text.
+
+**F73.e Output.** Line 1: `history of <identifier>: <N> mention(s), oldest first. A later mention can be a rejected proposal, a dry run or an undo; read all of them.` Then `- <id> <YYYY-MM-DD HH:MM> <role>: <text>` for each entry (id and role as in `recall.py search`; spaces collapsed; through `redact()`), oldest first by timestamp, ties in file order. No match: `history of <identifier>: no mentions`.
+
+**F73.f Cap.** At most 4,000 characters in total. Over the cap without `--all` (and in MCP `key_history`, and in auto-recall at 1,500 per identifier and 4,000 in total; amendment 2: 2,000 per identifier), shrink in this order and stop at the first step that fits: (1) drop the neighbour sentences (only the matching sentence of each entry stays); (2) cut each entry to a 200-character window centred on the match; (3) cut each entry to a 120-character window (a cut side shows `…`); (4) cut each entry to an 80-character window; (5) only then the middle cut: line 1, the 2 oldest entries, the line `[<K> mention(s) omitted in the middle; run: python3 <hooks>/recall.py history <identifier> --all]` (path as in F72), and as many of the newest entries as fit (taken from the 80-character rows). Why: the middle cut dropped the deciding statement of long chains. `--all`: no cap.
+
+**F73.g MCP tool.** `key_history` with `{identifier: string (required), role?: "user"|"assistant"|"any"}` and `_meta: {"anthropic/alwaysLoad": true}`. Same output, 4,000-character cap always on, then the 12,000-character cap of F69. Description: `Every mention of one identifier (a key, file, service, setting or name) in this project's chats, oldest first. Use it before you state the current value of anything that can change.` Health row in `recall-mcp.jsonl` with `tool: "key_history"`. The server instructions (F69) add: `For the current value of a setting, key or decision, call key_history and read every mention: the newest mention can be a rejected proposal.`
+
+## F74 Search fixes (2026-11-22)
+
+`recall.py search` and `search_earlier_chat` apply the exclusions (a), (b) and (d) of F73.d. The tool also applies (c). Hits that match as whole tokens (F73.b rule) rank above hits that match only as substrings, and this order is applied before the cut to 200 hits; inside each group the old order stays. Meaning-only hits count as substring hits. The description of `search_earlier_chat` adds: `Hits are newest first. A newer hit can be a rejected proposal or a dry run. For the history of one identifier, use key_history.` The hit line format does not change.
+
+## F75 Auto-recall query (2026-11-22)
+
+Amends F67.c. The trigger (F67.b) does not change.
+
+- **Identifier.** A token of the regex form `[A-Za-z0-9][A-Za-z0-9_./-]*[_./-][A-Za-z0-9_./-]*[A-Za-z0-9]` (3 or more characters, and it holds a letter; trailing `.`, `_`, `/` and `-` of a run are dropped first), or a token in backticks. Order (amendment 2): (1) backticked regex-form tokens; (2) other regex-form tokens that are not plain lowercase hyphen compounds (they hold a digit, `_`, `.` or `/`, or a capital); (3) plain lowercase hyphen compounds `[a-z]+(-[a-z]+)+` such as `dry-run`; (4) other backticked tokens. Prompt order inside a group. No duplicates. Not identifiers: a URL, a cue word, `e.g`, `i.e` and `and/or`, and a backticked token that is in the stop list below or is a plain word of 8 or fewer lowercase letters with no digit (for example `current`, `previous`, `replaced`, `null`).
+- **History mode.** If the prompt has 1 or more identifiers, the hook injects the F73 history of the first 3 identifiers that have at least one mention (identifiers with no mention use no slot; in-process, same scope and exclusions, the current prompt left out), at most 2,000 characters for each identifier and 4,000 in total (a block that does not fit whole in what is left is dropped, so a third identifier shows only if it fits whole). Output: line 1 `Lossless Handoff auto-recall: the history of the identifiers in your prompt, oldest first. A later mention can be rejected, a dry run or undone. This can be partial; search for the rest.`, then each block (F73 line 1 and entries), then one last line `Full history: python3 <hooks>/recall.py history <identifier> --all` (choice: the first identifier that has mentions). An identifier with no mention is left out. If none has a mention, the F67.c word search runs.
+- **Word search.** With no identifier, the word search as before, and the query words leave out: `previous, replaced, rejected, proposal, remember, current, earlier, value, values, answer, answers, setting, settings, before, which, there, their, about, would, could, should`.
+- **Time.** The 2.0-second budget stays. The ids of recall's own tool calls are cached by transcript path in the process. Before each identifier, if 1.2 seconds have passed, the hook stops and prints the blocks found so far.
+- **Health.** The row of `auto-recall.jsonl` adds `"mode": "history"|"search"` and `"identifiers": <n>` (the number of identifiers found, never the text). `hits` counts mentions in history mode. The 2.0-second budget and the no-error rule do not change.
+
+**F75.b Known limit.** Exclusion (a) removes every Bash call whose command holds `recall.py`, so it also removes the results of unrelated commands such as `git diff hooks/recall.py`. `boundary_ok` skips a run of dots after a match, so `invoice-mailer... ok` matches.
+
+**F75.a Versions.** Product 0.17.0 (`install.sh`). `HOOK_VERSION` is `1.19.0` in every hook that has it. The default install does not change.
+
+## F77, F78, F80: history guard, size trigger and action guard (0.18.0, hooks 1.20.0)
+
+Why: in a long chat a key can have many values (set, changed, rejected, undone). The model can use an old value. These three parts show the full history of a key when the model is about to use it. All three are opt-in. The default install does not change. They share the rules below and the code in `guard_common.py`.
+
+**Terms.**
+- *Identifier*: the F75 rule with its amendments. `guard_common.py` loads `identifiers()` from `auto-recall.py` (looked up like the other parts, F72), so there is one rule. If `auto-recall.py` is not installed, a fallback copy is used; `tests/smoke.sh` checks that both give the same result on a corpus. A tool input or tool result excludes an anchor by name: every name-like token in it (not only identifier-form tokens) counts, for string and list content.
+- *Text message*: a real user message or a message of the assistant. Tool input, tool result, recall output and hook text are not text messages.
+- *Subject*: an anchor (an identifier, see below) whose mentions are in 2 to 40 text messages of the current session, and at least 2 of them are user messages. Amendment A: the anchor must be an identifier (F75 rule, applied to the reply, the tool input or the prompt), but its mentions in earlier messages are counted with the F73 match (whole token, case-insensitive, boundary `[A-Za-z0-9_./-]`), not with the identifier rule. So the anchor `Zeta` counts earlier messages that write the plain word Zeta, as `key_history` does. A bare capital word in the reply is not an anchor. One shared function (`guard_common.Index`) does this for F77, F78 and F80. For F77 and F80 the messages of the turn in progress count: the current user prompt and the text messages of the assistant in this turn. This covers a long turn with no guidance, where the model changes a key itself. For F78 the current prompt is not counted. One user message is not enough: it gives too many fires on ordinary hyphen words.
+- *Context count*: the usage of the last assistant entry (input, cache read and cache creation tokens), skipping an entry with a total of 0. Same rule as `reanchor.py`.
+
+**Shared subject rules (F77 and F80).**
+1. An *anchor* is an identifier in the text that the guard checks. The guard uses the first 60. An anchor that is an existing path (`os.path.exists(os.path.join(cwd, token))`, token as written) is left out.
+2. If the anchor is a subject, it is the subject. If it is not, but it was in an earlier text message, the subjects are the identifiers in the same sentence as that earlier mention. A key that was stated one time is not a subject, and a sibling key (`queue-limit-eu` and `queue-limit`) is another token.
+3. Evidence: a subject is left out if this user turn already holds a `key_history` call or a `recall.py history` call that names it, or an injected block `history of <subject>:`.
+4. Cooldown: a subject that a guard showed is not shown again unless it has a new mention or the context grew by 50,000 tokens. Shadow mode saves the cooldown too, so shadow mode logs what live mode would show. The state file holds a hash of each key (first 16 hex characters of SHA-256 of the lower-case key), not the key text. F77 and F80 share one cooldown table in `history-guard-<session>.json`, so one change is not shown twice.
+5. At most 4 subjects, in text order. The text holds the F73 history block of each subject: 1,500 characters each, 6,000 in total. The block includes the current turn (no cut at the current prompt). The scope of the lookup is narrowed to the project folders first (as auto-recall does), so a cold run on a machine with thousands of project folders stays inside the budget.
+6. Threshold: the context count is 100,000 tokens or more.
+7. Every error or a 3.0-second timeout gives no output and exit 0. Stdlib only. Lookups of other installed files follow F72. The state file, the logs and `history-guard-<session>.json` have mode 0600 and use `HANDOFF_STATE_DIR`. The hooks read all of stdin before they check the mode, so the caller never gets a broken pipe. A log row holds no reply text, no input text and no identifier text.
+
+**F77 History guard.** `./install.sh --history-guard` (saved key `history_guard`, `--no-history-guard`). It copies `hooks/history-guard.py` and `hooks/guard_common.py` and registers a `Stop` entry, timeout 5. It works with or without `--claim-guard` (separate file, separate entry). Input: `session_id`, `transcript_path`, `cwd`, `stop_hook_active`, `last_assistant_message`.
+- It does nothing if `stop_hook_active` is true, or if the guard already showed history in this user turn (the turn marker in the state file is the uuid of the current prompt).
+- The anchors are the identifiers of the reply that are not in a tool input or a tool result of this turn (the identifiers of both are collected).
+- Modes (`HANDOFF_HISTORY_GUARD`): unset or `shadow`: one row in `history-guard.jsonl`: `{"ts","session_id","mode","fired":true,"subjects":<n>,"anchors":<n>,"tokens":<int>,"chars":<int>,"ms":<int>}`, no output. `block`: the same row and the output. `0`: nothing. `HANDOFF_HISTORY_GUARD_TOKENS` (10,000 to 1,000,000) sets the threshold.
+- Output form. The current hooks reference (https://code.claude.com/docs/en/hooks, section "Stop decision control", read 2026-11-22) says: "`hookSpecificOutput.additionalContext` | Non-error feedback for Claude. The conversation continues so Claude can act on it, but unlike `decision: "block"` it is shown in the transcript as hook feedback rather than a hook error". It gives this example, and the hook prints this form:
+```json
+{"hookSpecificOutput": {"hookEventName": "Stop", "additionalContext": "<text>"}}
+```
+  The same page says that this form keeps the conversation going through the same loop protections as `decision: "block"` (the `stop_hook_active` input and the cap of 8 consecutive continuations). The older form `{"decision": "block", "reason": text}` is also documented and is not used here, because it shows as a hook error. The docs and the design agree, so the docs form is used.
+- `additionalContext` line 1, exactly: `Lossless Handoff history check: your reply uses values that changed in this chat. The full history is below, oldest first. A later mention can be a rejected proposal, a dry run or an undo. Read every mention in order. If your reply is correct, send the same reply again. If it is not, send the corrected reply. Do not mention this check.`
+  Then the F73 blocks.
+
+**F78 Size trigger.** `./install.sh --recall-size-trigger` (saved key `recall_size_trigger`, `--no-recall-size-trigger`). It needs `--auto-recall`. The install writes the empty marker `<hooks dir>/.recall-size-trigger`. Uninstall removes it. If auto-recall is not installed, the installer prints `recall-size-trigger: needs --auto-recall; skipped` and exits 0. A rerun prints `recall-size-trigger: already installed, kept`.
+- With the marker, and when no F67.b cue matches, auto-recall fires if all of these hold: the prompt does not start with `/`; the context count is 100,000 tokens or more (`HANDOFF_AUTO_RECALL_TOKENS`, 10,000 to 1,000,000); the prompt holds 1 or more identifiers that are subjects in the current session and are not existing paths below cwd.
+- Output: the F75 history output for the first 3 such identifiers (same caps and format as F75). No word-search fallback. The 2.0-second budget and the no-error rule do not change.
+- The health row of `auto-recall.jsonl` has `"cue": "size"`. Off switch: `HANDOFF_AUTO_RECALL_SIZE=0`.
+- Without the marker, auto-recall behaves as in 0.17.0.
+
+**F80 Action guard.** `./install.sh --action-guard` (saved key `action_guard`, `--no-action-guard`). It copies `hooks/action-guard.py` and `hooks/guard_common.py` and registers a `PostToolBatch` entry, timeout 5.
+- Why: in work with no guidance, the risk is an action (a write, an edit, a command) that uses an old, rejected or undone value. The Stop guard sees only the last reply.
+- Event. The current hooks reference lists `PostToolBatch` ("After a full batch of parallel tool calls resolves, before the next model call"). Its section "PostToolBatch decision control" says: "`PostToolBatch` hooks can inject context for Claude." and "`additionalContext` | Context string injected once before the next model call". The hook prints this form, so `PostToolUse` is not used:
+```json
+{"hookSpecificOutput": {"hookEventName": "PostToolBatch", "additionalContext": "<text>"}}
+```
+  The event has no matcher, and the hook input holds `tool_calls` (`tool_name`, `tool_input`, `tool_use_id`, `tool_response`). The hook ignores `tool_response`.
+- Inputs scanned: the new text of `Edit` (`new_string`), `MultiEdit` (each `new_string`), `Write` (`content`) and `NotebookEdit` (`new_source`), and the `command` of `Bash`. `old_string`, `file_path` and every other tool are ignored.
+- Anchors, subjects, evidence, cooldown, threshold (`HANDOFF_ACTION_GUARD_TOKENS`), caps: as in the shared rules. The names of the current turn do not exclude an anchor (the call itself holds them).
+- Modes (`HANDOFF_ACTION_GUARD`): unset or `shadow`: one row in `action-guard.jsonl` (the F77 fields and `"tool": <tool name>`), no output. `inject`: the same row and the output. `0`: nothing. The hook never denies or blocks a tool call.
+- `additionalContext` line 1, exactly: `Lossless Handoff history check: your last tool call used names whose values changed in this chat. The full history is below, oldest first. A later mention can be a rejected proposal, a dry run or an undo. If the call used an old, rejected or undone value, fix it now. If it is correct, go on. Do not mention this check.`
+  Then the F73 blocks.
+
+**F77-F80.a Versions.** Product 0.18.0 (`install.sh`). `HOOK_VERSION` is `1.20.0` in every hook that has it, and in `guard_common.py`. The default install does not change. `guard_common.py` is installed with any of the three flags and is kept up to date after that.

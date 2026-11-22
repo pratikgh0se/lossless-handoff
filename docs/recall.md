@@ -68,6 +68,12 @@ Open one in full: python3 ~/.claude/hooks/recall.py open <id>
 - When the time runs out, the hook stops itself. A search child process (`rg` or `git`) can stay alive for a moment and then ends by itself.
 - Set `HANDOFF_AUTO_RECALL=0` to switch it off. Each run that passes the trigger adds one line to `~/.local/state/claude-handoffs/auto-recall.jsonl` (time, session id, the matched cue phrase or `quote`, number of hits, milliseconds, `timed_out`). The line holds no prompt text and no quotes.
 
+## Key history
+
+`python3 ~/.claude/hooks/recall.py history <identifier> [--role user|assistant|any] [--all]` lists every mention of one identifier (a key, file, service, setting or name) in the chats of this project, oldest first. The identifier must match as a whole token: `invoice-mailer` does not match `invoice-mailer-eu` or `invoice-mailer.v2`. Each entry is the sentence with the match and the sentence before and after it. The output has at most 4,000 characters. If there are more, it keeps the 2 oldest entries and the newest entries that fit, and prints the command with `--all` for the rest.
+
+The history leaves out the tool calls and results of recall itself, auto-recall injections, and duplicates (a forked chat copies the history of its parent). A later mention can be a rejected proposal, a dry run or an undo, so read every mention. The MCP tool `key_history` gives the same output and also leaves out the current prompt. With `--auto-recall`, auto-recall uses the same history when your prompt holds an identifier (a token in backticks, or a token with `-`, `_`, `.` or `/` inside).
+
 ## Strict recall rule and the recall tool
 
 Two more opt-in parts help the model search. Neither one forces a search: the model still decides.
@@ -94,6 +100,16 @@ Both are opt-in. They help when the model forgets a rule or states an earlier fa
 **Re-anchor** (`./install.sh --reanchor`). A `PostToolUse` hook (`reanchor.py`, matcher `*`, timeout 5). It reads the token count of the context from the end of the transcript, the same way as the nudge. When the count is 50,000 tokens or more above the last anchor, it adds one note: a first line, the active rules of the project (the same block that a subagent gets), and the recall line. Then it stores the new anchor. After a compaction the count is below the anchor, so the anchor is reset and nothing is printed. If the project has no active rule, nothing is printed. Set `HANDOFF_REANCHOR=0` to switch it off and `HANDOFF_REANCHOR_TOKENS` (10,000 to 500,000) to change the interval. Each note adds one `event: "reanchor"` line to `health.jsonl` (tokens and characters only). On a 35 MB transcript, a run that prints nothing takes about 20 ms (p95 22 ms). A run that prints the note takes about 58 ms.
 
 **Claim guard** (`./install.sh --claim-guard`). A `Stop` hook (`claim-guard.py`, timeout 5). It looks at the last reply for 12 cue phrases such as "as we decided", "you said" and "last time". If there is a cue and, since your last message, no recall search (a Bash call with `recall.py`, a `mcp__lossless-recall__` tool call, or an auto-recall note), it acts by mode. In the default shadow mode it only adds one line to `claim-guard.jsonl` (time, session id, the cue; no text) and prints nothing. In live mode (`HANDOFF_CLAIM_GUARD=block`) it also asks the model to search, once per user turn. Read the log before you switch to live mode. See [limitations](limitations.md).
+
+## History guard, action guard and size trigger
+
+These three parts are opt-in (0.18.0). They help in a long chat where a key changed value, for example a setting that was set, changed, rejected and undone. All three use the same rule. A *subject* is a key (an identifier, see F75) that is in 2 to 40 text messages of this chat, and at least 2 are from you. The turn in progress counts, so the guards also work in a long task with no guidance. They act only when the context is 100,000 tokens or more.
+
+- **History guard** (`./install.sh --history-guard`). A `Stop` hook (`history-guard.py`, timeout 5). If the reply uses a subject and the turn has no history check for it, the hook gives the model the full history of that key, oldest first, once per user turn. The model then confirms or corrects its reply. Set `HANDOFF_HISTORY_GUARD=block` for this. The default is shadow mode: one log line in `history-guard.jsonl` (no text). `HANDOFF_HISTORY_GUARD=0` switches it off.
+- **Action guard** (`./install.sh --action-guard`). A `PostToolBatch` hook (`action-guard.py`, timeout 5). It reads the new text of Edit, Write, MultiEdit and NotebookEdit calls and the Bash command. If one names a subject, it injects the same history before the next model call, so the model can fix the action. Set `HANDOFF_ACTION_GUARD=inject` for this. The default is shadow mode (`action-guard.jsonl`). It never blocks a tool call. `HANDOFF_ACTION_GUARD=0` switches it off.
+- **Size trigger** (`./install.sh --recall-size-trigger`, needs `--auto-recall`). Auto-recall also fires, with no cue phrase, when the prompt names a subject. It gives the key history as it does for an identifier. `HANDOFF_AUTO_RECALL_SIZE=0` switches it off.
+
+The guards share one cooldown, so one change is not shown twice. A key that was stated one time is not a subject. A key that is an existing path below the working folder is left out. `HANDOFF_HISTORY_GUARD_TOKENS`, `HANDOFF_ACTION_GUARD_TOKENS` and `HANDOFF_AUTO_RECALL_TOKENS` (10,000 to 1,000,000) change the 100,000 threshold. The exact rules are in [F77, F78 and F80](spec.md).
 
 ## Recall commands
 

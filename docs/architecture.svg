@@ -58,4 +58,4 @@
 <rect x="700" y="666" width="280" height="52" rx="6" class="k-warn"/><text x="710" y="687" class="s">reads transcripts, recall index</text><text x="710" y="705" class="s">writes auto-recall.jsonl</text>
 <line x1="242" y1="692" x2="298" y2="692" class="ar" marker-end="url(#a)"/><line x1="642" y1="692" x2="698" y2="692" class="ar" marker-end="url(#a)"/>
 <rect x="20" y="730" width="960" height="52" rx="6" class="k-or"/><text x="30" y="752" class="t">~/.claude/projects/&lt;slug&gt;/&lt;session&gt;.jsonl (chat transcripts)</text><text x="30" y="770" class="s">Claude Code writes these files. Lossless Handoff only reads them, and never writes to them.</text>
-<text x="20" y="804" class="cap">Illustration of hooks 1.18.0. The state folder is ~/.local/state/claude-handoffs (or $HANDOFF_STATE_DIR).</text></svg>
+<text x="20" y="804" class="cap">Illustration of hooks 1.20.0. The state folder is ~/.local/state/claude-handoffs (or $HANDOFF_STATE_DIR).</text></svg>

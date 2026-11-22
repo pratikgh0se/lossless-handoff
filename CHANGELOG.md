@@ -2,6 +2,41 @@
 
 Lossless Handoff, formerly claude-handoff.
 
+## [0.18.0] - 2026-11-22
+
+History guard, action guard and size trigger (hooks 1.20.0). New F77, F78 and F80 in `docs/spec.md`. All three are opt-in.
+
+### Upgrade notes
+
+- The default install is the same as before. Add the parts with `./install.sh --history-guard`, `--action-guard` and `--recall-size-trigger` (or save them with `--save-defaults`). `--recall-size-trigger` needs `--auto-recall`.
+- A rerun never removes an installed part. The installer prints `history-guard: already installed, kept`, `action-guard: already installed, kept` or `recall-size-trigger: already installed, kept`.
+- The guards start in shadow mode: they write a log line (no text) and change nothing. Set `HANDOFF_HISTORY_GUARD=block` or `HANDOFF_ACTION_GUARD=inject` to let them show the history to the model.
+- Restart open Claude Code sessions after the install.
+
+### Changes
+
+- F77: new Stop hook `history-guard.py`. When the context is 100,000 tokens or more and the reply uses a key that changed in this chat, it gives the model the full history of that key (the F73 blocks) as Stop `additionalContext`, once per user turn.
+- F80: new PostToolBatch hook `action-guard.py`. It scans the new text of Edit, Write, MultiEdit and NotebookEdit and the Bash command, and injects the same history before the next model call. It never blocks a call.
+- F78: with the marker `.recall-size-trigger`, auto-recall also fires with no cue phrase when the context is 100,000 tokens or more and the prompt names a key that changed in this chat.
+- The guards count the turn in progress (so a key changed in a long turn is a subject) and the history block includes it. Shadow mode saves the cooldown. The state file holds key hashes. The lookup scope is narrowed to the project folders.
+- New shared file `guard_common.py` (subject, evidence, cooldown and state rules) so F77, F78 and F80 do not drift. F77 and F80 share one cooldown table.
+
+## [0.17.0] - 2026-11-22
+
+Key history and retrieval fixes (hooks 1.19.0). New F73 to F75 in `docs/spec.md`.
+
+### Upgrade notes
+
+- The default install is the same as before. Auto-recall and the recall tool stay opt-in.
+- Restart open Claude Code sessions after the install.
+
+### Changes
+
+- F73: new `recall.py history <identifier> [--role] [--all]` and the MCP tool `key_history`. Every mention of one identifier as a whole token, oldest first, as sentence windows. Output cap 4,000 characters (middle cut).
+- F74: `recall.py search` and `search_earlier_chat` leave out the tool calls and results of recall itself, auto-recall injections and duplicates (a fork copies its parent history). The MCP tool also leaves out the current prompt. Hits that match as whole tokens rank above substring hits.
+- F75: auto-recall builds the history of the first 3 identifiers of the prompt (1,500 characters each, 4,000 in total). Without an identifier it uses the word search with a stop list of generic words. The health row has `mode` and `identifiers`.
+- The MCP server instructions and the tool descriptions name `key_history`.
+
 ## [0.16.0] - 2026-11-22
 
 Four opt-in search levers: a strict recall rule line, a recall MCP tool, a re-anchor hook and a claim guard (hooks 1.18.0). New F68 to F72 in `docs/spec.md`.

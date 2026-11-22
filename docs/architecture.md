@@ -23,6 +23,8 @@ This page shows every part of Lossless Handoff, the Claude Code event that calls
 | Inject at start | `hooks/postcompact-inject.py --ledger --part 1/2/3`, and `--check` | `SessionStart`, matchers `startup` and `resume` (timeout 5 for `--check`) | `decisions.md`, the install manifest, `reconcile.json` | A once-only alert marker. It prints the decisions list, and one `HANDOFF CHECK:` line when something is wrong. |
 | Re-anchor (opt-in, `--reanchor`) | `hooks/reanchor.py` | `PostToolUse` (matcher `*`, timeout 5) | The end of the transcript (token count) and `postcompact-inject.py --rules-block` (the SubagentStart rules text) | One note each 50,000 tokens of growth, only when the project has an active rule. One `reanchor` row in `health.jsonl`. |
 | Claim guard (opt-in, `--claim-guard`) | `hooks/claim-guard.py` | `Stop` (timeout 5) | The last reply and the end of the transcript | One row in `claim-guard.jsonl` (no text). Prints a Stop `block` only with `HANDOFF_CLAIM_GUARD=block`. |
+| History guard (opt-in, `--history-guard`) | `hooks/history-guard.py` | `Stop` (timeout 5) | The last reply and the current session transcript | Stop `additionalContext` with the F73 history of a changed key (live mode), or one log row (shadow) |
+| Action guard (opt-in, `--action-guard`) | `hooks/action-guard.py` | `PostToolBatch` (timeout 5) | The new text of Edit, Write, MultiEdit, NotebookEdit and the Bash command | `additionalContext` with the F73 history (inject mode), or one log row (shadow) |
 | Auto-recall (opt-in, `--auto-recall`) | `hooks/auto-recall.py` | `UserPromptSubmit` (timeout 5; the hook stops itself after 2 seconds) | The transcripts of this project and the recall index (through `recall.py`) | One row in `auto-recall.jsonl` (no prompt text). It prints at most 3 quotes, only when the prompt refers to the past. |
 | Recall rule and recall tool (opt-in, `--recall-rules`, `--recall-mcp`) | The marker `.recall-rules`, and `hooks/recall-mcp.py` (an MCP server over stdio that Claude Code starts) | The inject hook adds the rule line (SessionStart and SubagentStart); the MCP server runs while Claude Code is connected | The transcripts of this project and the recall index (through `recall.py`) | `receipts.jsonl` (flag `recall_rules`) and `recall-mcp.jsonl` (no query text). The rule line and the tool name are added to the recall line. |
 | Subagent rules | `hooks/postcompact-inject.py --subagent-start` | `SubagentStart` (timeout 10) | `decisions.md` | One `subagent_start` row in `health.jsonl`. It prints the active rules and the recall line to the new subagent. |
@@ -130,7 +132,7 @@ When recall and the decisions list disagree, the decisions list and the latest w
 
 ## Verified facts
 
-These numbers come from the code in this repository (hooks 1.18.0), not from a benchmark run.
+These numbers come from the code in this repository (hooks 1.20.0), not from a benchmark run.
 
 | Fact | Where it is in the code |
 |---|---|

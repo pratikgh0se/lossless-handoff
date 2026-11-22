@@ -41,6 +41,9 @@ The default install does not do these things. Each one is an opt-in flag:
 | `--recall-mcp` | Installs a local MCP server with the tools `search_earlier_chat` and `open_message` and registers it with `claude mcp add --scope user`. It does not force a search. |
 | `--reanchor` | A `PostToolUse` hook. Each time the context grows by 50,000 tokens, it repeats the active rules of the project near the end of the context. It prints nothing when there is no rule. |
 | `--claim-guard` | A `Stop` hook. When a reply states an earlier fact ("as we decided", "you said") and the turn has no recall search, it writes one log line. It does not change the reply, unless you set `HANDOFF_CLAIM_GUARD=block`. |
+| `--history-guard` | A `Stop` hook (F77). When the context is 100,000 tokens or more and a reply uses a key that changed in this chat, it writes one log line. With `HANDOFF_HISTORY_GUARD=block` it gives the model the full history of that key once per turn. |
+| `--action-guard` | A `PostToolBatch` hook (F80). It checks Edit, Write, MultiEdit, NotebookEdit and Bash calls for a key that changed in this chat. It writes one log line, or with `HANDOFF_ACTION_GUARD=inject` it adds the history before the next step. It never blocks a call. |
+| `--recall-size-trigger` | Needs `--auto-recall` (F78). Auto-recall also fires with no cue phrase when the context is 100,000 tokens or more and the prompt names a key that changed in this chat. `HANDOFF_AUTO_RECALL_SIZE=0` switches it off. |
 
 Run `./install.sh --window 400000 --nightly --semantic` to get everything. `--llm-map` and `--no-llm-map` are still accepted, but they do nothing: llm-map is now a separate project (see [llm-map](llm-map.md)). Each flag prints one line. Use `--dry-run` first: it lists exactly what the chosen options install.
 
@@ -68,6 +71,9 @@ Other options: `--no-nudge` (skip the context nudge, and remove one from an earl
   - only with `--recall-mcp`: the file `recall-mcp.py`, and the command `claude mcp add --scope user lossless-recall -- python3 ~/.claude/hooks/recall-mcp.py` (the installer never edits `~/.claude.json` itself). If the `claude` command is not on the PATH, the installer prints `recall-mcp: claude CLI not found; register it later with: ...`, still installs the file and exits 0. `./uninstall.sh` runs `claude mcp remove lossless-recall --scope user` and ignores a failure;
   - only with `--reanchor`: a `PostToolUse` hook (matcher `*`) that runs `reanchor.py` (timeout 5);
   - only with `--claim-guard`: a `Stop` hook that runs `claim-guard.py` (timeout 5);
+  - only with `--history-guard`: a `Stop` hook that runs `history-guard.py` (timeout 5);
+  - only with `--action-guard`: a `PostToolBatch` hook that runs `action-guard.py` (timeout 5);
+  - with any of the three flags above and `--recall-size-trigger`: the shared file `guard_common.py`; with `--recall-size-trigger` also the marker `.recall-size-trigger`;
   - `permissions.allow` entries `Edit(~/.local/state/claude-handoffs/**)` (so the model can write its handoff without a prompt) and `Bash(python3 ~/.claude/hooks/recall.py:*)` (so it can run recall without a prompt);
   - only with `--window N`: `env.CLAUDE_CODE_AUTO_COMPACT_WINDOW` = `"N"`, unless it is already set (an existing value is never changed).
 - It creates `~/.local/state/claude-handoffs/`.
