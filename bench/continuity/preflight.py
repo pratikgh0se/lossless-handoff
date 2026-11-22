@@ -15,6 +15,9 @@ COST_RATIO_MAX = 1.3
 RUNAWAY_ARM_MAX = 0.05
 REFUSED_ARM_MAX = 0.10
 REANCHOR_TOKENS = 50000
+D4_INFO_LEVELS = ("L3", "L4")      # the Haiku preflight cannot reason through these chains: INFO only
+D4_INFO_NOTE = "Haiku capability; the calibration on Sonnet measures them"
+OUT_LIMIT_FACTOR = 1.25            # the probe output line limit is this factor x the cap; a fork above the cap is already a runaway
 NL_ORACLE_MIN = 0.80      # non-literal probes: the oracle must answer at least this share of every type
 BIG_MIN_TOKENS = 250000
 BIG_MAX_TOKENS = 350000     # the paste is sized for 280k to 320k tokens; above this the turn costs more than planned
@@ -187,13 +190,15 @@ def check(rd, projects=None, mcp=True):
         if isinstance(n_out, (int, float)):
             forks[r.get("fork_sid") or id(r)] = n_out
     outs = sorted(forks.values())
-    over = sorted(v for v in outs if v > runner.PROBE_MAX_OUTPUT_TOKENS)
-    add("probe fork output at most %d tokens (the cap %s is set for probe forks)" % (runner.PROBE_MAX_OUTPUT_TOKENS, runner.PROBE_MAX_OUTPUT_ENV), None if not outs else not over,
+    out_lim = int(OUT_LIMIT_FACTOR * runner.PROBE_MAX_OUTPUT_TOKENS)
+    over = sorted(v for v in outs if v > out_lim)
+    add("probe fork output at most %d tokens (%s x the cap %s of probe forks; a fork above the cap is counted as runaway)" % (out_lim, OUT_LIMIT_FACTOR, runner.PROBE_MAX_OUTPUT_ENV), None if not outs else not over,
         "no output token data" if not outs else "%d fork(s), above the limit: %s" % (len(outs), over[:5] or "none"))
     # runaway forks: a probe that hit the output cap is an outcome (class runaway), at most 5% of the forks of each arm
     rw_arm = {}
+    g_rows_ = [r for r in R.rows if r.get("type") not in D4_INFO_LEVELS]        # L3 and L4 are INFO in the Haiku preflight
     for a_ in sorted({r.get("arm") for r in R.rows}):
-        rw_arm[a_] = gates.runaway_rate([r for r in R.rows if r.get("arm") == a_])
+        rw_arm[a_] = gates.runaway_rate([r for r in g_rows_ if r.get("arm") == a_])
     rw_bad = {a_: v for a_, v in rw_arm.items() if v[1] and v[0] / float(v[1]) > RUNAWAY_ARM_MAX}
     add("runaway rate at most %d%% of the probe forks of each arm (a fork that hit the output cap)" % int(100 * RUNAWAY_ARM_MAX), None if not any(v[1] and True for v in rw_arm.values()) else not rw_bad,
         "above the limit: %s" % ({a_: "%d/%d" % v for a_, v in rw_bad.items()} or "none"))
@@ -201,6 +206,7 @@ def check(rd, projects=None, mcp=True):
     for r in R.rows:
         if str(r.get("type", "")).startswith("L"):
             lv_rw.setdefault(r["type"], []).append(r)
+    add("runaway forks at L3 and L4 (INFO: %s)" % D4_INFO_NOTE, None, ", ".join("%s %d/%d" % ((lv,) + gates.runaway_rate(v)) for lv, v in sorted(lv_rw.items()) if lv in D4_INFO_LEVELS) or "no L3 or L4 rows")
     add("runaway forks per level (counts)", None, ", ".join("%s %d/%d" % ((lv,) + gates.runaway_rate(v)) for lv, v in sorted(lv_rw.items())) or "no design-4 rows")
     # refused forks: a safety filter refused a probe fork (class refused, an outcome), at most 10% of the forks of each arm
     rf_arm = {a_: gates.refused_rate([r for r in R.rows if r.get("arm") == a_]) for a_ in sorted({r.get("arm") for r in R.rows})}
@@ -231,10 +237,10 @@ def check(rd, projects=None, mcp=True):
     # Arm Z (no history) is excluded from the rate, as in the abort gate: it may answer with fewer entries or in prose (INFO only).
     # A row whose `correct` is not true or false is a harness error: always a FAIL.
     not_graded = [r for r in R.rows if not isinstance(r.get("correct"), bool)]
-    unread = [r for r in R.rows if not r.get("parse_ok") and not isinstance(r.get("parsed"), dict)]       # no readable entry for the item
+    unread = [r for r in R.rows if not r.get("parse_ok") and not isinstance(r.get("parsed"), dict) and not r.get("runaway") and not r.get("refused")]       # no readable entry for the item (runaway and refused rows are counted apart)
     dev = [r for r in R.rows if not r.get("parse_ok") and isinstance(r.get("parsed"), dict)]              # entry read, field rejected
-    scored = [r for r in R.rows if r["arm"] != "Z"]
-    unread_s = [r for r in unread if r["arm"] != "Z"]
+    scored = [r for r in R.rows if r["arm"] != "Z" and not r.get("runaway") and not r.get("refused") and r.get("type") not in D4_INFO_LEVELS]
+    unread_s = [r for r in unread if r["arm"] != "Z" and r.get("type") not in D4_INFO_LEVELS]
     rate = len(unread_s) / float(len(scored)) if scored else 1.0
     kinds = sorted({(r["arm"], r.get("phrasing"), r.get("type"), r.get("condition")) for r in unread + dev})
     add("every probe answer parsed and graded (no grader error)", bool(R.rows) and not not_graded and rate <= gates.PARSE_ERROR_RATE_MAX,
@@ -264,13 +270,21 @@ def check(rd, projects=None, mcp=True):
         add("design 4 solver gate: a full-information solver reaches 100%% on M3, and 'last mention wins' scores at most %d%% on M1 at L3 and L4" % int(100 * design4.SOLVER_MAX),
             not full_bad and not naive_bad, "full solver misses: %s; naive solver above the limit: %s" % (full_bad[:3] or "none", naive_bad or "none"))
         o_low = {}
+        o_info = []
         for lv in design4.D4_LEVELS:
-            for ph in design4.PHRASINGS:
+            if lv in D4_INFO_LEVELS:
+                for ph in design4.ALL_PHRASINGS:
+                    v_, n_ = design4.cell(R.rows, "O", lv, "m1", ph)
+                    if n_:
+                        o_info.append("%s %s %.0f%%" % (lv, ph, 100 * v_))
+                continue
+            for ph in design4.ALL_PHRASINGS:
                 v_, n_ = design4.cell([r for r in R.rows], "O", lv, "m1", ph)
                 if n_ and v_ < NL_ORACLE_MIN:
                     o_low["%s %s" % (lv, ph)] = "%.0f%%" % (100 * v_)
         add("design 4: oracle (arm O) M1 at least %d%% for each level and phrasing (Haiku, plumbing level; the gate of the real runs is 95%%)" % int(NL_ORACLE_MIN * 100),
             any(r["arm"] == "O" for r in R.rows) and not o_low, "below the limit: %s" % (o_low or "none"))
+        add("design 4: oracle (arm O) M1 at L3 and L4 (INFO: %s)" % D4_INFO_NOTE, None, ", ".join(o_info) or "no L3 or L4 rows")
         z_hi = {}
         for lv in design4.D4_LEVELS:
             v_, n_ = design4.cell(R.rows, "Z", lv, "m1")

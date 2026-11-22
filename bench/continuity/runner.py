@@ -102,6 +102,10 @@ KINDS = {
     "litm4-calibrate": {"model": "sonnet", "window": 400000, "n": [1], "arms": "A,O,Z", "seeds": 1, "seed_file": "seeds-dev.txt",
                         "conditions": "nocompact", "phrasings": "cued,neutral,nonliteral,action", "probe_design": 4},
     # The L5 escalation (only if `decide` says add_l5): the whole calibration again with levels L1 to L5 in one session of 165 turns. It replaces all cells.
+    # F79 follow-up: the cheap check before the calibration. Arm O only (no filler, zero distance), Sonnet, 1 seed, all levels, every phrasing.
+    # `run.sh oracle-check <run-id>` applies the gate: O M1 at least 95% and runaway at most 5% for each level.
+    "litm4-oracle-check": {"model": "sonnet", "window": 400000, "n": [1], "arms": "O", "seeds": 1, "seed_file": "seeds-dev.txt",
+                           "conditions": "nocompact", "phrasings": "cued,neutral,nonliteral,action", "probe_design": 4},
     "litm4-calibrate-l5": {"model": "sonnet", "window": 400000, "n": [1], "arms": "A,O,Z", "seeds": 1, "seed_file": "seeds-dev.txt", "levels": "L1,L2,L3,L4,L5",
                            "conditions": "nocompact", "phrasings": "cued,neutral,nonliteral,action", "probe_design": 4},
     "litm4-smoke": {"model": "sonnet", "window": 400000, "n": [1, 3], "arms": "A,B,R,K", "seeds": 1, "seed_file": "seeds-dev.txt",

@@ -354,6 +354,7 @@ def unit_estimate(cfg, arm, cond):
 
 
 CALIBRATE4 = {"seeds": 2, "arms": ["A", "O", "Z"], "n": [1], "conditions": ["nocompact"], "phrasings": ["cued", "neutral", "nonliteral", "action"], "design": 4}      # F79: action probes for A, O and Z
+ORACLE_CHECK4 = {"seeds": 1, "arms": ["O"], "n": [1], "conditions": ["nocompact"], "phrasings": ["cued", "neutral", "nonliteral", "action"], "design": 4}      # litm4-oracle-check
 CALIBRATE4_L5 = dict(CALIBRATE4, seeds=1, levels=["L1", "L2", "L3", "L4", "L5"])
 SMOKE4 = dict(SMOKE3, design=4)
 PILOT4 = dict(PILOT3, design=4)
@@ -401,7 +402,8 @@ def main(argv=None):
         print("\nPROBE DESIGN 4 (litm4-calibrate, litm4-smoke, litm4-pilot, litm4-full-v3): no-compaction condition with update chains; compaction condition as in design 3")
         print("  real figures of the Sonnet smoke: main $%.2f for 75 turns, 15 A forks $%.2f; design 4: main $%.2f (105 turns), A forks $%.2f (%d forks), K forks x%.2f" % (
             SMOKE_REAL["main_nc_75_turns"], SMOKE_REAL["forks_15"]["A"], D4_MAIN, D4_A_FORKS, D4_FORKS, D4_FORK_FACTOR["K"]))
-        for name, cfg in (("CALIBRATION (litm4-calibrate: arms A,O,Z; the second seed only if a cell of A is at 45-90%)", CALIBRATE4), ("L5 ESCALATION (litm4-calibrate-l5, only if decide says add_l5: one seed, 165 turns, replaces all cells)", CALIBRATE4_L5),
+        for name, cfg in (("ORACLE CHECK (litm4-oracle-check: arm O only, 1 seed, all levels, 4 phrasings; run it before the calibration)", ORACLE_CHECK4),
+                          ("CALIBRATION (litm4-calibrate: arms A,O,Z; the second seed only if a cell of A is at 45-90%)", CALIBRATE4), ("L5 ESCALATION (litm4-calibrate-l5, only if decide says add_l5: one seed, 165 turns, replaces all cells)", CALIBRATE4_L5),
                           ("SMOKE (litm4-smoke)", SMOKE4), ("PILOT (litm4-pilot, dev seeds 3 and 4)", PILOT4), ("FULL V3 (litm4-full-v3)", FULL4_V3)):
             print(render3(name, cfg)[1])
         print("  calibration if the main session costs $8 (twice the figure): about $%.0f for 2 seeds (plus or minus 40%%)" % (2 * (8.0 + D4_A_FORKS + D4_CONTROL_USD["O"] + D4_CONTROL_USD["Z"])))

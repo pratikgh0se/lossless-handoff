@@ -985,8 +985,45 @@ def describe_decision(d):
     return "\n".join(lines)
 
 
+ORACLE_CHECK_M1_MIN, ORACLE_CHECK_RUNAWAY_MAX = 0.95, 0.05
+
+
+def oracle_check(rows, levels=D4_LEVELS):
+    """Gate of the preset litm4-oracle-check: for each level, O M1 at least 95% (all phrasings together and each phrasing) and runaway forks at most 5%.
+    Returns (ok, lines). A level with no O rows fails."""
+    from gates import runaway_rate
+    ok, lines = True, []
+    for lv in levels:
+        o = [r for r in rows if r.get("arm") == "O" and r.get("type") == lv]
+        if not o:
+            ok = False
+            lines.append("%s: NO DATA -> FAIL" % lv)
+            continue
+        graded = [r for r in o if not r.get("runaway") and not r.get("refused")]
+        m1 = (sum(1 for r in graded if r.get("m1") is True) / float(len(graded))) if graded else 0.0
+        rw, nf = runaway_rate(o)
+        per = []
+        for ph in ALL_PHRASINGS:
+            v, n = cell(o, "O", lv, "m1", ph)
+            if n:
+                per.append("%s %.0f%%" % (ph, 100 * v))
+        good = m1 >= ORACLE_CHECK_M1_MIN and (rw / float(nf) if nf else 1.0) <= ORACLE_CHECK_RUNAWAY_MAX
+        ok = ok and good
+        lines.append("%s: O M1 %.0f%% (need %d%%), runaway %d/%d forks (max %d%%) -> %s   [%s]" % (
+            lv, 100 * m1, int(100 * ORACLE_CHECK_M1_MIN), rw, nf, int(100 * ORACLE_CHECK_RUNAWAY_MAX), "PASS" if good else "FAIL", ", ".join(per)))
+    return ok, lines
+
+
 def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
+    if len(argv) >= 2 and argv[0] == "oracle-check":
+        rd = argv[1] if os.path.isdir(argv[1]) else os.path.join(HERE, "results", argv[1])
+        with open(os.path.join(rd, "results.jsonl"), encoding="utf-8") as f:
+            rows = [json.loads(ln) for ln in f if ln.strip()]
+        ok, lines = oracle_check([r for r in gen_dedupe(rows) if str(r.get("type", "")).startswith("L")])
+        print("\n".join(lines))
+        print("ORACLE CHECK: " + ("PASS" if ok else "FAIL"))
+        return 0 if ok else 1
     if len(argv) >= 2 and argv[0] == "decide":
         rd = argv[1] if os.path.isdir(argv[1]) else os.path.join(HERE, "results", argv[1])
         rows = []

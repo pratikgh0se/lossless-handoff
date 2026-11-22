@@ -509,8 +509,9 @@ class ReportAndPreflight(unittest.TestCase):
 
     def test_preflight_design_4_fails_when_the_oracle_or_amnesia_is_wrong(self):
         res = self.run_check(d4_o_low=True)
-        self.assertEqual([x[1] for x in res if "oracle (arm O) M1" in x[0]], ["FAIL"])
-        self.assertIn("L3", [x[2] for x in res if "oracle (arm O) M1" in x[0]][0])
+        # a low oracle at L3 is INFO in the Haiku preflight (Haiku capability): the gate of L1 and L2 stays PASS and the INFO line shows L3
+        self.assertEqual([x[1] for x in res if "oracle (arm O) M1" in x[0]], ["PASS", "INFO"])
+        self.assertIn("L3", [x[2] for x in res if "oracle (arm O) M1" in x[0]][1])
         res = self.run_check(d4_z_high=True)
         self.assertEqual([x[1] for x in res if "amnesia (arm Z)" in x[0]], ["FAIL"])
 
@@ -1118,7 +1119,7 @@ class ProbeCapAndFailures(unittest.TestCase):
             rd, projects = test_litm.make_pf_run(d, d4=True)
             res = preflight.check(rd, projects, mcp=False)
             names = [r[0] for r in res]
-            self.assertTrue(any(n.startswith("probe fork output at most 8000 tokens") for n in names), names)
+            self.assertTrue(any(n.startswith("probe fork output at most 10000 tokens") for n in names), names)
             self.assertIn("median probe output tokens", names)
             old = runner.PROBE_MAX_OUTPUT_TOKENS
             runner.PROBE_MAX_OUTPUT_TOKENS = 1
@@ -1519,6 +1520,40 @@ class ActionProbes(unittest.TestCase):
         for it in its:
             kinds |= set(rg.oracle_replies(it, its, self.script))
         self.assertEqual(kinds, set(rg.REPLY_KINDS))
+
+
+class OracleCheckAndHaikuScope(unittest.TestCase):
+    def rows(self, lv, arm="O", n=8, wrong=0, runaway=0):
+        out = []
+        for i in range(n):
+            out.append({"arm": arm, "type": lv, "phrasing": "cued", "condition": "nocompact", "seed": 1, "chunk": i, "fork_sid": "f%s%d" % (lv, i),
+                        "m1": i >= wrong, "runaway": i < runaway, "refused": False, "parse_ok": True})
+        return out
+
+    def test_oracle_check_passes_and_fails_per_level(self):
+        good = sum((self.rows(lv) for lv in d4.D4_LEVELS), [])
+        self.assertTrue(d4.oracle_check(good)[0])
+        bad = self.rows("L1") + self.rows("L2") + self.rows("L3", wrong=3) + self.rows("L4")
+        ok, lines = d4.oracle_check(bad)
+        self.assertFalse(ok)
+        self.assertIn("FAIL", [l for l in lines if l.startswith("L3")][0])
+        ok, _ = d4.oracle_check(self.rows("L1") + self.rows("L2") + self.rows("L3", runaway=2) + self.rows("L4"))
+        self.assertFalse(ok)
+        self.assertFalse(d4.oracle_check(self.rows("L1"))[0])
+
+    def test_preset_has_a_cost_estimate(self):
+        est = cost.estimate_per_seed({"kind": "litm4-oracle-check", "arms": ["O"], "n": [1], "conditions": ["nocompact"],
+                                      "phrasings": ["cued", "neutral", "nonliteral", "action"], "probe_design": 4})
+        self.assertTrue(0 < est < 4, est)
+
+    def test_parse_gate_leaves_out_runaway_rows(self):
+        import gates
+        rows = self.rows("L1", arm="A", n=10)
+        for r in rows[:5]:
+            r.update({"runaway": True, "parse_ok": False})
+        sessions = []
+        why = gates.abort_reasons(sessions, rows, None, {1})
+        self.assertFalse([w for w in (why or []) if "parse error" in w])
 
 
 if __name__ == "__main__":

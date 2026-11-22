@@ -142,6 +142,7 @@ def abort_reasons(sessions, rows, est_per_seed, finished_seeds, session_costs=No
         forks = sorted({(r["seed"], r["arm"], r["type"], r["fork_sid"]) for r in nofire})
         why.append("arm R or K: %d cued probe fork(s) had no auto-recall fire, for example seed %s arm %s type %s" % (len(forks), forks[0][0], forks[0][1], forks[0][2]))
     graded = [r for r in sel if r.get("arm") != "Z"]
+    graded = [r for r in graded if not r.get("runaway") and not r.get("refused")]      # runaway and refused rows are counted apart
     badp = [r for r in graded if not r.get("parse_ok")]
     if graded and len(badp) / len(graded) > PARSE_ERROR_RATE_MAX:
         why.append("parse error rate %.1f%% (%d of %d probe rows) is above %.0f%%" % (100 * len(badp) / len(graded), len(badp), len(graded), 100 * PARSE_ERROR_RATE_MAX))
