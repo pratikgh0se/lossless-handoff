@@ -41,7 +41,9 @@ class Agg:
         self.abst = {}
         self.seeds = set()
         for r in rows:
-            if r["arm"] in ("A", "B", "O") and r["n_actual"] != r["n_target"]:
+            if r.get("phrasing", "cued") != "cued" or r.get("condition", "compact") != "compact":
+                continue        # rows of the lost-in-the-middle design: litm.py reports them. The tables below stay as before.
+            if r["arm"] in ("A", "B", "O", "R") and r["n_actual"] != r["n_target"]:
                 self.dropped += 1
                 continue
             k = (r["arm"], r["type"], r["n_target"], r["seed"])
@@ -141,8 +143,11 @@ def build(run_id, draws=None):
     cfg = json.load(open(os.path.join(rd, "config.json"), encoding="utf-8"))
     state = json.load(open(os.path.join(rd, "state.json"), encoding="utf-8"))
     th = json.load(open(os.path.join(HERE, "thresholds.json"), encoding="utf-8"))
-    rows = load_jsonl(os.path.join(rd, "results.jsonl"))
-    sess = load_jsonl(os.path.join(rd, "sessions.jsonl"))
+    import gates
+    rows_all = gates.dedupe_rows(load_jsonl(os.path.join(rd, "results.jsonl")))      # a restarted session wrote its rows twice
+    rows = [r for r in rows_all if r.get("phrasing", "cued") == "cued" and r.get("condition", "compact") == "compact"]   # old tables: cued probes, with compactions
+    sess_all = load_jsonl(os.path.join(rd, "sessions.jsonl"))
+    sess = [s for s in sess_all if s.get("condition", "compact") == "compact"]
     ag = Agg(rows)
     S = len(ag.seeds)
     boot = Boot(max(S, 1), draws or th["bootstrap_draws"], th["bootstrap_rng_seed"], th["ci_level"]) if S else None
@@ -469,9 +474,17 @@ def build(run_id, draws=None):
     head = ["# Continuity benchmark: run %s\n" % run_id,
             "**Controls: %s. Cost: $%.4f. Status: %s.** %s\n" % (controls, state["spent"], state["status"], label),
             "Command: `%s`. Seeds: %s. Types: %s. Arms: %s.\n" % (cfg["command"], ",".join(map(str, cfg["seeds"])), ",".join(cfg["types"]), ",".join(cfg["arms"]))]
+    if cfg.get("probe_design", 1) >= 2:
+        head.append("Probe design: %d. The cued head of design 2 has an added cue sentence, so its cued tables are not comparable with Wave 1 and Wave 2 (probe design 1).\n" % cfg["probe_design"])
     if ag.dropped:
         head.append("Items dropped for a wrong compaction count: %d.\n" % ag.dropped)
     out["controls"] = controls
+    import litm
+    lmd, lout = litm.section(rows_all, sess_all, th, draws)
+    if lmd:
+        md.append("")
+        md += lmd
+        out["litm"] = lout
     text = "\n".join(head + md) + "\n"
     return out, text
 

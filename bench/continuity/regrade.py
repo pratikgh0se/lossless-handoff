@@ -82,14 +82,14 @@ def main():
 
     groups = collections.OrderedDict()      # one group = one probe reply
     for r in rows:
-        groups.setdefault((r["seed"], r["arm"], r["n_target"], r["type"], r["fork_sid"], r["raw"]), []).append(r)
+        groups.setdefault((r["seed"], r["arm"], r["n_target"], r["type"], r["fork_sid"], r["raw"], r.get("condition", "compact")), []).append(r)
     changed = acc_before = acc_after = 0
-    for (seed, arm, n, ptype, _fsid, raw), grp in groups.items():
+    for (seed, arm, n, ptype, _fsid, raw, cond), grp in groups.items():
         s = script(seed)
         if ptype == "F":
             items = s["fresh"][str(n)]
         else:
-            items = gen.select(s, ptype, None if arm == "Z" else need_epoch(cfg, arm, n))
+            items = gen.select(s, ptype, None if (arm == "Z" or cond == "nocompact") else need_epoch(cfg, arm, n))
         by_id = {g["id"]: g for g in grade.grade(ptype, items, raw)}
         for r in grp:
             g = by_id[r["item"]]

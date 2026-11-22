@@ -2,6 +2,13 @@
 # Continuity benchmark: the one command. See README.md.
 #   run.sh slice   [options]      small run: haiku, window 30000, dev seeds
 #   run.sh full    [options]      full run: sonnet, window 400000, report seeds
+#   run.sh preflight [options]    the cheapest full check (Haiku, under $3). It ends with a PASS/FAIL checklist (preflight.py)
+#   run.sh check <run-id>         print the preflight checklist of a finished run again
+#   run.sh litm3-smoke|litm3-nc-smoke|litm3-pilot|litm3-full   probe design 3 (about 300k tokens no-compaction, non-literal probes, arm K)
+#   run.sh litm-smoke [options]   1 dev seed, arms A and R, no compaction only (about $12)
+#   run.sh litm-pilot [options]   lost-in-the-middle pilot: 2 dev seeds, arms A,B,R, both conditions, both phrasings (add --dry-run to only print the cost)
+#   run.sh litm-full  [options]   same design, 20 report seeds, arms A,B,R,Z,O
+#   run.sh estimate               print the pilot cost and the full cost of the lost-in-the-middle design (no model call)
 #   run.sh resume  <run-id> [--budget-usd X] [--jobs N]
 #   run.sh report  <run-id> [--publish] [--draws N]
 #   run.sh regrade <run-id|results-folder>   (grade the stored raw replies again, rebuild the report, no model call)
@@ -9,15 +16,18 @@
 #   run.sh selfcheck [--model M] [--lh-path P]   (live check of the transcript deny rules)
 #   run.sh cleanup [--all] [--dry-run] [--work-base DIR]
 # Options of slice and full: run `python3 runner.py run slice --help`.
-# Exit: 0 finished, 1 a session or a control gate failed, 2 usage error, 3 paused (budget).
+# Exit: 0 finished, 1 a session or a control gate failed, 2 usage error, 3 paused (budget), 4 stopped by an abort gate (see gates.py).
 set -u
 D="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cmd="${1:-}"
 [ $# -gt 0 ] && shift
 case "$cmd" in
-  slice|full)
+  slice|full|preflight|litm-smoke|litm-pilot|litm-full|litm3-smoke|litm3-nc-smoke|litm3-pilot|litm3-full|litm3-full-v3|litm3-full-v5)
     python3 "$D/runner.py" run "$cmd" "$@"
     rc=$?
+    if [ "$cmd" = preflight ] && [ "$rc" -ne 3 ] && [ "$rc" -ne 4 ]; then
+      python3 "$D/preflight.py" "$(cat "$D/results/.last" 2>/dev/null)" || rc=1
+    fi
     last="$(cat "$D/results/.last" 2>/dev/null)"
     if [ "$rc" -ne 3 ] && [ -n "$last" ] && [ -s "$D/results/$last/results.jsonl" ]; then
       python3 "$D/report.py" "$last" >/dev/null || rc=$((rc == 0 ? 1 : rc))
@@ -36,6 +46,8 @@ case "$cmd" in
     exit "$rc" ;;
   regrade) exec python3 "$D/regrade.py" "$@" ;;
   aa)      exec python3 "$D/report.py" aa "$@" ;;
+  check)   exec python3 "$D/preflight.py" "$@" ;;
+  estimate) exec python3 "$D/runner.py" estimate ;;
   selfcheck) exec python3 "$D/runner.py" selfcheck "$@" ;;
   report)  exec python3 "$D/report.py" "$@" ;;
   cleanup) exec python3 "$D/runner.py" cleanup "$@" ;;

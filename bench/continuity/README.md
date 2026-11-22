@@ -32,7 +32,8 @@ Options of `slice` and `full` (see `python3 bench/continuity/runner.py run slice
 | `--model` | model alias | slice haiku, full sonnet |
 | `--window` | `CLAUDE_CODE_AUTO_COMPACT_WINDOW` | slice 30000, full 400000 |
 | `--n` | compaction counts | slice 1,3,10; full 1,3,10,30 |
-| `--arms` | from A,B,Z,O | A,B,Z,O |
+| `--arms` | from A,B,Z,O,R (R needs `hooks/auto-recall.py` in `--lh-path`) | A,B,Z,O |
+| `--conditions`, `--phrasings`, `--nc-window`, `--dry-run` | see "Lost-in-the-middle design" below | compact, cued |
 | `--types` | from R,D,X,S,E,U,C,F | all |
 | `--seeds` | how many seeds to take from the list | slice 5, full 20 |
 | `--seed-file` | seed list | `seeds-dev.txt` (slice), `seeds-report.txt` (full) |
@@ -56,6 +57,117 @@ Smoke example (1 seed, arms A and B, N=1, 2 types):
 bench/continuity/run.sh slice --seeds 1 --arms A,B --n 1 --types R,X
 bench/continuity/run.sh cleanup
 ```
+
+## Lost-in-the-middle design (probe design 2, 2026-11-20)
+
+This design adds four things. It does not change the old arms, the old probe text or the old scores. `test_litm.py` checks this with hashes of old scripts and old probe text, and with a stored run (`fixtures/legacy-run/`) that must give the same report, byte for byte.
+
+### What is new
+
+- **Position.** Each planted fact has a `position` tag: `start`, `middle` or `end`. The tag is the third of the nominal session timeline that holds the plant turn of the fact (`gen.position_of`). The nominal timeline is, for each epoch 0 to 4: the plant turns, then 6 filler turns (50 turns in total). With the v5 plan, each of the types R, D, X, S, E and C has 4 facts: 2 at start, 1 in the middle and 1 at the end. Type M has no single plant turn, so it has no position. The tag is computed from the script. It is not stored in the script, so no old script changes.
+- **Two phrasings.** `cued` refers to the past. `neutral` is a task that needs the fact with no reference to the past, for example "Write the config line for X". Neutral exists for R, D, X, S and E. C and M ask about the past by their nature, so they have a cued probe only. Both phrasings use the same JSON form and the same code grader. A neutral prompt has no cue phrase of the auto-recall hook and no pointer to the session history. `test_litm.py` checks this for 20 seeds. In a run of design 2, the cued head also says "I told you these values earlier, so remember them." Reason: the hook must be able to fire on a cued probe. All arms get the same text.
+- **Arm R.** Lossless Handoff with `--auto-recall`. The runner writes the project settings of the default install plus the `UserPromptSubmit` hook `auto-recall.py` (timeout 5 seconds). It does not run `install.sh`, so the real `~/.claude` stays untouched. `--lh-path` must hold `hooks/auto-recall.py`, or the run stops at once. After each probe fork, the runner reads `auto-recall.jsonl` of the arm (`HANDOFF_STATE_DIR` is the arm's own folder; the default state folder is read too) and keeps the lines with the session id of the fork. A line means the hook ran. The result row has `auto_recall_fired` and `auto_recall_hits`. The report says "the hook fired on X% of cued and Y% of neutral probes".
+- **No-compaction condition.** For arms A, B and R, a second session has the same plant turns and the same number of filler turns as the nominal timeline, with compaction off (`DISABLE_AUTO_COMPACT=1`). The filler files are small (`nc_lines` lines, one file per turn), so the whole session fits in `--nc-window` (default 200000, under 60% by the arm O size model; the run stops above 75%). The probe comes once, after the last turn, and asks all epochs. `DISABLE_AUTO_COMPACT` stops auto compaction only. The binary also clears old tool results (microcompact, marker "[Old tool result content cleared]"). So a no-compaction session is valid only if all three hold: no compaction, no cleared marker in the transcript, and a last-turn context (input plus cache read tokens) of at least 75% of the expected size (`nc_estimate_tokens`). An invalid session stops before its probes, gets status `invalid`, and the report counts it with its reasons. Arms Z and O are controls with no condition, so each runs once.
+
+The old filler plan is not the no-compaction plan. In a compaction run the filler is large (it forces compactions), so the positions are nominal tags. In the no-compaction run the positions are the real order of the turns.
+
+### Pre-registered hypotheses
+
+The thresholds are in `thresholds.json` (block `litm`, version 3). The author committed them before any data of this design. A hypothesis that fails stays in the report. Do not change a threshold after a run. All tests use the seed as the unit, the 95% bootstrap interval of the old design, and cued or neutral probes of the types R, D, X, S, E and C, as stated.
+
+| ID | Hypothesis | Pass rule |
+|---|---|---|
+| H1 | Lost in the middle without compaction: arm A (no compaction, cued) loses more middle facts than start and end facts. | middle rate minus the mean of the start rate and the end rate at most -10 points, and the interval upper bound below 0. Ceiling gate: if that mean is above 95%, H1 prints "TOO EASY: no claim". |
+| H2 (expected, not blind; mixes compaction with session length) | Compaction loses facts that long context keeps: arm A with compaction (largest N, cued) scores below arm A with no compaction. | difference at most -15 points, and the interval upper bound below 0 |
+| H3 | Auto-recall helps when the prompt refers to the past: R beats B on cued probes (compaction, largest N). | R minus B at least +5 points, and the interval lower bound above 0 |
+| H4 | Auto-recall does not help without a cue: R does not beat B on neutral probes (compaction, largest N). The honest expectation is no gain, because the hook does not fire. | "no gain of 5 points or more" if the interval upper bound is below +5 points. REFUTED if R minus B is at least +5 and the lower bound is above 0. INVALID if the hook fired on more than 5% of neutral probes. Else INCONCLUSIVE. |
+| H5 (plumbing check) | The hook fires on cued probes and not on neutral probes. | cued fire rate at least 90%, neutral fire rate at most 5%. A neutral rate above 5% makes H4 INVALID. |
+
+"Largest N" means `n_target` equal to the largest N of the run (N=10 in the presets). Compaction position rows mean "compactions survived", because their positions are nominal. The cap of the hook is 3 hits, and one probe asks up to 4 facts, so one fire cannot cover every fact. Table L0 shows the rate of fires with hits above 0 and the timeout rate. Table L2 is not a pure cue contrast: the neutral head also drops "Answer from this session's history only" and adds a null rule. A design-2 run prints `Probe design: 2` in its head. Its cued tables are not comparable with Wave 1 and Wave 2.
+
+The old primary comparisons (B minus A at N=10, N=30 and type X) and the headroom gate stay as they are. The new section does not replace them. For H1, a Sonnet session of about 100k tokens may show no lost-in-the-middle effect. A result of NOT SUPPORTED is a valid result.
+
+Power: each of these types has one middle fact for each seed, so 20 seeds give 120 cued middle probes (6 types) and 100 neutral middle probes (5 types) for each arm and condition, at the largest N. The report prints every count and every interval. Read the interval before you read the point.
+
+## Probe design 3 (2026-11-22): real long context, non-literal probes, balanced positions, arm K
+
+Design 3 is new. Designs 1 and 2, and the old tests, are unchanged. Run it with `litm3-smoke`, `litm3-pilot` and `litm3-full`. The owner wants the benchmark to test two things that are different: compaction loss, and lost in the middle in a long context with no compaction.
+
+### What design 3 changes
+
+- **A. Real long context.** The no-compaction session aims at about 300k tokens in a 400k window (`--nc-window` default 400000; `nc3_plan` gives the size, and the run stops above 90% of the window). The session is 75 turns of user text only: plant turns, and 36 filler turns. A filler turn pastes one document (about 362 lines) and asks one small task ("reply with the number at the start of the last line"). The task is not graded. The runner counts the loose hits in `filler_task_ok`, as information only. The validity rule stays: no compaction, no cleared marker, and a last-turn context of at least 75% of the estimate.
+- **Why the filler differs between conditions.** In the compaction condition the filler is file reads, because many large tool results force the compactions. In the no-compaction condition a file read is a tool result. Claude Code clears old tool results (microcompact), so the context could shrink and the session would no longer be long. User turns are never cleared. So the no-compaction filler is pasted text in user turns. The two conditions have different filler and different fact sets, so Table L3 (compaction minus no compaction) compares different sessions. Read it with that in mind.
+- **B. Non-literal probes.** Phrasing `nonliteral` exists for R, D, X, S and E, in the no-compaction condition. The question shares no content word with the plant sentence of the fact (NoLiMa, ICML 2025: the drop shows mainly when the question shares no words with the fact). Each fact has an alias, for example "the amber harbor project". A bridge turn in the same third says "In my notes, the amber harbor project is the one called `<topic>`". The plant sentence names the topic. The probe names only the alias. The self-test checks that the content-word overlap between each non-literal probe and its plant sentence is 0 (stopword list in `gen.STOPWORDS`, answer values removed), and that the probe holds no F67 cue.
+- **C. Balanced positions.** Design 3 plants 6 facts of each type: 2 in each third of the session (start, middle, end). Each third has 25 turns, so the position tag is the real turn order. The report prints the power of H1: at 20 seeds, with a base accuracy of 80% and a seed spread of 10 points (assumptions), design 3 finds a -10 point effect with 57% power (design 2: 45%). The smallest effect with 80% power is 13.1 points (design 2: 15.3). 80% power for -10 points needs about 35 seeds (design 2: 48). Plan for this: a null H1 at 20 seeds is not strong evidence of no effect.
+- **D. Arm K and search rate.** Arm K is Lossless Handoff with auto-recall, the F68 recall rules (marker file `.recall-rules` in a private copy of the hooks folder, so arms B and R stay as they are), the F69 recall MCP server (`--mcp-config`, tools `mcp__lossless-recall__search_earlier_chat` and `open_message` allowed) and the F70 reanchor hook (PostToolUse). `hooks/auto-recall.py`, `hooks/recall-mcp.py` and `hooks/reanchor.py` must be in `--lh-path`, or the run stops at once. In design 3, `used_lookup` is true if the fork made a recall.py call, called an `mcp__lossless-recall__` tool, or got an auto-recall injection. `search_kinds` lists which. Table L5 shows the search rate by arm, phrasing and position. In the design-3 no-compaction session the main turns use no tool, so the reanchor hook (PostToolUse) cannot fire there. Only the probe forks can use tools. (In the no-compaction condition the rule line depends on a hook change and on a live check; see Round 5.)
+- **H1n, H6, H7** are registered in `thresholds.json` before any data. H1n: the H1 rule on non-literal probes. H6: K minus B search rate on neutral probes, no compaction: point above 0 and interval lower bound above 0. H7: K minus B accuracy on neutral probes, no compaction: at least +5 points and interval lower bound above 0. Stop rule: if the pilot shows no higher search rate for K, stop and remove the levers.
+- **E. Framing.** In the no-compaction condition the core handoff never runs. So B minus A there is a null control (Table L6): it must be about 0. Only arms R and K can help in that condition. Do not credit the core handoff with a lost-in-the-middle gain. The core handoff is tested in the compaction condition.
+
+### Cost of design 3
+
+`bench/continuity/run.sh estimate` prints the three runs and every assumption. The long no-compaction unit comes from a token model (assumed list prices, not a Wave number), so plan for plus or minus 40%.
+
+### The ladder: five steps, cheapest first
+
+Do not move to the next step until the current step passes. Each step proves something that the next step costs more to find out. Every run (every preset) also has abort gates (below).
+
+| Step | Command | Cost (estimate) | What it proves | Pass rule |
+|---|---|---|---|---|
+| 1. Offline self-tests | `python3 bench/continuity/test_litm.py` and `test_grader.py` | $0 | The logic: positions, probes, grading, validity rule, gates, checklist, regression of old runs | All tests pass |
+| 2. Preflight | `run.sh preflight --lh-path <checkout with the levers>` | about $3.8 to $4.9 (target: about $5 at most) | The plumbing, on Haiku with a 30000 window: a compaction happens, the handoff is written and injected, the hooks and the MCP server work, the logs have the lines the report needs, the cost matches the estimate | The checklist prints PASS on every line. `run.sh check <run-id>` prints it again. The exit code is non-zero on a FAIL |
+| 3. Smoke | `run.sh litm3-smoke --lh-path ...` | about $47 (see note) | The real model, at the real size, with all arms and both conditions, N=1 and 3: the no-compaction session reaches 300k tokens and stays valid, the model searches in arm K, the cost per unit | No invalid session, controls pass, cost ratio at most 1.3 |
+| 4. Pilot | `run.sh litm3-pilot --lh-path ...` | about $194 | The size of the effects and the cost per unit on 2 dev seeds; the stop rule for the levers (H6) | H6 holds (K searches more than B), or stop and remove the levers |
+| 5. Full | `run.sh litm3-full --lh-path ...` | about $5,600, or about $4,400 without arm R in the compaction condition (23 seeds, N up to 30) | The claims, on 20 report seeds | Run only when the pilot is clean and the owner says go |
+
+Note on step 3: the owner expected $12 to $25. The estimate for 1 seed, arms A, B, R and K, both conditions, N=1 and 3, is about $47. The main no-compaction session of design 3 is about $6 once for each seed, and each arm adds about $2 of forks. For about $10 use `litm3-nc-smoke` (arms A and R, no compaction only). The preflight checks all other parts first.
+
+What the preflight checklist tests (each line prints PASS or FAIL):
+
+Round 4 added lines to this list (see the Round 4 section): the row count of every probe fork class; arms A, Z and O; the sha256 of the hook files; no foreign instructions record; no auto-memory file; the environment allow-list; the arm K MCP check turn and the rule line in every K fork; the deny-rule selfcheck; the Sonnet 300k turn (size, price, call cap). The preflight is now probe design 3 on Haiku and costs about $3.8 to $4.9, not $3.
+
+- a compaction happened in each compaction session (`compact_boundary` count);
+- a handoff receipt is in `receipts.jsonl` of the arm, and its text is in the transcript after the compaction;
+- the decisions list or the rules were injected;
+- no-compaction sessions: no compaction, no cleared marker, last-turn context at least 75% of the estimate (the preflight session is short, so its estimate is about 72k tokens);
+- arm R: an auto-recall log line for every cued probe, matched on the fork id, and none for a neutral probe;
+- arm K: the recall MCP server starts and lists its two tools (the checklist starts it for a second, no model call); whether an MCP call happened is recorded (it is not required); a reanchor health row exists if the session crossed the 50,000 token interval; the recall-rule line is in the injected text;
+- `used_lookup` is set for every probe;
+- every probe answer parsed and graded;
+- the total cost is under $5, and the real cost is at most 1.3 times the `cost.py` estimate (the ratio is printed for each arm and condition).
+
+### Abort gates (every preset)
+
+After each finished seed the run stops with a clear message if any of these is true: the invalid-session rate is above 10%; the cost of the finished seeds is above 1.3 times their estimate; any cued probe of arm R or K has no auto-recall fire; the parse error rate is above 2% (arm Z excluded). The thresholds are in `gates.py`. The `slice` preset has no cost gate, because it has no estimate. The exit code is 4. The state file keeps every finished session, so `run.sh resume <run-id>` continues from the last finished seed. Use `resume --ignore-gates` only after you fix the cause.
+
+### How to run the pilot
+
+```
+python3 bench/continuity/test_litm.py                          # offline self-test, no model call
+bench/continuity/run.sh estimate                               # print the pilot cost and the full cost, no model call
+bench/continuity/run.sh litm-smoke --lh-path <checkout with auto-recall>   # 1 dev seed, arms A and R, no compaction only, about $12. Run it first.
+bench/continuity/run.sh litm-pilot --dry-run --lh-path <checkout with auto-recall>   # print the plan and the cost, no model call
+bench/continuity/run.sh litm-pilot --lh-path <checkout with auto-recall> --budget-usd 200   # 2 dev seeds, arms A,B,R, both conditions, both phrasings, N=1,3,10
+bench/continuity/run.sh litm-full  --lh-path <checkout with auto-recall>                    # 20 report seeds, arms A,B,R,Z,O. Run only after the pilot is clean.
+```
+
+Read the pilot before the full run:
+
+- The hook (`hooks/auto-recall.py`) writes `auto-recall.jsonl` into `$HANDOFF_STATE_DIR` (the arm's own folder) and logs the session id of the fork. The harness reads only that file, never the real `~/.local/state/claude-handoffs`. If a cued probe of arm R leaves no line, the run stops with an error.
+- Table L0: neutral fire rate must be at most 5% (H5). If not, the neutral probes are not neutral.
+- Compactions in the no-compaction sessions must be 0. If not, `DISABLE_AUTO_COMPACT` did not work in this Claude Code version. Stop.
+- Sessions of arm R must show `auto_recall_lines` above 0 in `sessions.jsonl`.
+- Compare the real cost with the estimate below. Put the real numbers in `cost.py`.
+
+### Cost estimate
+
+`cost.py` prices a run from the real Sonnet runs of the full evaluation: about $38 for each seed of Wave 1 (arms A, B, Z, O, N up to 10) and about $92 for each seed of Wave 2 (arms A and B, N up to 30). Assumptions that were not measured: arms Z and O cost $4 for each seed together, probe forks are 30% of a unit, a no-compaction unit costs $5. Plan for plus or minus 30%.
+
+| Run | Seeds | Arms | Estimate |
+|---|---|---|---|
+| Pilot | 2 | A, B, R, both conditions, both phrasings, N=1,3,10 | about $154 |
+| Full | 20 | A, B, R, Z, O, both conditions, both phrasings, N=1,3,10 | about $1,633 |
+
+Add N=30 with `cost.py --seeds 20 --arms A,B,R --n 1,3,10,30` (a printed estimate only; the full preset uses N up to 10).
 
 ## Generator v5 change (2026-11-18)
 
@@ -131,5 +243,90 @@ Run the same arm on the same seeds twice, with two run ids. Then run `run.sh aa 
 | `grade.py` | code grader |
 | `report.py` | tables, bootstrap intervals, gates, verdicts |
 | `test_grader.py` | grader and generator self-test |
+| `test_litm.py` | self-test of position, neutral probes, arm R, no-compaction condition, cost, report, and the old-run regression |
+| `litm.py` | report section: position, phrasing, condition, fire rate, hypotheses H1 to H5 |
+| `cost.py` | cost estimate of the preflight, smoke, pilot and full run, and the H1 power |
+| `gates.py` | abort gates after each seed |
+| `preflight.py` | PASS/FAIL checklist of the preflight run |
+| `fixtures/legacy-run/` | stored old-design run and its expected report (regression fixture) |
 | `thresholds.json` | pre-registered pass thresholds |
 | `seeds-dev.txt`, `seeds-report.txt` | seed lists |
+
+
+## Round 4: fixes from the methods audit
+
+An independent methods audit of the benchmark (verdict: fix first) found the faults below. Each fix has a self-test.
+
+### One main session, forked with the settings of each arm
+
+In the design-3 no-compaction condition, one main session runs for each seed. It runs as arm A, with no Lossless Handoff hooks. After it ends, arm A and then arms B, R and K fork it at the probe point. Each fork uses the settings of its arm: its hooks (a private copy), its environment, its MCP config and its allowed tools. The arms answer on one context, so the comparison is paired, and arms B, R and K do not pay for their own 300k-token session. This saves about $18 for each seed.
+
+What each arm tests in this condition (the main session had no hooks, so no compaction handoff and no reanchor ran in it):
+
+- A: plain Claude Code.
+- B: the startup injection only (the SessionStart `resume` matcher runs at the fork: the decisions ledger and the recall line). It tests nothing from the compaction handoff. B minus A is the null control.
+- R: B plus the auto-recall hook (UserPromptSubmit).
+- K: R plus the MCP tool (F69). The recall rule line (F68) is part of K only if the preflight shows `fork_rule_line` true in the K forks. The levers hooks print nothing for source `resume` when no ledger exists (re-audit), so by default K = R + MCP. K forks the session of arm A, so the reanchor hook (F70) cannot fire (one turn, no earlier tool call). H6 and H7 test the label that the report prints from the data.
+
+The runner records, for each fork, whether the startup injection and the rule line are in the fork transcript (`fork_injected`, `fork_rule_line`). The report prints the label of K from the data: if `fork_rule_line` is true in every K fork, K = R + recall rule line + MCP tool; otherwise K = R + MCP tool. Whether SessionStart hooks run on a `--resume --fork-session` call is unverified: the preflight shows it (an INFO line, not a FAIL).
+
+### Non-literal forks, fork keys and row counts
+
+The old fork key was the same for the cued and the non-literal phrasing, so every non-literal fork was skipped (finding 1). The key and the marker now hold the phrasing name. The preflight and the gates compare the rows with the expected forks (arm x phrasing x condition x type; exact for the design-3 no-compaction condition). A missing class FAILS the preflight and trips a gate.
+
+The non-literal probe is a two-step word bridge, not a meaning match. The question shares no content word with the plant sentence. A bridge turn links the question words to the plant words through an alias ("the amber ledger"). The model must follow two word links. It is a weaker test than meaning search. Embedding search is off in the run (`RECALL_EMBED_URL` points to a closed port), so this benchmark cannot show a meaning-search gain.
+
+### Hook isolation (F72)
+
+Each arm with hooks (B, R, K) gets its own copy of the hooks of `--lh-path` in its state folder. The environment variable `HANDOFF_HOOKS_HOME` points the hooks to that copy (contract F72: with it set, a hook never reads `~/.claude/hooks`). Arm K also gets the F68 marker `.recall-rules` in its copy. The sha256 of every hook file of each arm goes to `sessions.jsonl` (`hook_sha256`). The preflight checks that the files still match. A live install during a run cannot change the arms. This needs the levers branch (F72) in `--lh-path`.
+
+### Machine state
+
+- The work base must be outside HOME. The runner refuses a work base below HOME, because Claude Code reads the `CLAUDE.md` files of parent folders (`--setting-sources project` does not stop it). The default is the system temp folder.
+- The preflight FAILS if any `instructions` record in a transcript names a file from outside the project folder of the session. The record shape of Claude Code is not documented. The check reads the keys `path`, `filePath`, `file_path`, `source` and `file`, and a record with no path counts as foreign. If the first real run shows another shape, fix `gates.instruction_paths`.
+- Auto-memory is off for every arm. Source: the installed binary (claude 2.1.326) holds the environment variable name `CLAUDE_CODE_DISABLE_AUTO_MEMORY` and the settings key `autoMemoryEnabled`. The runner sets both (`CLAUDE_CODE_DISABLE_AUTO_MEMORY=1` in the environment of every call, `autoMemoryEnabled: false` in the project settings). I found the names by a byte search in the binary; the public docs were not read. A session is invalid if its project memory folder holds any file afterwards.
+- `claude` gets an allow-listed environment, not the shell environment (which holds `CLAUDE_EFFORT`, `CLAUDE_CODE_CHILD_SESSION` and more). The list is `runner.ENV_ALLOW` and is written to `config.json` (`env_allowlist`). Each session record in `sessions.jsonl` has `env_keys` (names only, never values).
+
+### Arm K tools
+
+- The preflight runs one fork of arm K that must make one `mcp__lossless-recall__` call (it FAILS if none).
+- Claude Code may defer MCP tools and load them through `ToolSearch` (the binary holds the variable `ENABLE_TOOL_SEARCH`). Arm K therefore allows `ToolSearch`. The MCP check turn proves that the call works.
+
+### Gates
+
+- A failed session now counts: more than 10% failed sessions trips a gate (checked after every session).
+- One session that costs more than 2 times its own estimate (and more than $0.25 above it) trips a gate.
+- Every preset has a default budget of 1.5 times its estimate; the run pauses there (exit code 3). `--budget-usd` overrides it.
+- `resume --ignore-gates` needs `--i-know` and prints a warning.
+- The full preset runs 23 seeds, so `min_pairs` 20 survives 3 lost seeds. It includes N=30.
+
+### Preflight covers the gaps
+
+The preflight now has: a design-3 mini session on Haiku (75 turns, about 15 forks for each of arms A, B, R and K, all phrasings); arms A, Z and O; the deny-rule selfcheck; and one Sonnet turn with a paste of about 300k tokens (sent through stdin, because the command line is too short for it). The Sonnet turn records the real cost, checks whether the price per token is above the standard price (the price above 200k tokens) and checks that one cold-cache call stays under the call cap of $1.50. Estimate: about $3.8 at the standard price and about $4.9 if the price above 200k tokens is double (the total of all lines, with the assumptions printed by `cost.py`).
+
+### Controls, margins and the pilot stop rule (registered in thresholds.json v5, before any data)
+
+- Design-3 controls (no compaction): arm O (all plant turns, no filler) must score at least 95% on every phrasing, so the probe is answerable at zero distance. Arm Z (no history) must score at most 2%, so the answer cannot be guessed. If not, do not read that phrasing (Table L7).
+- Null control: B minus A (no compaction, cued) passes if it is at most 5 points and the interval holds 0. If not, the harness has an arm effect without the core handoff.
+- H7 prints "TOO EASY: no claim" if the accuracy of arm B (no compaction, neutral) is above 95%.
+- H5 is true by construction (plumbing check): the hook trigger depends only on the cue words of the probe. It is not a result about the model.
+- Pilot stop rule, as counts. Run the full run only if all of these hold: each of arms A, B, R and K has at least 10 probe forks (2 seeds x 5 types) in each phrasing, no-compaction condition; the parse rate is at least 98%; the K search rate minus the B search rate (neutral, no compaction) has a point estimate above 0 (two seeds give no interval claim); the null control passes; the controls pass; the invalid-session rate is at most 10%.
+
+### Smaller fixes
+
+- The question order inside a probe is a seeded shuffle (design 3), so that the order is not the position.
+- A retry is idempotent: if the transcript already holds the prompt, the prompt is not sent again and the recorded answer is used.
+- A session whose temp folder is lost restarts from turn 0 with a higher `attempt`; the report, the gates and the preflight drop the rows of the older attempts.
+- Estimates (assumed prices, plus or minus 40%): preflight about $3.8 to $4.9; smoke (A, B, R, K, both conditions, N=1,3) about $47; no-compaction smoke (`litm3-nc-smoke`) about $10; pilot about $194; full (23 seeds, N=1,3,10,30) about $5,600, or about $4,400 without arm R in the compaction condition.
+
+
+## Round 5: fixes from the re-audit
+
+- Retry replay: a retry replays a recorded answer only if an assistant text record follows the prompt in the transcript. The replays are counted for each session (`replays` in `sessions.jsonl`). If the prompt is recorded and no answer follows it, the retry raises an error: an error on every turn can no longer look like a good session.
+- A restarted session: the report (`report.py`, `litm.py`), the gates and the preflight all drop the rows of older attempts. If the arm A main session restarts, its fork views (B, R, K) run again with the new attempt.
+- Updater and version: `DISABLE_AUTOUPDATER=1` is in the environment of every call. Each session row records `claude --version`. A gate trips if the version changes inside a run.
+- Instruction records: the check reads `files[].path` (the real record shape). It reports project files and foreign files apart. The preflight FAILS on a foreign file. A project file is recorded (`project_instructions`) and expected to be none.
+- Live recall.py: the injected text still names `python3 ~/.claude/hooks/recall.py` until the hook change (the recall command with the `HANDOFF_HOOKS_HOME` path) lands. Until then the runner records the sha256 of the live `~/.claude/hooks/recall.py` at run start (`live_recall_sha256` in `config.json`) next to the pinned copy. The preflight prints both as INFO and marks a change.
+- K cache miss: MCP tools change the tool list, so the first K fork may write about 300k tokens of cache ($1.1 to $2.3). Forks of arm K have a per-call cap of $3 (`K_FORK_CAP_USD`); other calls keep $1.50. The preflight records the cost of the first fork of each view (`first_fork_cost_usd`).
+- Claim for K (conditional): if `fork_rule_line` is true in every K no-compaction fork, K = R + recall rule line + MCP tool. Otherwise K = R + MCP tool. The report prints the right label from the data. The levers hooks print nothing for source `resume` when no ledger exists, so expect K = R + MCP until a hook change adds the rule line.
+- Presets: `litm3-full-v3` is the default full run (23 seeds; compaction: A and B to N=30, R and K to N=1,3,10; about $3,900). `litm3-full-v5` (A and B to N=30, K at N=10 only, no R; about $3,450) is the cheaper one. `litm3-full` stays V1 as designed (about $5,600). The no-compaction part is the same in all (about $326). With R and K at N=10 only, their compaction rows are not at the largest N, so the position tables use arms A and B for the compaction condition.

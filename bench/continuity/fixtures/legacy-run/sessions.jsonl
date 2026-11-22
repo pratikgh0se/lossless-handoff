@@ -1,0 +1,12 @@
+{"arm": "A", "boundaries": 10, "boundaries_at_plant_end": 0, "cost_usd": 1.0, "fork_leaks": 0, "missed": [], "name": "s1000-A", "precomputed": 0, "reason": null, "seed": 1000, "status": "done", "turns": 20}
+{"arm": "B", "boundaries": 10, "boundaries_at_plant_end": 0, "cost_usd": 1.0, "fork_leaks": 0, "missed": [], "name": "s1000-B", "precomputed": 0, "reason": null, "seed": 1000, "status": "done", "turns": 20}
+{"arm": "O", "boundaries": 0, "boundaries_at_plant_end": 0, "cost_usd": 1.0, "fork_leaks": 0, "missed": [], "name": "s1000-O", "precomputed": 0, "reason": null, "seed": 1000, "status": "done", "turns": 20}
+{"arm": "A", "boundaries": 10, "boundaries_at_plant_end": 0, "cost_usd": 1.0, "fork_leaks": 0, "missed": [], "name": "s1001-A", "precomputed": 0, "reason": null, "seed": 1001, "status": "done", "turns": 20}
+{"arm": "B", "boundaries": 10, "boundaries_at_plant_end": 0, "cost_usd": 1.0, "fork_leaks": 0, "missed": [], "name": "s1001-B", "precomputed": 0, "reason": null, "seed": 1001, "status": "done", "turns": 20}
+{"arm": "O", "boundaries": 0, "boundaries_at_plant_end": 0, "cost_usd": 1.0, "fork_leaks": 0, "missed": [], "name": "s1001-O", "precomputed": 0, "reason": null, "seed": 1001, "status": "done", "turns": 20}
+{"arm": "A", "boundaries": 10, "boundaries_at_plant_end": 0, "cost_usd": 1.0, "fork_leaks": 0, "missed": [], "name": "s1002-A", "precomputed": 0, "reason": null, "seed": 1002, "status": "done", "turns": 20}
+{"arm": "B", "boundaries": 10, "boundaries_at_plant_end": 0, "cost_usd": 1.0, "fork_leaks": 0, "missed": [], "name": "s1002-B", "precomputed": 0, "reason": null, "seed": 1002, "status": "done", "turns": 20}
+{"arm": "O", "boundaries": 0, "boundaries_at_plant_end": 0, "cost_usd": 1.0, "fork_leaks": 0, "missed": [], "name": "s1002-O", "precomputed": 0, "reason": null, "seed": 1002, "status": "done", "turns": 20}
+{"arm": "A", "boundaries": 10, "boundaries_at_plant_end": 0, "cost_usd": 1.0, "fork_leaks": 0, "missed": [], "name": "s1003-A", "precomputed": 0, "reason": null, "seed": 1003, "status": "done", "turns": 20}
+{"arm": "B", "boundaries": 10, "boundaries_at_plant_end": 0, "cost_usd": 1.0, "fork_leaks": 0, "missed": [], "name": "s1003-B", "precomputed": 0, "reason": null, "seed": 1003, "status": "done", "turns": 20}
+{"arm": "O", "boundaries": 0, "boundaries_at_plant_end": 0, "cost_usd": 1.0, "fork_leaks": 0, "missed": [], "name": "s1003-O", "precomputed": 0, "reason": null, "seed": 1003, "status": "done", "turns": 20}

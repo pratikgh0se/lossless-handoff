@@ -310,12 +310,16 @@ def filler_prompt(script, t, names):
     return (pre + "Read %s completely with the Read tool. Then reply only with the number of lines of each file, like `name=count`." % files)
 
 
-def probe_prompt(ptype, script, marker, ckpt=None, items=None):
+def probe_prompt(ptype, script, marker, ckpt=None, items=None, phrasing="cued", cue=False):
     """Neutral probe text. It holds the questions and a JSON form. It never holds an answer.
     items: the chosen items (oldest first). Default: all items of the type."""
+    if phrasing == "neutral":
+        return neutral_probe_prompt(ptype, script, marker, items)
+    if phrasing == "nonliteral":
+        return nonliteral_probe_prompt(ptype, script, marker, items)
     if items is None:
         items = script["fresh"][str(ckpt)] if ptype == "F" else script["items"][ptype]
-    head = "[%s] Answer from this session's history only. Do not guess.\n" % marker
+    head = "[%s] Answer from this session's history only. Do not guess.%s\n" % (marker, CUED_HEAD_TAIL if cue else "")
     if ptype == "C":
         body = "\n".join("%d. %s" % (x["id"], x["statement"]) for x in items)
         head += ("For each statement below, say if it conflicts with an earlier decision in this session. "
@@ -329,6 +333,262 @@ def probe_prompt(ptype, script, marker, ckpt=None, items=None):
         form = {"X": '{"answers":[{"id":1,"current":"...","replaced":["..."]}]}',
                 "E": '{"answers":[{"id":1,"proceed":true,"reason_code":"<exact error code text>"}]}'}.get(ptype, '{"answers":[{"id":1,"answer":"..."}]}')
     return head + body + "\nReply with JSON only, in this form: " + form
+
+
+# ---- position and phrasing (probe design 2, added with the lost-in-the-middle design; see README.md)
+# These helpers read a script. They never change a script, so every old seed gives the same script and the same old probe text.
+FILL_PER_EPOCH = 6                       # nominal filler turns after the plant turns of each epoch
+POSITIONS = ("start", "middle", "end")
+PHRASINGS = ("cued", "neutral", "nonliteral")   # nonliteral: probe design 3 only, no-compaction condition
+NEUTRAL_TYPES = ("R", "D", "X", "S", "E")  # C and M ask about the past by their nature, so they have a cued probe only
+PLANT_KIND = {"R": "stmt", "D": "stmt", "X": "stmt", "C": "stmt", "S": "S", "E": "E", "U": "U"}
+# Cue phrases of the auto-recall hook (contract F67.b). A neutral probe must hold none of them.
+CUE_PHRASES = ["what did i say", "what did we decide", "we decided", "i told you", "i said", "you said", "earlier",
+               "before", "last time", "previously", "remember", "as we discussed", "did we", "did i", "which one did",
+               "what was the"]
+CUED_HEAD_TAIL = " I told you these values earlier, so remember them."   # design 2 only: it makes a cued probe fire the hook
+QUOTED_PHRASE_RE = re.compile(r'"[^"\n]*"')
+
+
+def nominal_timeline(script, fill=FILL_PER_EPOCH):
+    """The nominal session timeline: for each epoch 0..max_epoch, its plant turns, then `fill` filler turns.
+    Returns ({event seq: turn index}, total turns). The no-compaction condition runs exactly this timeline.
+    A compaction run follows the same order of plant turns. Its filler length differs, so its tags stay nominal."""
+    idx, t = {}, 0
+    for e in range(script["max_epoch"] + 1):
+        for ev in script["events"]:
+            if ev["epoch"] == e:
+                idx[ev["seq"]] = t
+                t += 1
+        t += fill
+    return idx, t
+
+
+def position_of_turn(i, total):
+    """start, middle or end: the third of the timeline that turn index i is in."""
+    return POSITIONS[min(2, (3 * i) // total)]
+
+
+def position_of(script, ptype, item, fill=FILL_PER_EPOCH):
+    """Position tag of a planted fact (by the turn index of its plant turn). None for M and F (no single plant turn)."""
+    kind = PLANT_KIND.get(ptype)
+    if kind is None or "epoch" not in item:
+        return None
+    idx, total = nominal_timeline(script, fill)
+    for ev in script["events"]:
+        if ev["epoch"] == item["epoch"] and ev["kind"] == kind:
+            return position_of_turn(idx[ev["seq"]], total)
+    return None
+
+
+def neutral_question(ptype, item):
+    """A task that needs the fact. No reference to the past, no cue phrase."""
+    if ptype not in NEUTRAL_TYPES:
+        raise ValueError("no neutral phrasing for probe type " + str(ptype))
+    t = item["topic"]
+    if ptype == "R":
+        return "Write the tag that ends every commit message in the `%s` repository." % t
+    if ptype == "D":
+        return "Write the queue name to use for `%s`." % t
+    if ptype == "X":
+        return "Write the queue to use for `%s` now. Also list every other queue value for `%s` that is no longer valid." % (t, t)
+    if ptype == "S":
+        return "Write the exact %s for `%s`, as it must appear in the config." % (item["kind"], t)
+    if ptype == "E":
+        return ("I plan to use the `%s` approach for `%s`. Give the go or no-go in proceed. In reason_code, copy the exact "
+                "error code text that applies to this approach, character for character." % (item["name"], t))
+    raise ValueError("no neutral phrasing for probe type " + str(ptype))
+
+
+def neutral_probe_prompt(ptype, script, marker, items=None):
+    """Neutral probe text: the same JSON form and the same grader as the cued probe, a different question."""
+    if items is None:
+        items = script["items"][ptype]
+    head = "[%s] Do not guess. If you do not know a value, set the main field to null.\n" % marker
+    body = "\n".join("%d. %s" % (x["id"], neutral_question(ptype, x)) for x in items)
+    form = {"X": '{"answers":[{"id":1,"current":"...","replaced":["..."]}]}',
+            "E": '{"answers":[{"id":1,"proceed":true,"reason_code":"..."}]}'}.get(ptype, '{"answers":[{"id":1,"answer":"..."}]}')
+    return head + body + "\nReply with JSON only, in this form: " + form
+
+
+def has_cue(text):
+    """True if the text would fire the auto-recall hook: a cue phrase, or a double-quoted phrase of 3 or more words."""
+    low = text.lower()
+    if any(c in low for c in CUE_PHRASES):
+        return True
+    return any(len(q[1:-1].split()) >= 3 for q in QUOTED_PHRASE_RE.findall(text))
+
+
+# ---- probe design 3 (2026-11-22): real long context, balanced positions, non-literal probes
+# build_litm3 makes a separate script for the no-compaction condition. It has its own RNG stream, so nothing old changes.
+# Everything is user-stated (no tool output, because Claude Code clears old tool results). Filler is pasted documents in user turns.
+L3_TYPES = ("R", "D", "X", "S", "E")
+L3_PER_POS = 2                 # facts of each type in each third: 2 start, 2 middle, 2 end
+L3_FILL_PER_THIRD = 12         # filler turns in each third
+L3_FACTS_PER_THIRD = len(L3_TYPES) * L3_PER_POS
+ADJ = ("amber brisk calm dusty eager frosty gentle hollow ivory jolly keen lunar mellow nimble opal plain quiet rustic "
+       "silver tidy upbeat vivid woolly young zesty azure bold crisp dim fuzzy glossy humble inky kindly leafy misty noble").split()
+NOUN = ("harbor meadow lantern orchard pewter saddle timber velvet walnut zephyr canyon glacier island jungle kettle ledge "
+        "marsh nursery oasis pasture quarry ridge summit tundra valley wharf anchor beacon cabin dune fjord grove hamlet isle "
+        "knoll lagoon mesa").split()
+SENT3 = [s_.replace(" before you touch anything else", " first").replace(" before you guess", " first") for s_ in SENT]    # no cue phrase: the hook must not fire on plant or filler turns
+assert not any(c in " ".join(SENT3).lower() for c in CUE_PHRASES), "SENT3 holds a cue phrase"
+STOPWORDS = set(("a an the for of to in on at is are was were be been it its this that these those and or but each with from by as "
+                 "i you we me my your our us he she they them their there here if so than then do does did not no can will would "
+                 "should could may might have has had also too only just into over under up down out off about").split())
+
+
+def content_words(text, drop=()):
+    """Lowercase words (letters and digits) of a text without stopwords, and without the words of the values in `drop`."""
+    gone = set()
+    for v in drop:
+        gone.update(re.findall(r"[a-z0-9]+", str(v).lower()))
+    return {w for w in re.findall(r"[a-z0-9]+", text.lower()) if w not in STOPWORDS and w not in gone}
+
+
+def nonliteral_question(ptype, item):
+    """A task that needs the fact but shares no content word with the plant sentence. It names the topic by an alias that only a bridge turn explains."""
+    a = item["alias"]
+    if ptype == "R":
+        return "For %s, give the closing marker that each change record needs to carry." % a
+    if ptype == "D":
+        return "For %s, write the name of the lane that jobs are sent to." % a
+    if ptype == "X":
+        return "For %s, write the lane that jobs go to today, and list every lane that was dropped on the way." % a
+    if ptype == "S":
+        return "For %s, write the exact string that was stored for it, character for character." % a
+    if ptype == "E":
+        return ("For %s, a teammate wants to run the same idea again. Give the go or no-go in proceed. In reason_code, copy the exact "
+                "fault identifier it hit, character for character." % a)
+    raise ValueError("no non-literal phrasing for probe type " + str(ptype))
+
+
+def nonliteral_probe_prompt(ptype, script, marker, items=None):
+    """Same head, JSON form and grader as the neutral probe. Only the question differs."""
+    if items is None:
+        items = script["items"][ptype]
+    head = "[%s] Do not guess. If you do not know a value, set the main field to null.\n" % marker
+    body = "\n".join("%d. %s" % (x["id"], nonliteral_question(ptype, x)) for x in items)
+    form = {"X": '{"answers":[{"id":1,"current":"...","replaced":["..."]}]}',
+            "E": '{"answers":[{"id":1,"proceed":true,"reason_code":"..."}]}'}.get(ptype, '{"answers":[{"id":1,"answer":"..."}]}')
+    return head + body + "\nReply with JSON only, in this form: " + form
+
+
+def plant_sentences(ptype, item):
+    """The sentences that plant a design-3 fact (a non-literal probe shares no content word with these)."""
+    return [item["plant"]] + ([item["plant2"]] if item.get("plant2") else [])
+
+
+def build_litm3(seed):
+    """Script of the no-compaction condition, probe design 3. Facts of types R D X S E, 6 each: 2 in each third of the
+    session. Each fact has an alias, and a bridge turn in the same third tells which topic the alias names.
+    plan: the turns in order. Each third has 25 turns, so the thirds of the real turn order are the thirds of the plan."""
+    g = Gen(seed, "litm3")
+    g.r = random.Random("lhbench-litm3-%d" % seed)
+    pr = random.Random("lhbench-litm3-prose-%d" % seed)
+    taken = set()
+    adj, noun = ADJ[:], NOUN[:]
+    g.r.shuffle(adj)
+    g.r.shuffle(noun)
+    n_facts = len(L3_TYPES) * 3 * L3_PER_POS
+    items = {t: [] for t in L3_TYPES}
+    third_facts = [[], [], []]
+    kinds = [("deploy command", g.cmd), ("output path", g.path), ("export env line", g.envline)]
+    k = 0
+    for t in L3_TYPES:
+        for j in range(3 * L3_PER_POS):
+            pos = POSITIONS[j // L3_PER_POS]
+            topic = g.topics(1, taken)[0]
+            alias = "the %s %s" % (adj[k], noun[k])
+            k += 1
+            it = {"id": j + 1, "topic": topic, "alias": alias, "position": pos, "third": j // L3_PER_POS}
+            if t == "R":
+                tok = g.tok()
+                it.update(answer=tok, plant="Standing rule from now on: in the `%s` repository, every commit message must end with the tag `TAG-%s`." % (topic, tok),
+                          question="What tag must every commit message in the `%s` repository end with?" % topic)
+            elif t == "D":
+                tok = g.tok()
+                it.update(answer=tok, plant="Decision: the `%s` queue is `%s`." % (topic, tok), question="Which queue did we choose for `%s`?" % topic)
+            elif t == "X":
+                old, new = g.tok(), g.tok()
+                it.update(old=old, new=new, plant="Decision: the `%s` queue is `%s`." % (topic, old),
+                          plant2="Change for the `%s` queue: use `%s` instead." % (topic, new),
+                          question="What is the current queue for `%s`? Also list every earlier queue that we replaced." % topic)
+            elif t == "S":
+                kind, make = kinds[j % 3]
+                val = make()
+                it.update(kind=kind, answer=val, plant="Settings note: the %s for `%s` is `%s`." % (kind, topic, val),
+                          question="Give the exact %s for `%s`, character for character." % (kind, topic))
+            else:
+                name = g.r.choice(APPROACHES) + "-" + g.chars(3).lower()
+                ecode = g.ecode()
+                it.update(name=name, ecode=ecode, plant="Dead end: the `%s` approach for `%s` broke with `%s`." % (name, topic, ecode),
+                          question="I plan to use the `%s` approach for `%s`. Should we proceed? In reason_code, copy the exact error code text that this approach failed with, character for character." % (name, topic))
+            items[t].append(it)
+            third_facts[it["third"]].append((t, it))
+    plan, fill_k = [], 0
+    for th in range(3):
+        facts = third_facts[th][:]
+        g.r.shuffle(facts)
+        bridge = " ".join("In my notes, %s is the one called `%s`." % (it["alias"], it["topic"]) for _t, it in sorted(facts, key=lambda x: x[1]["alias"]))
+        plan.append({"kind": "bridge", "third": th, "prompt": "%s Naming notes for this project, for reference: %s Reply only `ok`." % (prose3(pr, 300, 500), bridge)})
+        for _t, it in facts:
+            plan.append({"kind": "fact", "third": th, "type": _t, "id": it["id"],
+                         "prompt": "%s Note for this project: %s Reply only `ok`." % (prose3(pr, 300, 500), it["plant"])})
+            if it.get("plant2"):
+                plan.append({"kind": "x2", "third": th, "type": _t, "id": it["id"],
+                             "prompt": "%s Note for this project: %s Reply only `ok`." % (prose3(pr, 300, 500), it["plant2"])})
+            plan.append({"kind": "fill", "third": th, "k": fill_k})
+            fill_k += 1
+        while fill_k < (th + 1) * L3_FILL_PER_THIRD:
+            plan.append({"kind": "fill", "third": th, "k": fill_k})
+            fill_k += 1
+    for i, step in enumerate(plan):
+        step["turn"] = i
+        if step["kind"] == "fact":
+            for it in items[step["type"]]:
+                if it["id"] == step["id"]:
+                    it["turn"] = i
+    script = {"design": 3, "gen_version": "litm3-1", "seed": seed, "items": items, "plan": plan, "n_facts": n_facts,
+              "max_epoch": 0, "events": [], "fresh": {}}
+    vals = set()
+    for t, lst in items.items():
+        for it in lst:
+            for kk in ("answer", "old", "new", "ecode"):
+                if kk in it:
+                    vals.add(it[kk])
+    script["secrets"] = sorted(vals)
+    return script
+
+
+def prose3(r, lo=600, hi=1200):
+    """Like prose(), with sentences that hold no cue phrase."""
+    out = ""
+    while len(out) < lo:
+        s_ = r.choice(SENT3) % {"w": r.choice(WORDS), "w2": r.choice(WORDS)}
+        if out and len(out) + len(s_) + 1 > hi:
+            break
+        out += (" " if out else "") + s_
+    return out
+
+
+def shuffle3(items, seed, ptype, phrasing):
+    """Design 3: the order of the questions inside one probe is a seeded shuffle, so that the order in the probe is not the position
+    in the session (the old order was oldest first, which is the position). The same order for every arm."""
+    r = random.Random("lhbench-order3-%d-%s-%s" % (seed, ptype, phrasing))
+    out = list(items)
+    r.shuffle(out)
+    return out
+
+
+def filler_doc_prompt(script, k, lines):
+    """Filler turn of design 3: a pasted document and one small task. Returns (prompt, expected first token of the task)."""
+    name, text = filler_file(script["seed"], 1000 + k, 0, lines=lines)
+    r = random.Random("lhbench-litm3-fill-%d-%d" % (script["seed"], k))
+    expect = text.splitlines()[-1].split()[0]
+    prompt = ("%s Here is a document to skim. It is pasted below between the markers.\n<<<DOC\n%sDOC>>>\n"
+              "Task: reply with only the number at the start of the last line of the document." % (prose3(r, 300, 500), text))
+    return prompt, expect
 
 
 def main():

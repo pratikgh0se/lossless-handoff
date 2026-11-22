@@ -1,7 +1,7 @@
 {
-  "version": 2,
+  "version": 6,
   "registered": "2026-11-18",
-  "note": "Pass thresholds. They come from the verification plan. v2 adds the headroom gate for generator v4. Committed before any v4 run. Do not change after a run to make a result pass.",
+  "note": "Pass thresholds. They come from the verification plan. v2 adds the headroom gate for generator v4. Committed before any v4 run. Do not change after a run to make a result pass. v3 adds the litm block (lost in the middle, phrasing, auto-recall), committed before any run of probe design 2. v4 adds H1n, H6, H7 and the design-3 settings, committed before any run of probe design 3. v5 adds the audit fixes (null-control margin, H7 ceiling, design-3 controls, pilot stop rule as fork counts), committed before any run of probe design 3. v6 (round 5): the K label depends on the data (fork_rule_line), the full run is V3, DISABLE_AUTOUPDATER is set.",
   "amnesia_max_accuracy": 0.02,
   "oracle_min_accuracy": 0.95,
   "fresh_min_accuracy": 0.95,
@@ -33,5 +33,69 @@
   ],
   "headroom_min_points": 15,
   "headroom_rule": "discriminative at N = (oracle accuracy minus arm A accuracy at N, scored types) >= headroom_min_points. If not, the gain verdict at that N is 'BENCHMARK TOO EASY at this N: no claim either way'.",
-  "zero_parse_gate": "arm Z parse rate is INFO only; a Z parse failure counts as wrong"
+  "zero_parse_gate": "arm Z parse rate is INFO only; a Z parse failure counts as wrong",
+  "litm": {
+    "registered": "2026-11-20",
+    "h1_middle_minus_ends_max_points": -10,
+    "h2_compaction_minus_nocompaction_max_points": -15,
+    "h3_r_minus_b_cued_min_points": 5,
+    "h4_r_minus_b_neutral_no_gain_below_points": 5,
+    "h5_fire_rate_cued_min": 0.9,
+    "h5_fire_rate_neutral_max": 0.05,
+    "nc_compactions_allowed": 0,
+    "note": "Pre-registered before any data. A hypothesis that fails stays in the report. Do not change after a run.",
+    "h1_ceiling_max_accuracy": 0.95,
+    "h1_note": "H1 prints 'TOO EASY: no claim' if the mean of the start and end accuracy of arm A (no compaction, cued) is above h1_ceiling_max_accuracy. H1 uses the mean of the start rate and the end rate, not pooled items.",
+    "h2_label": "expected, not blind; mixes compaction with session length",
+    "h5_label": "plumbing check, true by construction: the hook trigger depends only on the cue words of the probe text",
+    "h4_invalid_if_neutral_fire_rate_above": 0.05,
+    "nc_validity": {
+      "last_turn_context_min_share_of_estimate": 0.75,
+      "cleared_markers_allowed": 0,
+      "compactions_allowed": 0,
+      "note": "A no-compaction session is valid only if the last-turn context (input + cache read tokens) is at least this share of nc_estimate_tokens, the transcript has no cleared-tool-result marker, and it has no compaction."
+    },
+    "registered_design3": "2026-11-22",
+    "h1n_note": "H1n: the H1 rule on non-literal probes (arm A, no compaction), same thresholds and same ceiling.",
+    "h6_k_minus_b_search_rate_min_points": 0,
+    "h6_note": "K minus B search rate (used_lookup) on neutral probes, no compaction: point above 0 and CI lower bound above 0. Stop rule: if the pilot shows no higher search rate for K, stop and remove the levers.",
+    "h7_k_minus_b_neutral_accuracy_min_points": 5,
+    "design3": {
+      "nc_window": 400000,
+      "nc_target_fraction": 0.75,
+      "nc_fail_fraction": 0.9,
+      "positions_per_type": "2 start, 2 middle, 2 end",
+      "types": [
+        "R",
+        "D",
+        "X",
+        "S",
+        "E"
+      ],
+      "nonliteral_content_word_overlap_with_plant": 0,
+      "filler": "pasted documents in user turns, one small task each (not graded)",
+      "no_compaction": "one main session for each seed, run as arm A; arms A, B, R and K fork it at the probe point with their own settings. B tests the startup injection only, R adds auto-recall, K adds the MCP tool, and the recall rule line only if the preflight shows it in the K forks (fork_rule_line true)."
+    },
+    "registered_v5": "2026-11-22",
+    "null_control_margin_points": 5,
+    "null_control_note": "Null control (no compaction, cued): PASS if |B minus A| is at most this many points and the 95% interval holds 0. Else the harness has an arm effect without the core handoff: no claim from arms R or K until the cause is found.",
+    "h7_ceiling_max_accuracy": 0.95,
+    "h7_note": "H7 prints 'TOO EASY: no claim' if the accuracy of arm B (no compaction, neutral) is above h7_ceiling_max_accuracy.",
+    "d3_oracle_min_accuracy": 0.95,
+    "d3_amnesia_max_accuracy": 0.02,
+    "d3_controls_note": "Design 3, no compaction: arm O (all plant turns, no filler) must score at least d3_oracle_min_accuracy on every phrasing (the probe is answerable at zero distance); arm Z (no history) must score at most d3_amnesia_max_accuracy (the answer cannot be guessed). If not, do not read that phrasing.",
+    "pilot_stop_rule": {
+      "note": "Pilot = litm3-pilot, 2 dev seeds. The pilot gives counts, not intervals. Go to the full run only if ALL hold; else stop.",
+      "forks_per_arm_phrasing_nocompact_min": 10,
+      "forks_per_arm_phrasing_nocompact_note": "2 seeds x 5 types = 10 probe forks for each of arms A, B, R, K and each of the 3 phrasings; a class with fewer forks is a harness fault",
+      "parse_rate_min": 0.98,
+      "h6_point_above": 0,
+      "h6_point_note": "K search rate minus B search rate on neutral probes, no compaction: point estimate above 0 (no interval claim with 2 seeds), computed on at least 10 forks per arm",
+      "null_control_pass_required": true,
+      "controls_pass_required": true,
+      "invalid_session_rate_max": 0.1
+    },
+    "k_label_rule": "If every K no-compaction fork has the recall rule line in its transcript (fork_rule_line true): K = R + recall rule line + MCP tool. Otherwise: K = R + MCP tool. The report prints the label from the data (out k_label).",
+    "full_run": "litm3-full-v3 is the default full run (23 seeds; compaction: A and B to N=30, R and K to N=10). litm3-full-v5 (no R, K at N=10 only) and litm3-full (V1, as designed) stay available."
+  }
 }
