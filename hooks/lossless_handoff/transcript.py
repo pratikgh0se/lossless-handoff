@@ -3,6 +3,14 @@
 # namespace of the entry file, so every name here is a global of precompact-handoff.py. The imports are in the entry file.
 
 HOME = os.path.expanduser("~")
+
+
+def _hook_candidates(name, first, second):
+    """F72: with HANDOFF_HOOKS_HOME naming an existing folder, only that folder (no fallback, no mixing of two trees);
+    else (first, second) as before."""
+    h = (os.environ.get("HANDOFF_HOOKS_HOME") or "").strip()
+    return [os.path.join(h, name)] if h and os.path.isdir(h) else [first, second]
+
 HANDOFFS_DIR = (os.environ.get("HANDOFF_STATE_DIR") or "").strip() or os.path.join(HOME, ".local", "state", "claude-handoffs")
 HEALTH_FILE = os.path.join(HANDOFFS_DIR, "health.jsonl")
 HEALTH_MAX_LINES = 5000

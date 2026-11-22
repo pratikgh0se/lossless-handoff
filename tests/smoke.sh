@@ -2110,7 +2110,7 @@ assert "ghp_abcdefghijklmnopqrstuvwxyz" not in txt(by[7]) and "[REDACTED:github]
 for i in (8, 9, 10, 12, 14):
     r = by[i]["result"]; assert r["isError"] is True and "\n" not in r["content"][0]["text"] and r["content"][0]["text"], (i, r)
 assert "ninety days" in txt(by[11]) and txt(by[11]).startswith("--- "), txt(by[11])
-assert len(txt(by[13])) <= 12000 + 40 and txt(by[13]).endswith("[cut at 12000 characters]"), (len(txt(by[13])), txt(by[13])[-60:])
+assert len(txt(by[13])) <= 12000 and txt(by[13]).endswith("[cut at 12000 characters]"), (len(txt(by[13])), txt(by[13])[-60:])
 assert by[15].get("error", {}).get("code") == -32602 or by[15]["result"]["isError"] is True
 assert by[16]["error"]["code"] == -32601
 pe = [o for o in out if o.get("id") is None and "error" in o]
@@ -2314,6 +2314,82 @@ PY
   "$ROOT/install.sh" --save-defaults --no-reanchor --no-claim-guard >/dev/null
   ! grep -Eq "reanchor|claim_guard" "$DF" || fail "F70/F71: --save-defaults --no-* kept the lines"
   ok "F70/F71: install, default off, dry-run, entries, kept message, uninstall, saved defaults"
+)
+
+# F72: HANDOFF_HOOKS_HOME replaces ~/.claude/hooks, with no fallback and no mixing of two trees.
+# HOME holds decoy files with other behaviour; a hook that reads one writes a line to $DECOY_LOG.
+(
+  set -e
+  D="$T/f72"; mkdir -p "$D"; export HOME="$D/home"; REAL="$HOME/.claude/hooks"; PRIV="$D/priv"; W="$D/work"
+  mkdir -p "$REAL" "$PRIV" "$W" "$D/state"; export HANDOFF_STATE_DIR="$D/state"; export DECOY_LOG="$D/decoy.log"; : > "$DECOY_LOG"
+  unset HANDOFF_HOOKS_HOME HANDOFF_RECALL_RULES
+  for f in recall.py postcompact-inject.py precompact-handoff.py reanchor.py; do
+    printf 'import os\nopen(os.environ["DECOY_LOG"], "a").write("%s\\n")\nprint("DECOYOUT")\n' "$f" > "$REAL/$f"
+  done
+  : > "$REAL/.recall-rules"; : > "$REAL/recall-mcp.py"
+  decoy_clean() { [ ! -s "$DECOY_LOG" ] || fail "F72: $1 read a decoy file: $(cat "$DECOY_LOG")"; }
+  POST="$ROOT/hooks/postcompact-inject.py"
+  sub() { printf '{"session_id":"s72","cwd":"%s","agent_id":"agx","agent_type":"general-purpose"}' "$W" | python3 "$POST" --subagent-start; }
+  ctx() { python3 -c "import sys,json; print(json.load(sys.stdin)['hookSpecificOutput']['additionalContext'])"; }
+  # postcompact-inject: a private folder without recall.py gives no recall line, although HOME has one (no fallback)
+  o="$(HANDOFF_HOOKS_HOME="$PRIV" sub)"; [ -z "$o" ] || fail "F72: postcompact-inject used a file outside HANDOFF_HOOKS_HOME: $o"
+  decoy_clean postcompact-inject
+  # with recall.py in the private folder: the recall line, and the HOME marker and HOME recall-mcp.py are not seen
+  cp "$ROOT/hooks/recall.py" "$PRIV/recall.py"
+  o="$(HANDOFF_HOOKS_HOME="$PRIV" sub | ctx)"
+  grep -q "^- recall: " <<<"$o" && ! grep -q "recall rule:" <<<"$o" && ! grep -q "search_earlier_chat" <<<"$o" || fail "F72: postcompact-inject saw the HOME marker or HOME recall-mcp.py: $o"
+  # the private folder holds the marker and recall-mcp.py: both are seen
+  : > "$PRIV/.recall-rules"; : > "$PRIV/recall-mcp.py"
+  o="$(HANDOFF_HOOKS_HOME="$PRIV" sub | ctx)"
+  grep -q "^- recall rule: " <<<"$o" && grep -q "search_earlier_chat" <<<"$o" || fail "F72: postcompact-inject ignored the private marker: $o"
+  # HOME marker alone (override unset): seen, as before. Override not a folder: as if unset.
+  o="$(sub | ctx)"; grep -q "^- recall rule: " <<<"$o" || fail "F72: unset override changed the behaviour: $o"
+  o="$(HANDOFF_HOOKS_HOME="$D/nonexistent" sub | ctx)"; grep -q "^- recall rule: " <<<"$o" || fail "F72: a missing folder was not ignored: $o"
+  o="$(HANDOFF_HOOKS_HOME="" sub | ctx)"; grep -q "^- recall rule: " <<<"$o" || fail "F72: an empty value was not ignored: $o"
+  rm -f "$PRIV/.recall-rules" "$PRIV/recall-mcp.py" "$PRIV/recall.py"
+  # auto-recall: the hook file sits in the repo next to a real recall.py, and HOME holds a decoy; neither is used
+  PR="what did we decide earlier about the staging database rotation policy"
+  o="$(printf '{"prompt":"%s","cwd":"%s","session_id":"s72"}' "$PR" "$W" | HANDOFF_HOOKS_HOME="$PRIV" python3 "$ROOT/hooks/auto-recall.py")"
+  [ -z "$o" ] || fail "F72: auto-recall printed with an empty private folder: $o"
+  decoy_clean auto-recall
+  printf '{"prompt":"%s","cwd":"%s","session_id":"s72"}' "$PR" "$W" | python3 "$ROOT/hooks/auto-recall.py" >/dev/null || true
+  grep -q "^recall.py$" "$DECOY_LOG" || fail "F72: control: without the override auto-recall should load the HOME copy"
+  : > "$DECOY_LOG"
+  # recall-mcp: a tool call with an empty private folder finds no recall.py (no HOME copy, no copy next to the file)
+  o="$(printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"search_earlier_chat","arguments":{"query":"staging"}}}' | (cd "$W" && HANDOFF_HOOKS_HOME="$PRIV" python3 "$ROOT/hooks/recall-mcp.py"))"
+  grep -q '"isError": true' <<<"$o" && grep -q "recall.py not found" <<<"$o" || fail "F72: recall-mcp used a recall.py outside HANDOFF_HOOKS_HOME: $o"
+  decoy_clean recall-mcp
+  # reanchor: it needs postcompact-inject.py from the private folder; none there means no output
+  python3 - "$D" <<'PY'
+import json, sys
+d = sys.argv[1]
+rows = [{"type": "user", "message": {"role": "user", "content": "hi"}},
+        {"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": "ok"}],
+         "usage": {"input_tokens": 10, "cache_read_input_tokens": 59985, "cache_creation_input_tokens": 5, "output_tokens": 3}}}]
+open(d + "/t60k.jsonl", "w").write("".join(json.dumps(r) + "\n" for r in rows))
+PY
+  o="$(printf '{"session_id":"s72r","transcript_path":"%s","cwd":"%s","hook_event_name":"PostToolUse","tool_name":"Bash"}' "$D/t60k.jsonl" "$W" | HANDOFF_HOOKS_HOME="$PRIV" python3 "$ROOT/hooks/reanchor.py")"
+  [ -z "$o" ] || fail "F72: reanchor printed with an empty private folder: $o"
+  decoy_clean reanchor
+  # claim-guard reads no file from the hooks folder: the same output with the override and with decoys
+  o="$(printf '{"session_id":"s72","transcript_path":"%s","stop_hook_active":false,"last_assistant_message":"Done."}' "$D/t60k.jsonl" | HANDOFF_HOOKS_HOME="$PRIV" python3 "$ROOT/hooks/claim-guard.py")"
+  [ -z "$o" ] || fail "F72: claim-guard output: $o"
+  decoy_clean claim-guard
+  # precompact-handoff (and its parts): the recall line of the handoff comes only from the private folder
+  python3 - "$D" "$W" <<'PY'
+import json, sys
+d = sys.argv[1]
+rows = [{"type": "user", "message": {"content": "PRIVMARK please fix the importer"}},
+        {"type": "assistant", "message": {"content": [{"type": "text", "text": "Noted."}]}}]
+open(d + "/pre72.jsonl", "w").write("\n".join(json.dumps(r) for r in rows) + "\n")
+PY
+  pre() { printf '{"session_id":"%s","cwd":"%s","transcript_path":"%s","trigger":"auto"}' "$1" "$W" "$D/pre72.jsonl" | HANDOFF_HOOKS_HOME="$PRIV" HANDOFF_LEDGER=0 python3 "$ROOT/hooks/precompact-handoff.py" >/dev/null 2>&1 || true; }
+  pre p72a
+  grep -q "PRIVMARK" "$D/state/p72a-latest.md" && ! grep -q "^- recall: " "$D/state/p72a-latest.md" || fail "F72: precompact-handoff used a recall.py outside HANDOFF_HOOKS_HOME"
+  cp "$ROOT/hooks/recall.py" "$PRIV/recall.py"; pre p72b
+  grep -q "^- recall: " "$D/state/p72b-latest.md" || fail "F72: precompact-handoff ignored the private recall.py"
+  decoy_clean precompact-handoff
+  ok "F72: no hook or part reads ~/.claude/hooks when HANDOFF_HOOKS_HOME is a folder; unset, empty or missing value: as before"
 )
 
 "$ROOT/uninstall.sh" >"$T/un.out"

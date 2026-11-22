@@ -18,6 +18,8 @@ Two opt-in search levers: a strict recall rule line and a recall MCP tool (hooks
 
 - F68: with the marker file `~/.claude/hooks/.recall-rules`, the recall line is followed by one rule line in every session start and subagent start. `HANDOFF_RECALL_RULES=0` switches it off. Inject rows in `receipts.jsonl` have `recall_rules`.
 - F69: new `hooks/recall-mcp.py`, a stdio MCP server (name `lossless-recall`) with the tools `search_earlier_chat` and `open_message`. Secrets are masked, a result has at most 12,000 characters, and `recall-mcp.jsonl` holds no query text. The recall line names the tool when it is installed.
+- F72: `HANDOFF_HOOKS_HOME` replaces `~/.claude/hooks` for every hook and helper when it names an existing folder. No file is read from `~/.claude/hooks` then, and no copy next to the hook is used.
+- F69: a tool result is at most 12,000 characters in total, including the cut marker (it was up to 12,026).
 - All hook versions are 1.18.0. Product version 0.16.0.
 ### Re-anchor and claim guard (opt-in)
 

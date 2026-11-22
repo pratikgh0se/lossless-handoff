@@ -41,8 +41,8 @@ RECALL_LINE = ("- recall: earlier chats in this project are searchable word for 
 
 def recall_path():
     """F44.11(a): ~/.claude/hooks/recall.py (HOME from the environment) or recall.py next to this hook; None if neither."""
-    for p in (os.path.join(os.path.expanduser("~"), ".claude", "hooks", "recall.py"),
-              os.path.join(os.path.dirname(os.path.abspath(__file__)), "recall.py")):
+    for p in _hook_candidates("recall.py", os.path.join(os.path.expanduser("~"), ".claude", "hooks", "recall.py"),
+                              os.path.join(os.path.dirname(os.path.abspath(__file__)), "recall.py")):
         if os.path.isfile(p):
             return p
     return None

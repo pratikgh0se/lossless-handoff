@@ -13,6 +13,19 @@ import json, os, subprocess, sys, time
 
 HOOK_VERSION = "1.18.0"
 HOME = os.path.expanduser("~")
+
+
+def hooks_home():
+    """F72: HANDOFF_HOOKS_HOME when it names an existing folder, else None (then ~/.claude/hooks as before)."""
+    v = (os.environ.get("HANDOFF_HOOKS_HOME") or "").strip()
+    return v if v and os.path.isdir(v) else None
+
+
+def hook_candidates(name, first, second):
+    """F72: with the override, only that folder (no fallback, no mixing of two trees); else (first, second) as before."""
+    h = hooks_home()
+    return [os.path.join(h, name)] if h else [first, second]
+
 STATE_DIR = (os.environ.get("HANDOFF_STATE_DIR") or "").strip() or os.path.join(HOME, ".local", "state", "claude-handoffs")
 DEFAULT_INTERVAL = 50000
 FIRST_LINE = ("Lossless Handoff re-anchor: the project's active rules, repeated so they stay near the end of your "
@@ -59,8 +72,8 @@ def context_tokens(path):
 
 def rules_text(cwd):
     """The rules block + recall line, from postcompact-inject.py --rules-block (the SubagentStart builder). '' if none."""
-    for p in (os.path.join(os.path.dirname(os.path.abspath(__file__)), "postcompact-inject.py"),
-              os.path.join(HOME, ".claude", "hooks", "postcompact-inject.py")):
+    for p in hook_candidates("postcompact-inject.py", os.path.join(os.path.dirname(os.path.abspath(__file__)), "postcompact-inject.py"),
+                             os.path.join(HOME, ".claude", "hooks", "postcompact-inject.py")):
         if os.path.isfile(p):
             r = subprocess.run([sys.executable, p, "--rules-block"], input=json.dumps({"cwd": cwd}),
                                capture_output=True, text=True, timeout=3)

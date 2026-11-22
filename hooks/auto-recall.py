@@ -12,6 +12,19 @@ import json, os, re, sys, threading, time
 
 HOOK_VERSION = "1.18.0"
 HOME = os.path.expanduser("~")
+
+
+def hooks_home():
+    """F72: HANDOFF_HOOKS_HOME when it names an existing folder, else None (then ~/.claude/hooks as before)."""
+    v = (os.environ.get("HANDOFF_HOOKS_HOME") or "").strip()
+    return v if v and os.path.isdir(v) else None
+
+
+def hook_candidates(name, first, second):
+    """F72: with the override, only that folder (no fallback, no mixing of two trees); else (first, second) as before."""
+    h = hooks_home()
+    return [os.path.join(h, name)] if h else [first, second]
+
 STATE_DIR = (os.environ.get("HANDOFF_STATE_DIR") or "").strip() or os.path.join(HOME, ".local", "state", "claude-handoffs")
 BUDGET_S = 2.0
 WATCHDOG_S = 1.85
@@ -90,7 +103,7 @@ def watchdog():
 
 
 def load_recall():
-    for p in (os.path.join(HOME, ".claude", "hooks", "recall.py"), os.path.join(os.path.dirname(os.path.abspath(__file__)), "recall.py")):
+    for p in hook_candidates("recall.py", os.path.join(HOME, ".claude", "hooks", "recall.py"), os.path.join(os.path.dirname(os.path.abspath(__file__)), "recall.py")):
         if os.path.isfile(p):
             import importlib.util
             spec = importlib.util.spec_from_file_location("lh_recall", p)

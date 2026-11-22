@@ -78,6 +78,19 @@ INLINE_MAX = 9700  # content target per part
 NAMES_MAX = 150    # the section-name list in a continuation line is cut to this many chars
 MAX_PARTS = 3      # F37.6
 HOOK_VERSION = "1.18.0"
+
+
+def hooks_home():
+    """F72: HANDOFF_HOOKS_HOME when it names an existing folder, else None (then ~/.claude/hooks as before)."""
+    v = (os.environ.get("HANDOFF_HOOKS_HOME") or "").strip()
+    return v if v and os.path.isdir(v) else None
+
+
+def hook_candidates(name, first, second):
+    """F72: with the override, only that folder (no fallback, no mixing of two trees); else (first, second) as before."""
+    h = hooks_home()
+    return [os.path.join(h, name)] if h else [first, second]
+
 _SID = ["unknown"]
 
 
@@ -205,8 +218,8 @@ def recall_agent_ours():
 
 
 def recall_path():
-    for p in (os.path.join(os.path.expanduser("~"), ".claude", "hooks", "recall.py"),
-              os.path.join(os.path.dirname(os.path.abspath(__file__)), "recall.py")):
+    for p in hook_candidates("recall.py", os.path.join(os.path.expanduser("~"), ".claude", "hooks", "recall.py"),
+                             os.path.join(os.path.dirname(os.path.abspath(__file__)), "recall.py")):
         if os.path.isfile(p):
             return p
     return None
@@ -218,7 +231,7 @@ RECALL_MCP_SENTENCE = "Or call the search_earlier_chat tool."
 
 
 def _hooks_dir():
-    return os.path.join(os.path.expanduser("~"), ".claude", "hooks")  # HOME from the environment, like recall_agent_ours()
+    return hooks_home() or os.path.join(os.path.expanduser("~"), ".claude", "hooks")  # F72 override, else HOME from the environment
 
 
 def recall_rules_on():
@@ -584,8 +597,8 @@ RECOVERED_FIRST = ("HANDOFF RECOVERED: the pre-compaction hook did not run for t
 
 
 def precompact_script():
-    for q in (os.path.join(os.path.dirname(os.path.abspath(__file__)), "precompact-handoff.py"),
-              os.path.join(os.path.expanduser("~"), ".claude", "hooks", "precompact-handoff.py")):
+    for q in hook_candidates("precompact-handoff.py", os.path.join(os.path.dirname(os.path.abspath(__file__)), "precompact-handoff.py"),
+                             os.path.join(os.path.expanduser("~"), ".claude", "hooks", "precompact-handoff.py")):
         if os.path.isfile(q):
             return q
     return None
@@ -794,7 +807,7 @@ def check_mode():
     """F45.d: one line `HANDOFF CHECK: ...` when the install is wrong, nothing when it is fine."""
     import hashlib
     home = os.path.expanduser("~")
-    hooks_dir = os.path.join(home, ".claude", "hooks")
+    hooks_dir = hooks_home() or os.path.join(home, ".claude", "hooks")
     problems = []
     try:
         with open(os.path.join(home, ".claude", "settings.json"), encoding="utf-8") as f:

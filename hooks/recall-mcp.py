@@ -12,6 +12,19 @@ import contextlib, json, os, sys, time
 HOOK_VERSION = "1.18.0"
 SERVER_NAME = "lossless-recall"
 HOME = os.path.expanduser("~")
+
+
+def hooks_home():
+    """F72: HANDOFF_HOOKS_HOME when it names an existing folder, else None (then ~/.claude/hooks as before)."""
+    v = (os.environ.get("HANDOFF_HOOKS_HOME") or "").strip()
+    return v if v and os.path.isdir(v) else None
+
+
+def hook_candidates(name, first, second):
+    """F72: with the override, only that folder (no fallback, no mixing of two trees); else (first, second) as before."""
+    h = hooks_home()
+    return [os.path.join(h, name)] if h else [first, second]
+
 STATE_DIR = (os.environ.get("HANDOFF_STATE_DIR") or "").strip() or os.path.join(HOME, ".local", "state", "claude-handoffs")
 OUT_MAX = 12000
 CUT_LINE = "[cut at 12000 characters]"
@@ -51,8 +64,8 @@ _mod = [None]
 def load_recall():
     if _mod[0] is not None:
         return _mod[0]
-    for p in (os.path.join(os.path.dirname(os.path.abspath(__file__)), "recall.py"),
-              os.path.join(HOME, ".claude", "hooks", "recall.py")):
+    for p in hook_candidates("recall.py", os.path.join(os.path.dirname(os.path.abspath(__file__)), "recall.py"),
+                             os.path.join(HOME, ".claude", "hooks", "recall.py")):
         if os.path.isfile(p):
             import importlib.util
             spec = importlib.util.spec_from_file_location("lh_recall", p)
@@ -77,7 +90,10 @@ def health(tool, hits, t0):
 
 
 def cap(text):
-    return text if len(text) <= OUT_MAX else text[:OUT_MAX] + "\n" + CUT_LINE
+    """F69: at most OUT_MAX characters in total; a cut result ends with CUT_LINE (the marker counts in the total)."""
+    if len(text) <= OUT_MAX:
+        return text
+    return text[:OUT_MAX - len(CUT_LINE) - 1] + "\n" + CUT_LINE
 
 
 class ToolError(Exception):
