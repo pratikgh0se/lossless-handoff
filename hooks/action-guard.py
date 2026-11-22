@@ -56,10 +56,11 @@ def input_texts(name, inp):
 
 def main():
     t0 = time.monotonic()
+    raw = sys.stdin.read()  # read stdin first: an early exit would break the pipe of the caller
     mode = os.environ.get("HANDOFF_ACTION_GUARD", "").strip().lower()
     if mode == "0":
         return
-    d = json.loads(sys.stdin.read() or "{}")
+    d = json.loads(raw or "{}")
     if not isinstance(d, dict):
         return
     tp, cwd = d.get("transcript_path"), d.get("cwd")
@@ -86,7 +87,7 @@ def main():
     if tk is None or tk < g.threshold("HANDOFF_ACTION_GUARD_TOKENS"):
         return
     deadline = t0 + g.BUDGET_S
-    r = g.read_session(tp, deadline)
+    r = g.read_session(tp, deadline, None, True)
     if r is None:
         return
     msgs, turn = r
@@ -108,8 +109,8 @@ def main():
                                      "mode": "inject" if live else "shadow", "fired": True, "subjects": len(keep),
                                      "anchors": len(anchors), "tokens": tk, "chars": len(text),
                                      "ms": int((time.monotonic() - t0) * 1000), "tool": tool})
+    g.save_shown(sid, keep, idx, tk)  # shadow saves it too, so shadow predicts live
     if live:
-        g.save_shown(sid, keep, idx, tk)
         sys.stdout.write(json.dumps({"hookSpecificOutput": {"hookEventName": "PostToolBatch", "additionalContext": text}}))
         sys.stdout.flush()
 

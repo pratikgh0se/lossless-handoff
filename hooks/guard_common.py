@@ -1,7 +1,7 @@
 """Shared code of history-guard.py (F77) and action-guard.py (F80). Not a hook: both hooks load it by path from the
 folder of the hook file. It holds the subject, evidence, cooldown and state rules, so the two hooks do not drift.
 Stdlib only. Nothing here prints; the hooks print."""
-import json, os, re, time
+import hashlib, json, os, re, time
 
 HOOK_VERSION = "1.20.0"
 HOME = os.path.expanduser("~")
@@ -105,9 +105,10 @@ def strings(o, depth=0):
             yield from strings(v, depth + 1)
 
 
-def read_session(path, deadline, prompt=None):
+def read_session(path, deadline, prompt=None, include_turn=False):
     """-> (messages, turn), or None on a timeout. messages = [(role, text)]: the text messages before the current user
-    prompt (no tool input, no tool result). With `prompt` (a UserPromptSubmit caller): the whole chat, minus the current
+    prompt (no tool input, no tool result); with `include_turn` also the current prompt and the messages of the current
+    turn (Stop and PostToolBatch callers: the turn in progress is part of the chat). With `prompt` (a UserPromptSubmit caller): the whole chat, minus the current
     prompt when the transcript holds it already. turn = dict(uuid, tool: identifiers of tool inputs in this turn, calls:
     key_history / recall.py history calls in this turn, strs: other strings of this turn)."""
     msgs, pending = [], []
@@ -136,7 +137,9 @@ def read_session(path, deadline, prompt=None):
                                                            and b.get("type") == "text" and isinstance(b.get("text"), str))).strip()
                 if tools:
                     for b in tools:
-                        turn["strs"].extend(strings(b.get("content")))
+                        for s in strings(b.get("content")):
+                            turn["strs"].append(s)
+                            turn["tool"].update(t.lower() for t in identifiers(s))  # a tool result excludes an anchor
                     continue
                 if user_text and not user_text.startswith(NOT_USER):
                     msgs.extend(pending)  # the previous turn is complete: its messages count
@@ -163,7 +166,7 @@ def read_session(path, deadline, prompt=None):
                             turn["calls"].append(cmd.lower())
             elif typ not in ("user", "assistant"):
                 turn["strs"].extend(strings(e))  # hook attachments: an injected history block may sit here
-    if prompt is not None and not (pending and pending[0] == ("user", prompt.strip())):
+    if include_turn or (prompt is not None and not (pending and pending[0] == ("user", prompt.strip()))):
         msgs.extend(pending)  # the transcript does not hold the current prompt yet: the last turn is complete
     return msgs, turn  # else the messages of the turn in progress are not counted
 
@@ -209,12 +212,17 @@ def pick_subjects(anchors, cwd, idx, sent, turn, st, tk, skip_tool_ids):
     for k in subs:
         if any(k in c for c in turn["calls"]) or any(("history of %s:" % k) in s.lower() for s in turn["strs"]):
             continue  # evidence in this turn
-        old = shown.get(k)
+        old = shown.get(key_hash(k))
         if isinstance(old, dict) and old.get("n") == len(idx[k]) and tk - int(old.get("tokens") or 0) < COOLDOWN_TOKENS:
             continue  # cooldown: shown, no new mention, the context did not grow by 50,000
         keep.append(k)
     keep = keep[:MAX_SUBJECTS]
     return keep, {k: written[k] for k in keep}
+
+
+def key_hash(k):
+    """The state file holds a hash of a key, not its text."""
+    return hashlib.sha256(k.encode("utf-8")).hexdigest()[:16]
 
 
 def state_path(sid):
@@ -235,7 +243,7 @@ def save_shown(sid, keep, idx, tk, turn_uuid=None):
     st = read_state(sid)  # read again: the other guard may have written since
     shown = st.get("shown") if isinstance(st.get("shown"), dict) else {}
     for k in keep:
-        shown[k] = {"n": len(idx[k]), "tokens": tk}
+        shown[key_hash(k)] = {"n": len(idx[k]), "tokens": tk}
     st["shown"] = shown
     if turn_uuid is not None:
         st["turn"] = turn_uuid
@@ -272,14 +280,44 @@ def load_recall(hook_file):
     return None
 
 
+def narrow_scope(mod, root, transcript_path):
+    """Speed only: Claude Code names a project folder after the working directory (non-letters and digits become -).
+    List just the folders whose name starts with the name of the project root, so the scope code of recall.py does not
+    glob thousands of transcripts of other projects. The scope code still decides by the cwd inside each transcript.
+    If no folder matches, nothing is narrowed."""
+    import glob as _glob
+    from types import SimpleNamespace
+    try:
+        enc = re.sub(r"[^A-Za-z0-9]", "-", os.path.realpath(root))
+        dirs = {d for d in os.listdir(mod.PROJECTS_DIR) if d.startswith(enc)}
+        if isinstance(transcript_path, str) and transcript_path:
+            dirs.add(os.path.basename(os.path.dirname(os.path.realpath(transcript_path))))
+        dirs = {d for d in dirs if os.path.isdir(os.path.join(mod.PROJECTS_DIR, d))}
+        if not dirs:
+            return
+        star = os.path.join(mod.PROJECTS_DIR, "*") + os.sep
+
+        def narrow(pattern, *a, **k):
+            if not pattern.startswith(star):
+                return _glob.glob(pattern, *a, **k)
+            out = []
+            for d in sorted(dirs):
+                out += _glob.glob(os.path.join(_glob.escape(mod.PROJECTS_DIR), _glob.escape(d), pattern[len(star):]), *a, **k)
+            return out
+        mod.glob = SimpleNamespace(glob=narrow)
+    except Exception:
+        pass
+
+
 def history_text(header, names, cwd, tp, hook_file):
     """-> header line and the F73 block of each subject (1,500 characters each, 6,000 in total), or ''."""
     mod = load_recall(hook_file)
     if mod is None:
         return ""
     root = mod.project_root(cwd)
+    narrow_scope(mod, root, tp)
     ts = mod.in_scope_transcripts(root, True)
-    cutoff = mod.current_cutoff(ts, tp)  # the current prompt and everything after it are left out
+    cutoff = {}  # the current turn is part of the history: nothing is cut
     blocks, total = [], len(header) + 1
     for name in names:
         lines, n = mod.history_for(ts, name, "any", cutoff, PER_SUBJECT_CAP)

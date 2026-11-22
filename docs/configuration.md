@@ -44,7 +44,7 @@ Every setting and every file that the hooks write. This page is part of the [doc
 | `recall-mcp.jsonl` | Only with `--recall-mcp`. One JSON line for each tool call: `ts`, `tool`, `hits`, `ms`. It holds no query text and no quotes. |
 | `claim-guard.jsonl` | Only with `--claim-guard`. One JSON line for each reply that has a claim cue and no recall search: `ts`, `session_id`, `would_block`, `cue`. It holds no reply text and no prompt text. |
 | `history-guard.jsonl`, `action-guard.jsonl` | Only with `--history-guard` or `--action-guard`. One JSON line for each fire: `ts`, `session_id`, `mode`, `fired`, `subjects`, `anchors`, `tokens`, `chars`, `ms` (and `tool` for the action guard). They hold no reply text, no input text and no key names. |
-| `history-guard-<sid>.json` | Only with a guard in live mode. The turn marker and the shared cooldown table of both guards (key names are lower case, with counts). Mode 0600. |
+| `history-guard-<sid>.json` | Only with a guard in live mode. The turn marker and the shared cooldown table of both guards (a hash of each key, with counts, no key text). Written in shadow mode too. Mode 0600. |
 | `reanchor-<sid>.json` | Only with `--reanchor`. The token count of the last re-anchor of the session (a number only). `claim-guard-<sid>.json` holds the id of the last user turn that the guard blocked (live mode only). |
 | `health.jsonl` | One JSON line for each compaction: time, trigger, agent file fresh/stale/absent, fallback result, decisions update result (`ok`, `unchanged`, `failed`, `locked`, `disabled`) and counts, duration, size, status `ok` / `reduced` / `degraded`. No message text or paths. It rotates at 5,000 lines. |
 | `<sid>-last-health.json`, `<sid>-degraded.json` | Per-session status and degraded reasons. |

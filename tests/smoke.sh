@@ -2807,6 +2807,60 @@ PY
   r=0; o="$(HANDOFF_STATE_DIR=/dev/null/x HANDOFF_ACTION_GUARD=inject ag c3 main "$EDIT")" || r=$?; [ "$r" = 0 ] && [ -z "$o" ] || fail "F80: unwritable state dir"
   ok "F80: shadow row, inject form, Bash, old_string, path, small context, evidence, switch, shared cooldown with F77, errors"
 
+  # review fixes: the current turn counts (long autonomous turn), shadow saves the cooldown, a tool result excludes an anchor,
+  # stdin is read before the mode check, the state file holds no key text
+  python3 - "$HOME" "$W" "$D" <<'PY'
+import json, os, re, sys
+home, w, d = sys.argv[1:4]
+real = os.path.realpath(w)
+pd = os.path.join(home, ".claude", "projects", re.sub(r"[^A-Za-z0-9]", "-", real))
+def user(ts, text, u): return {"type": "user", "timestamp": ts, "cwd": real, "sessionId": "ssss0002", "uuid": u, "message": {"role": "user", "content": text}}
+def asst(ts, blocks, u):
+    return {"type": "assistant", "timestamp": ts, "cwd": real, "sessionId": "ssss0002", "uuid": u,
+            "message": {"role": "assistant", "content": blocks, "usage": {"input_tokens": 10, "cache_read_input_tokens": 149990, "cache_creation_input_tokens": 0, "output_tokens": 5}}}
+def text(t): return [{"type": "text", "text": t}]
+def w2(name, rows):
+    open(os.path.join(pd, name + ".jsonl"), "w").write("".join(json.dumps(r) + "\n" for r in rows))
+    os.symlink(os.path.join(pd, name + ".jsonl"), os.path.join(d, name + ".jsonl"))
+# a user states retry-count one time, then a long turn: the prompt names it, the model changes it inside the turn
+w2("turn", [user("2026-11-22T10:00:00Z", "Use retry-count 3 for the worker.", "t1"), asst("2026-11-22T10:01:00Z", text("Done."), "t2"),
+            user("2026-11-22T10:02:00Z", "Work alone now. Keep retry-count as it is.", "tcur"),
+            asst("2026-11-22T10:03:00Z", text("I will change retry-count to 5 for the test run."), "t3"),
+            asst("2026-11-22T10:04:00Z", [{"type": "tool_use", "id": "x1", "name": "Edit", "input": {"file_path": "/x/w.conf", "old_string": "a", "new_string": "retry-count=5"}}], "t4")])
+w2("turn2", [user("2026-11-22T10:00:00Z", "Use retry-count 3 for the worker.", "t1"), asst("2026-11-22T10:01:00Z", text("Done."), "t2"),
+             user("2026-11-22T10:02:00Z", "Work alone now. Keep retry-count as it is.", "tcur"),
+             asst("2026-11-22T10:03:00Z", text("I will change retry-count to 5 for the test run."), "t3"),
+             asst("2026-11-22T10:04:00Z", text("Test run done."), "t4")])
+w2("toolres", [user("2026-11-22T10:00:00Z", "Set queue-limit to 50.", "t1"), asst("2026-11-22T10:01:00Z", text("Done."), "t2"),
+               user("2026-11-22T10:02:00Z", "Now queue-limit is 75, ok?", "t3"), asst("2026-11-22T10:03:00Z", text("Yes."), "t4"),
+               user("2026-11-22T10:04:00Z", "Check the file.", "tcur"),
+               asst("2026-11-22T10:05:00Z", [{"type": "tool_use", "id": "x1", "name": "Read", "input": {"file_path": "/x/w.conf"}}], "t5"),
+               {"type": "user", "timestamp": "2026-11-22T10:05:01Z", "uuid": "r1", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "x1", "content": "queue-limit=75"}]}},
+               asst("2026-11-22T10:06:00Z", text("The file is fine."), "t6")])
+PY
+  RET='[{"tool_name":"Edit","tool_input":{"file_path":"/x/w.conf","old_string":"a","new_string":"retry-count=3"}}]'
+  o="$(HANDOFF_ACTION_GUARD=inject ag d1 turn "$RET")"; grep -q "history of retry-count:" <<<"$o" || fail "F80: a key changed in the current turn did not fire: $o"
+  grep -q "retry-count to 5" <<<"$o" || fail "F80: the history block lacks the current turn: $o"
+  o="$(HANDOFF_HISTORY_GUARD=block hg d2 turn2 "retry-count is now 5.")"; grep -q "history of retry-count:" <<<"$o" || fail "F77: current turn not counted: $o"
+  # shadow saves the cooldown: the second shadow run for the same change logs no row
+  n0="$(( $(wc -l < "$ALOG") ))"; ag d3 turn "$RET" >/dev/null; ag d3 turn "$RET" >/dev/null
+  [ "$(( $(wc -l < "$ALOG") ))" = "$((n0 + 1))" ] || fail "F80: shadow did not save the cooldown"
+  n0="$(( $(wc -l < "$LOG") ))"; hg d4 turn2 "retry-count is 5." >/dev/null; hg d4 turn2 "retry-count is 5." >/dev/null
+  [ "$(( $(wc -l < "$LOG") ))" = "$((n0 + 1))" ] || fail "F77: shadow did not save the cooldown"
+  # the state file holds a hash, not the key text
+  ! grep -q "retry-count" "$HANDOFF_STATE_DIR/history-guard-d3.json" && [ "$(mode_of "$HANDOFF_STATE_DIR/history-guard-d3.json")" = 600 ] || fail "F77: key text in the state file"
+  # a tool result of the turn excludes the anchor
+  n0="$(( $(wc -l < "$LOG") ))"; hg d5 toolres "The queue-limit is 75." >/dev/null
+  [ "$(( $(wc -l < "$LOG") ))" = "$n0" ] || fail "F77: a tool result did not exclude the anchor"
+  # stdin is read before the mode check: a large input, switch 0, no broken pipe (pipefail is on)
+  python3 -c 'import json; print(json.dumps({"session_id":"p","transcript_path":"/x","last_assistant_message":"x"*400000,"tool_calls":[]}))' > "$D/big.json"
+  for i in 1 2 3 4 5 6 7 8; do
+    HANDOFF_HISTORY_GUARD=0 python3 -c 'import sys; sys.stdout.write(open(sys.argv[1]).read())' "$D/big.json" | HANDOFF_HISTORY_GUARD=0 python3 "$HG"
+    python3 -c 'import sys; sys.stdout.write(open(sys.argv[1]).read())' "$D/big.json" | HANDOFF_ACTION_GUARD=0 python3 "$AG"
+    python3 -c 'import sys; sys.stdout.write(open(sys.argv[1]).read())' "$D/big.json" | HANDOFF_CLAIM_GUARD=0 python3 "$ROOT/hooks/claim-guard.py"
+  done
+  ok "review fixes: current turn counts, shadow cooldown, tool result excludes anchor, hashed state key, stdin read first"
+
   # F78: size trigger in auto-recall
   mkdir -p "$HOME/.claude/hooks"
   ar() { python3 -c 'import json,sys; print(json.dumps({"session_id":"z1","transcript_path":sys.argv[1],"cwd":sys.argv[3],"prompt":sys.argv[2]}))' "$D/${3:-main}.jsonl" "$1" "${2:-$W}" | python3 "$AR"; }

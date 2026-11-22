@@ -18,6 +18,7 @@ History guard, action guard and size trigger (hooks 1.20.0). New F77, F78 and F8
 - F77: new Stop hook `history-guard.py`. When the context is 100,000 tokens or more and the reply uses a key that changed in this chat, it gives the model the full history of that key (the F73 blocks) as Stop `additionalContext`, once per user turn.
 - F80: new PostToolBatch hook `action-guard.py`. It scans the new text of Edit, Write, MultiEdit and NotebookEdit and the Bash command, and injects the same history before the next model call. It never blocks a call.
 - F78: with the marker `.recall-size-trigger`, auto-recall also fires with no cue phrase when the context is 100,000 tokens or more and the prompt names a key that changed in this chat.
+- The guards count the turn in progress (so a key changed in a long turn is a subject) and the history block includes it. Shadow mode saves the cooldown. The state file holds key hashes. The lookup scope is narrowed to the project folders.
 - New shared file `guard_common.py` (subject, evidence, cooldown and state rules) so F77, F78 and F80 do not drift. F77 and F80 share one cooldown table.
 
 ## [0.17.0] - 2026-11-22

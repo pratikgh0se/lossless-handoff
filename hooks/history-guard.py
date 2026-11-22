@@ -36,10 +36,11 @@ def common():
 
 def main():
     t0 = time.monotonic()
+    raw = sys.stdin.read()  # read stdin first: an early exit would break the pipe of the caller
     mode = os.environ.get("HANDOFF_HISTORY_GUARD", "").strip().lower()
     if mode == "0":
         return
-    d = json.loads(sys.stdin.read() or "{}")
+    d = json.loads(raw or "{}")
     if not isinstance(d, dict) or d.get("stop_hook_active") is True:
         return
     reply, tp, cwd = d.get("last_assistant_message"), d.get("transcript_path"), d.get("cwd")
@@ -56,7 +57,7 @@ def main():
     if not anchors:
         return
     deadline = t0 + g.BUDGET_S
-    r = g.read_session(tp, deadline)
+    r = g.read_session(tp, deadline, None, True)
     if r is None:
         return
     msgs, turn = r
@@ -79,8 +80,8 @@ def main():
                                       "mode": "block" if live else "shadow", "fired": True, "subjects": len(keep),
                                       "anchors": len(anchors), "tokens": tk, "chars": len(text),
                                       "ms": int((time.monotonic() - t0) * 1000)})
+    g.save_shown(sid, keep, idx, tk, turn["uuid"])  # shadow saves it too, so shadow predicts live
     if live:
-        g.save_shown(sid, keep, idx, tk, turn["uuid"])
         sys.stdout.write(json.dumps({"hookSpecificOutput": {"hookEventName": "Stop", "additionalContext": text}}))
         sys.stdout.flush()
 
