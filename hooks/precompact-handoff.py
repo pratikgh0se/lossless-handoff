@@ -3,6 +3,7 @@
 It runs the local `claude -p` command for the summary and the decisions merge. Set HANDOFF_SUMMARY=0 and HANDOFF_LEDGER=0
 to stop that. It may also start the recall indexer. The same file holds --reconcile, --prove and --claims. Always exits 0."""
 import json, os, sys, time, subprocess, shutil, glob, datetime, tempfile, re, hashlib, threading
+os.umask(0o077)  # every file this hook (and the indexer it starts) creates is private: mode 0600, folders 0700
 try:
     import fcntl
 except Exception:  # pragma: no cover (non-POSIX): ledger updates are skipped

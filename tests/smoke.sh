@@ -269,6 +269,14 @@ tail -n 1 "$ST/health.jsonl" | grep -q '"ledger_error": *""' || fail "health lac
 ls "$(dirname "$LF")"/decisions.[0-9]*T*Z.md >/dev/null 2>&1 || fail "no backup of the previous ledger"
 ok "delta merge applies valid changes, ignores invalid ones, deletes nothing"
 
+# State files are private: mode 0600 (handoff, health log, decisions list, state file, backup)
+mode_of() { python3 -c "import os,sys; print(oct(os.stat(sys.argv[1]).st_mode & 0o777)[2:])" "$1"; }
+for f in "$ST/smoke1-latest.md" "$ST/health.jsonl" "$LF" "$(dirname "$LF")/decisions.state.json" \
+  "$(ls "$(dirname "$LF")"/decisions.[0-9]*T*Z.md | head -1)"; do
+  [ "$(mode_of "$f")" = "600" ] || fail "state file not mode 600: $f ($(mode_of "$f"))"
+done
+ok "handoff, health log, decisions list, state file and backup have mode 600"
+
 # F39.3: one merge cursor for each session (parallel chats in one project)
 PX="$T/curproj"; mkdir -p "$PX"
 cat > "$T/mk_tr.py" <<'PY'

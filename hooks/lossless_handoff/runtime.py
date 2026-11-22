@@ -4,7 +4,8 @@
 
 def write_atomic(path, text):
     tmp = f"{path}.tmp{os.getpid()}"
-    with open(tmp, "w", encoding="utf-8") as f:
+    # Mode 0600: the files hold redacted chat content. The temp file is private, so os.replace also fixes an old file.
+    with os.fdopen(os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w", encoding="utf-8") as f:
         f.write(text)
     os.replace(tmp, path)
 

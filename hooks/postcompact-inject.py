@@ -3,6 +3,7 @@
 except a DEGRADED handoff, which is flagged to the model (first line) and recorded in
 <sid>-degraded.json for the compact plugin."""
 import datetime, json, os, re, sys, time
+os.umask(0o077)  # every file this hook creates is private: mode 0600, folders 0700
 
 HANDOFFS_DIR = (os.environ.get("HANDOFF_STATE_DIR") or "").strip() or os.path.join(
     os.path.expanduser("~"), ".local", "state", "claude-handoffs")
