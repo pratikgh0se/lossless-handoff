@@ -473,6 +473,8 @@ def build(run_id, draws=None):
     head = ["# Continuity benchmark: run %s\n" % run_id,
             "**Controls: %s. Cost: $%.4f. Status: %s.** %s\n" % (controls, state["spent"], state["status"], label),
             "Command: `%s`. Seeds: %s. Types: %s. Arms: %s.\n" % (cfg["command"], ",".join(map(str, cfg["seeds"])), ",".join(cfg["types"]), ",".join(cfg["arms"]))]
+    if cfg.get("probe_design", 1) >= 2:
+        head.append("Probe design: %d. The cued head of design 2 has an added cue sentence, so its cued tables are not comparable with Wave 1 and Wave 2 (probe design 1).\n" % cfg["probe_design"])
     if ag.dropped:
         head.append("Items dropped for a wrong compaction count: %d.\n" % ag.dropped)
     out["controls"] = controls

@@ -152,9 +152,10 @@ class ArmR(unittest.TestCase):
     def test_fire_log_reading(self):
         rows = [{"session_id": "f1", "fired": True, "hits": 2}, {"session_id": "f1", "fired": True, "hits": 3},
                 {"session_id": "other", "fired": True, "hits": 9}, "junk"]
-        self.assertEqual(runner.recall_log_fired(rows, "f1"), (True, 3))
-        self.assertEqual(runner.recall_log_fired(rows, "none"), (False, 0))
-        self.assertEqual(runner.recall_log_fired([], "f1"), (False, 0))
+        self.assertEqual(runner.recall_log_fired(rows, "f1"), (True, 3, False))
+        self.assertEqual(runner.recall_log_fired(rows, "none"), (False, 0, False))
+        self.assertEqual(runner.recall_log_fired([], "f1"), (False, 0, False))
+        self.assertEqual(runner.recall_log_fired([{"session_id": "t", "fired": True, "hits": 0, "timed_out": True}], "t"), (True, 0, True))
 
     def test_arm_r_needs_the_hook_file(self):
         class A:
@@ -277,11 +278,11 @@ class ReportSection(unittest.TestCase):
         pos = out["tables"]["position"]
         self.assertGreater(pos["A/nocompact/cued/middle"][1], 0)           # counts are in the report
         self.assertGreater(pos["A/nocompact/cued/start"][1], pos["A/nocompact/cued/middle"][1])   # 2 start items for 1 middle item
-        self.assertIn("No-compaction sessions with a compaction (must be 0): **0 of 1**", text)
+        self.assertIn("must be 0): **0 of 1**", text)
         res = {h["name"][:2]: h["result"] for h in out["hypotheses"]}
         self.assertEqual(res["H2"], "SUPPORTED")          # A: 20% with compaction, 80% without
         self.assertEqual(res["H5"], "SUPPORTED")
-        self.assertIn(res["H4"].split(" ")[0], ("CONFIRMED", "INCONCLUSIVE", "REFUTED"))
+        self.assertTrue(res["H4"].startswith(("no gain of 5 points", "INCONCLUSIVE", "REFUTED", "INVALID")), res["H4"])
 
     def test_invalid_no_compaction_session_is_flagged(self):
         md, out = litm.section(synth_rows(), [{"name": "s1-A-nc", "arm": "A", "condition": "nocompact", "boundaries": 1, "missed": [{"target": 0, "actual": 1}]}], self.th, 100)
@@ -313,6 +314,169 @@ class ReportSection(unittest.TestCase):
             self.assertEqual(old_part.rstrip("\n"), legacy.rstrip("\n"))      # every old table is byte for byte the same
         finally:
             shutil.rmtree(d)
+
+
+def tmp_transcript(lines):
+    fd, path = tempfile.mkstemp(suffix=".jsonl")
+    with os.fdopen(fd, "w") as f:
+        for ln in lines:
+            f.write(json.dumps(ln) + "\n")
+    return path
+
+
+class RoundTwoFixes(unittest.TestCase):
+    """Fixes of the review of PR 29."""
+
+    def setUp(self):
+        self.th = json.load(open(os.path.join(HERE, "thresholds.json")))
+
+    # -- 1. H1 ceiling
+    def test_h1_too_easy_above_ceiling(self):
+        self.assertEqual(self.th["litm"]["h1_ceiling_max_accuracy"], 0.95)
+        rows = [r for r in synth_rows() if not (r["arm"] == "A" and r["condition"] == "nocompact" and r["phrasing"] == "cued")]
+        for r in synth_rows():
+            if r["arm"] == "A" and r["condition"] == "nocompact" and r["phrasing"] == "cued":
+                r = dict(r, correct=True)       # everything right: no room for a middle effect
+                rows.append(r)
+        _, out = litm.section(rows, [], self.th, 100)
+        h1 = [h for h in out["hypotheses"] if h["name"].startswith("H1")][0]
+        self.assertTrue(h1["result"].startswith("TOO EASY: no claim"), h1)
+
+    def test_h1_uses_the_mean_of_start_and_end_rates(self):
+        class B:
+            draws = [[0, 1]] * 3
+            def _ci(self, v):
+                return min(v), max(v)
+        # seed 0 has 1 start item, seed 1 has 3 start items; the rates are pooled over seeds first, then averaged
+        d = litm.mean_ends_diff(B(), ([1, 0], [1, 1]), ([1, 0], [1, 3]), ([1, 1], [1, 1]))
+        self.assertAlmostEqual(d[0], 0.5 - (0.25 + 1.0) / 2)
+
+    # -- 2. no-compaction validity
+    def test_validity_rules(self):
+        ok, why = runner.nc_validity(0, 0, 100000, 100000)
+        self.assertTrue(ok and not why)
+        self.assertFalse(runner.nc_validity(1, 0, 100000, 100000)[0])                  # compaction
+        self.assertFalse(runner.nc_validity(0, 2, 100000, 100000)[0])                  # cleared marker
+        ok, why = runner.nc_validity(0, 0, 60000, 100000)                              # context too small (below 75%)
+        self.assertFalse(ok)
+        self.assertIn("last-turn context", why[0])
+        self.assertTrue(runner.nc_validity(0, 0, 75000, 100000)[0])                    # at the tolerance: valid
+        self.assertFalse(runner.nc_validity(0, 0, None, 100000)[0])                    # no token data: cannot verify
+
+    def test_cleared_marker_in_a_fixture_transcript(self):
+        clean = tmp_transcript([{"type": "user", "message": {"content": "hello"}}, {"type": "user", "message": {"content": [{"type": "tool_result", "content": "a file"}]}}])
+        dirty = tmp_transcript([{"type": "user", "message": {"content": [{"type": "tool_result", "content": "[Old tool result content cleared]"}]}}])
+        try:
+            self.assertEqual(runner.count_cleared(clean), 0)
+            self.assertEqual(runner.count_cleared(dirty), 1)
+            self.assertEqual(runner.count_cleared("/no/such/file"), 0)
+        finally:
+            os.remove(clean)
+            os.remove(dirty)
+
+    def test_last_turn_context_from_calls(self):
+        calls = [{"name": "s1-A-nc", "kind": "turn", "in": 5, "cache_read": 1000}, {"name": "s1-A-nc", "kind": "fork", "in": 9, "cache_read": 9},
+                 {"name": "s1-A-nc", "kind": "turn", "in": 7, "cache_read": 90000}, {"name": "other", "kind": "turn", "in": 1, "cache_read": 1}]
+        self.assertEqual(runner.last_turn_context(calls, "s1-A-nc"), 90007)
+        self.assertIsNone(runner.last_turn_context(calls, "none"))
+        self.assertIsNone(runner.last_turn_context([{"name": "x", "kind": "turn"}], "x"))
+
+    def test_report_counts_invalid_no_compaction_sessions(self):
+        sess = [{"name": "s1-A-nc", "arm": "A", "condition": "nocompact", "boundaries": 0, "missed": [], "nc_valid": False,
+                 "nc_reasons": ["1 cleared-result marker line(s)"], "status": "invalid"},
+                {"name": "s2-A-nc", "arm": "A", "condition": "nocompact", "boundaries": 0, "missed": [], "nc_valid": True, "status": "done"}]
+        md, out = litm.section(synth_rows(), sess, self.th, 100)
+        self.assertEqual(out["nc_invalid"], ["s1-A-nc"])
+        self.assertIn("**1 of 2**", "\n".join(md))
+
+    # -- 3. fire detection reads only the arm's own state folder
+    def test_fire_log_path_is_the_arm_state_folder(self):
+        ctx = FakeCtx()
+        r = runner.Session(ctx, "s1-R", 1000, "R", {}, "compact")
+        os.makedirs(r.statedir, exist_ok=True)
+        log = os.path.join(r.statedir, runner.AUTO_RECALL_LOG)
+        with open(log, "w") as f:
+            f.write(json.dumps({"session_id": "fork1", "fired": True, "hits": 2, "timed_out": False}) + "\n")
+        try:
+            self.assertEqual(r.auto_recall_fired("fork1"), (True, 2, False))
+            self.assertEqual(r.auto_recall_fired("fork2"), (False, 0, False))
+            a = runner.Session(ctx, "s1-A", 1000, "A", {}, "compact")
+            self.assertEqual(a.auto_recall_fired("fork1"), (None, None, None))
+        finally:
+            shutil.rmtree(r.statedir, ignore_errors=True)
+        src = open(os.path.join(HERE, "runner.py"), encoding="utf-8").read()
+        body = src[src.index("def auto_recall_fired"):src.index("def probe(")]
+        self.assertNotIn("HOME", body)              # the code never builds the real state folder path
+
+    def test_missing_log_line_stops_a_cued_probe(self):
+        src = open(os.path.join(HERE, "runner.py"), encoding="utf-8").read()
+        self.assertIn('phrasing == "cued" and cfg.get("probe_design", 1) >= 2 and fsid and not fired', src)
+        self.assertIn("raise Fatal(\"arm R: a cued probe left no line", src)
+
+    # -- 4. L0 columns
+    def test_l0_has_hits_and_timeout_rates_and_the_cap(self):
+        rows = synth_rows()
+        for r in rows:
+            if r["arm"] == "R" and r["auto_recall_fired"]:
+                r["auto_recall_hits"], r["auto_recall_timed_out"] = 2, False
+        md, out = litm.section(rows, [], self.th, 100)
+        text = "\n".join(md)
+        self.assertIn("Fired with hits > 0", text)
+        self.assertIn("Timed out", text)
+        self.assertIn("at most 3 hits", text)
+        self.assertEqual(out["tables"]["fire"]["compact/cued"][2], out["tables"]["fire"]["compact/cued"][1])
+
+    # -- 6. H4 invalid when the hook fires on neutral probes
+    def test_h4_invalid_if_neutral_fire_rate_above_limit(self):
+        rows = synth_rows()
+        for r in rows:
+            if r["arm"] == "R" and r["phrasing"] == "neutral":
+                r["auto_recall_fired"] = True
+        _, out = litm.section(rows, [], self.th, 100)
+        res = {h["name"][:2]: h["result"] for h in out["hypotheses"]}
+        self.assertTrue(res["H4"].startswith("INVALID"), res["H4"])
+        self.assertEqual(res["H5"], "NOT SUPPORTED")
+        text = "\n".join(litm.section(synth_rows(), [], self.th, 100)[0])
+        self.assertNotIn("CONFIRMED", text)
+
+    # -- 7. largest N
+    def test_largest_n_means_equal_to_the_maximum(self):
+        self.assertTrue(litm.full_n({"n_target": 10}, [1, 3, 10]))
+        self.assertFalse(litm.full_n({"n_target": 3}, [1, 3, 10]))
+        self.assertFalse(litm.full_n({"n_target": 10}, [1, 3, 10, 30]))
+        self.assertTrue(litm.full_n({"n_target": 30}, [1, 3, 10, 30]))
+        self.assertFalse(litm.full_n({"n_target": 10}, []))
+
+    # -- 8, 9, 10, 11 labels and presets
+    def test_head_labels_and_preset(self):
+        d = tempfile.mkdtemp()
+        try:
+            dst = os.path.join(d, "run1")
+            shutil.copytree(os.path.join(FIX, "legacy-run"), dst)
+            cfg = json.load(open(os.path.join(dst, "config.json")))
+            cfg["probe_design"] = 2
+            json.dump(cfg, open(os.path.join(dst, "config.json"), "w"))
+            old = report.RESULTS
+            report.RESULTS = d
+            try:
+                _, text = report.build("run1", 100)
+            finally:
+                report.RESULTS = old
+            self.assertIn("Probe design: 2.", text)
+            self.assertIn("not comparable with Wave 1 and Wave 2", text)
+        finally:
+            shutil.rmtree(d)
+        md = "\n".join(litm.section(synth_rows(), [], self.th, 100)[0])
+        self.assertIn("not a pure cue contrast", md)
+        self.assertIn("compactions survived", md)
+        self.assertIn("middle minus mean(start, end)", md)
+        self.assertIn("plumbing check", md)
+        self.assertIn("expected, not blind; mixes compaction with session length", md)
+        k = runner.KINDS["litm-smoke"]
+        self.assertEqual((k["seeds"], k["arms"], k["conditions"]), (1, "A,R", "nocompact"))
+        total, _, _ = cost.estimate(1, ["A", "R"], [1, 3, 10], ["nocompact"], ["cued", "neutral"])
+        self.assertTrue(10 < total < 14, total)
+        self.assertIn("litm-smoke", open(os.path.join(HERE, "run.sh")).read())
 
 
 class CostEstimate(unittest.TestCase):

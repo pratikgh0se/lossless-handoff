@@ -43,6 +43,17 @@
     "h5_fire_rate_cued_min": 0.9,
     "h5_fire_rate_neutral_max": 0.05,
     "nc_compactions_allowed": 0,
-    "note": "Pre-registered before any data. A hypothesis that fails stays in the report. Do not change after a run."
+    "note": "Pre-registered before any data. A hypothesis that fails stays in the report. Do not change after a run.",
+    "h1_ceiling_max_accuracy": 0.95,
+    "h1_note": "H1 prints 'TOO EASY: no claim' if the mean of the start and end accuracy of arm A (no compaction, cued) is above h1_ceiling_max_accuracy. H1 uses the mean of the start rate and the end rate, not pooled items.",
+    "h2_label": "expected, not blind; mixes compaction with session length",
+    "h5_label": "plumbing check",
+    "h4_invalid_if_neutral_fire_rate_above": 0.05,
+    "nc_validity": {
+      "last_turn_context_min_share_of_estimate": 0.75,
+      "cleared_markers_allowed": 0,
+      "compactions_allowed": 0,
+      "note": "A no-compaction session is valid only if the last-turn context (input + cache read tokens) is at least this share of nc_estimate_tokens, the transcript has no cleared-tool-result marker, and it has no compaction."
+    }
   }
 }

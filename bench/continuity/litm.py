@@ -43,8 +43,8 @@ class Cells:
 
 
 def full_n(r, ns):
-    """Compaction rows that have all four plant epochs in the probe: the largest N (and N >= 5)."""
-    return r["n_target"] >= 5 if ns else False
+    """Compaction rows at the largest N of the run (it asks all four plant epochs when N >= 5)."""
+    return bool(ns) and r["n_target"] == max(ns)
 
 
 def section(rows, sessions, th, draws, helpers=None):
@@ -71,26 +71,30 @@ def section(rows, sessions, th, draws, helpers=None):
 
     md.append("## Lost in the middle, phrasing and auto-recall (probe design 2)\n")
     md.append("Types: %s (M has no single plant turn, so no position). Position = third of the nominal session timeline of the plant turn "
-              "(start, middle, end). Compaction rows: probes at the largest N (all four plant epochs asked, N >= 5). "
+              "(start, middle, end). Compaction rows (condition `compact`): probes at the largest N only, and the position is nominal, so read it as 'compactions survived', not as a distance in tokens. "
               "No-compaction rows: the one probe after the full session. Cell = rate [95%% bootstrap interval over seeds] (correct/total).\n" % ",".join(SCORED))
 
     # ---- hook fire rate
     md.append("### Table L0: did the auto-recall hook fire? (arm R, from auto-recall.jsonl of the arm)\n")
-    md.append("| Condition | Phrasing | Probe forks | Fired | Rate |")
-    md.append("|---|---|---|---|---|")
+    md.append("The hook shows at most 3 hits (TOP_HITS) per prompt. A probe asks up to 4 facts, so one fire cannot cover every fact. "
+              "\"Fired with hits\" counts forks whose log line has hits above 0.\n")
+    md.append("| Condition | Phrasing | Probe forks | Fired | Rate | Fired with hits > 0 | Timed out |")
+    md.append("|---|---|---|---|---|---|---|")
     fire = {}
     for cond in ("compact", "nocompact"):
         for phr in ("cued", "neutral"):
             forks = {}
             for r in rows:
                 if r["arm"] == "R" and cond_of(r) == cond and phr_of(r) == phr and r.get("auto_recall_fired") is not None:
-                    forks[(r["seed"], r["n_target"], r["type"], r["fork_sid"])] = bool(r["auto_recall_fired"])
+                    forks[(r["seed"], r["n_target"], r["type"], r["fork_sid"])] = (
+                        bool(r["auto_recall_fired"]), (r.get("auto_recall_hits") or 0) > 0, bool(r.get("auto_recall_timed_out")))
             if forks:
-                f = sum(forks.values())
-                fire["%s/%s" % (cond, phr)] = [f, len(forks)]
-                md.append("| %s | %s | %d | %d | %s |" % (cond, phr, len(forks), f, pct(f / len(forks))))
+                f, h, to = (sum(v[i] for v in forks.values()) for i in range(3))
+                n_ = len(forks)
+                fire["%s/%s" % (cond, phr)] = [f, n_, h, to]
+                md.append("| %s | %s | %d | %d | %s | %d (%s) | %d (%s) |" % (cond, phr, n_, f, pct(f / n_), h, pct(h / n_), to, pct(to / n_)))
     if not fire:
-        md.append("| no data | | | | |")
+        md.append("| no data | | | | | | |")
     else:
         tc = [sum(v[0] for k, v in fire.items() if k.endswith("/" + p)) for p in ("cued", "neutral")]
         tt = [sum(v[1] for k, v in fire.items() if k.endswith("/" + p)) for p in ("cued", "neutral")]
@@ -102,7 +106,7 @@ def section(rows, sessions, th, draws, helpers=None):
 
     # ---- position table
     md.append("### Table L1: accuracy by position (arm, condition, phrasing)\n")
-    md.append("| Arm | Condition | Phrasing | start | middle | end | middle minus start+end |")
+    md.append("| Arm | Condition | Phrasing | start | middle | end | middle minus mean(start, end) |")
     md.append("|---|---|---|---|---|---|---|")
     t1 = {}
     for a in arms:
@@ -119,11 +123,9 @@ def section(rows, sessions, th, draws, helpers=None):
                     row.append(txt)
                     vecs[p] = (cs, ts)
                     t1["%s/%s/%s/%s" % (a, cond, phr, p)] = [sum(cs), sum(ts)]
-                oc = [x + y for x, y in zip(vecs["start"][0], vecs["end"][0])]
-                ot = [x + y for x, y in zip(vecs["start"][1], vecs["end"][1])]
-                d = boot.diff(vecs["middle"][0], vecs["middle"][1], oc, ot)
+                d = mean_ends_diff(boot, vecs["middle"], vecs["start"], vecs["end"])
                 t1["%s/%s/%s/mid_minus_ends" % (a, cond, phr)] = [d[0], d[1], d[2], d[3]]
-                md.append("| %s | %s | %s | %s | %s |" % (NAMES[a], cond, phr, " | ".join(row), fmt_diff(d)))
+                md.append("| %s | %s | %s | %s | %s |" % (NAMES[a], "compact (compactions survived)" if cond == "compact" else cond, phr, " | ".join(row), fmt_diff(d)))
     out["tables"]["position"] = t1
     md.append("")
 
@@ -144,7 +146,8 @@ def section(rows, sessions, th, draws, helpers=None):
             t2["%s/%s" % (a, cond)] = {"cued": [sum(cc), sum(ct)], "neutral": [sum(nc_), sum(nt)]}
             md.append("| %s | %s | %s | %s | %s |" % (NAMES[a], cond, ctx_, ntx, fmt_diff(d)))
     out["tables"]["phrasing"] = t2
-    md.append("")
+    md.append("\nL2 is not a pure cue contrast. The neutral head also drops \"Answer from this session's history only\" and adds a rule to answer null when unsure. "
+              "The cued head of design 2 adds a cue sentence. So L2 compares two prompt styles, not only the cue.\n")
 
     # ---- curves: compaction vs no compaction
     md.append("### Table L3: position curve, compaction minus no compaction (cued probes, paired by seed)\n")
@@ -175,35 +178,49 @@ def section(rows, sessions, th, draws, helpers=None):
         md.append("| %s | %s | %s | %s |" % (name, thr, measured, result))
         out["hypotheses"].append({"name": name, "threshold": thr, "measured": measured, "result": result})
 
-    # H1: A, no compaction: the middle is worse than the ends
-    d = boot.diff(*cells.vec(lambda r: base("A", "nocompact", "cued")(r) and r.get("position") == "middle"),
-                  *_ends(cells, base("A", "nocompact", "cued")))
+    # H1: A, no compaction: the middle is worse than the mean of start and end. TOO EASY above the ceiling.
+    f1 = base("A", "nocompact", "cued")
+    vm, vs, ve = (cells.vec(lambda r, p=p: f1(r) and r.get("position") == p) for p in (POS[1], POS[0], POS[2]))
+    d = mean_ends_diff(boot, vm, vs, ve)
     p = lt.get("h1_middle_minus_ends_max_points", -10)
-    hyp("H1 lost in the middle: arm A, no compaction, cued: middle minus start+end", "<= %+d pts and CI upper bound < 0" % p, fmt_diff(d),
-        "NO DATA" if d[0] is None else ("SUPPORTED" if 100 * d[0] <= p and d[2] < 0 else "NOT SUPPORTED"))
+    ceil = lt.get("h1_ceiling_max_accuracy", 0.95)
+    rs, re_ = (sum(v[0]) / sum(v[1]) if sum(v[1]) else None for v in (vs, ve))
+    ends_mean = None if rs is None or re_ is None else (rs + re_) / 2
+    if d[0] is None:
+        res = "NO DATA"
+    elif ends_mean > ceil:
+        res = "TOO EASY: no claim (start/end accuracy %s is above %s)" % (pct(ends_mean), pct(ceil))
+    else:
+        res = "SUPPORTED" if 100 * d[0] <= p and d[2] < 0 else "NOT SUPPORTED"
+    hyp("H1 lost in the middle: arm A, no compaction, cued: middle minus mean(start, end)",
+        "<= %+d pts and CI upper bound < 0; TOO EASY if mean(start, end) > %s" % (p, pct(ceil)), fmt_diff(d), res)
     # H2: compaction loses facts that long context keeps
     fcm, fnc = base("A", "compact", "cued"), base("A", "nocompact", "cued")
     d = boot.diff(*cells.vec(fcm), *cells.vec(fnc))
     p = lt.get("h2_compaction_minus_nocompaction_max_points", -15)
-    hyp("H2 compaction loses facts: arm A cued, compaction minus no compaction", "<= %+d pts and CI upper bound < 0" % p, fmt_diff(d),
+    hyp("H2 (%s) compaction loses facts: arm A cued, compaction minus no compaction" % lt.get("h2_label", "expected, not blind; mixes compaction with session length"), "<= %+d pts and CI upper bound < 0" % p, fmt_diff(d),
         "NO DATA" if d[0] is None else ("SUPPORTED" if 100 * d[0] <= p and d[2] < 0 else "NOT SUPPORTED"))
     # H3: R beats B on cued
     d = boot.diff(*cells.vec(base("R", "compact", "cued")), *cells.vec(base("B", "compact", "cued")))
     p = lt.get("h3_r_minus_b_cued_min_points", 5)
     hyp("H3 auto-recall helps on cued probes: R minus B, compaction, cued", ">= %+d pts and CI lower bound > 0" % p, fmt_diff(d),
         "NO DATA" if d[0] is None else ("SUPPORTED" if 100 * d[0] >= p and d[1] > 0 else "NOT SUPPORTED"))
-    # H4: R does not beat B on neutral
+    # H4: R does not beat B on neutral. INVALID if the hook fired on neutral probes.
     d = boot.diff(*cells.vec(lambda r: base("R", "compact", "neutral")(r)), *cells.vec(lambda r: base("B", "compact", "neutral")(r)))
     p = lt.get("h4_r_minus_b_neutral_no_gain_below_points", 5)
+    nmax4 = lt.get("h4_invalid_if_neutral_fire_rate_above", 0.05)
+    nfire = [sum(v[0] for k, v in fire.items() if k.endswith("/neutral")), sum(v[1] for k, v in fire.items() if k.endswith("/neutral"))]
     if d[0] is None:
         res = "NO DATA"
+    elif nfire[1] and nfire[0] / nfire[1] > nmax4:
+        res = "INVALID (the hook fired on %s of neutral probes, above %s)" % (pct(nfire[0] / nfire[1]), pct(nmax4))
     elif 100 * d[0] >= p and d[1] > 0:
         res = "REFUTED (R gains on neutral probes)"
     elif 100 * d[2] < p:
-        res = "CONFIRMED (no gain)"
+        res = "no gain of %d points or more" % p
     else:
         res = "INCONCLUSIVE"
-    hyp("H4 no gain without a cue: R minus B, compaction, neutral", "CI upper bound < %+d pts (no gain)" % p, fmt_diff(d), res)
+    hyp("H4 no gain without a cue: R minus B, compaction, neutral", "CI upper bound < %+d pts (no gain of %d points or more); INVALID if neutral fire rate > %s" % (p, p, pct(nmax4)), fmt_diff(d), res)
     # H5: the mechanism
     cf = [sum(v[0] for k, v in fire.items() if k.endswith("/cued")), sum(v[1] for k, v in fire.items() if k.endswith("/cued"))]
     nf = [sum(v[0] for k, v in fire.items() if k.endswith("/neutral")), sum(v[1] for k, v in fire.items() if k.endswith("/neutral"))]
@@ -213,18 +230,38 @@ def section(rows, sessions, th, draws, helpers=None):
     else:
         res = "SUPPORTED" if cf[0] / cf[1] >= cmin and nf[0] / nf[1] <= nmax else "NOT SUPPORTED"
         meas = "cued %s (%d/%d), neutral %s (%d/%d)" % (pct(cf[0] / cf[1]), cf[0], cf[1], pct(nf[0] / nf[1]), nf[0], nf[1])
-    hyp("H5 the hook fires on cued probes only (mechanism check; a neutral fire rate above the limit makes the neutral probes invalid)",
+    hyp("H5 (%s) the hook fires on cued probes and not on neutral probes" % lt.get("h5_label", "plumbing check"),
         "cued >= %s and neutral <= %s" % (pct(cmin), pct(nmax)), meas, res)
     md.append("\nA hypothesis that is NOT SUPPORTED or REFUTED stays in the report. The thresholds do not change after a run.\n")
 
     # ---- gate: no-compaction sessions must not compact
     nc = [s for s in sessions if s.get("condition") == "nocompact"]
     if nc:
-        bad = [s for s in nc if s.get("boundaries", 0) != 0 or s.get("missed")]
-        md.append("No-compaction sessions with a compaction (must be 0): **%d of %d**%s\n" % (
+        bad = [s for s in nc if s.get("boundaries", 0) != 0 or s.get("missed") or s.get("nc_valid") is False or s.get("status") == "invalid"]
+        md.append("Invalid no-compaction sessions (a compaction, a cleared tool-result marker, or a last-turn context below the expected size; must be 0): **%d of %d**%s\n" % (
             len(bad), len(nc), "" if not bad else " (INVALID: drop these sessions from every claim)"))
+        for s_ in bad:
+            if s_.get("nc_reasons"):
+                md.append("- %s: %s" % (s_["name"], "; ".join(s_["nc_reasons"])))
         out["nc_invalid"] = [s["name"] for s in bad]
     return md, out
+
+
+def mean_ends_diff(boot, mid, start, end):
+    """middle rate minus the mean of the start rate and the end rate. Each argument is (correct list, total list) over seeds.
+    The seed is the resampling unit (same draws as every other interval). Returns (point, lo, hi, seeds with all three cells)."""
+    def stat(idx):
+        r = []
+        for cs, ts in (mid, start, end):
+            t = sum(ts[i] for i in idx)
+            if not t:
+                return None
+            r.append(sum(cs[i] for i in idx) / t)
+        return r[0] - (r[1] + r[2]) / 2
+    allidx = list(range(len(mid[0])))
+    point = stat(allidx)
+    lo, hi = boot._ci([stat(d) for d in boot.draws])
+    return point, lo, hi, sum(1 for i in allidx if mid[1][i] and start[1][i] and end[1][i])
 
 
 def _ends(cells, f0):

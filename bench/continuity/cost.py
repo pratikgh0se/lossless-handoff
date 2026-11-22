@@ -28,6 +28,7 @@ NC_UNIT = 5.0
 # Probe forks of one checkpoint: R D X S E U C M F = 9 cued. Design 2 adds neutral forks for R D X S E.
 CUED_FORKS, NEUTRAL_FORKS = 9, 5
 PILOT = {"seeds": 2, "arms": ["A", "B", "R"], "n": [1, 3, 10], "conditions": ["compact", "nocompact"], "phrasings": ["cued", "neutral"]}
+SMOKE = {"seeds": 1, "arms": ["A", "R"], "n": [1, 3, 10], "conditions": ["nocompact"], "phrasings": ["cued", "neutral"]}
 FULL = {"seeds": 20, "arms": ["A", "B", "R", "Z", "O"], "n": [1, 3, 10], "conditions": ["compact", "nocompact"], "phrasings": ["cued", "neutral"]}
 
 
@@ -79,7 +80,7 @@ def main(argv=None):
     ap.add_argument("--phrasings")
     a = ap.parse_args(argv)
     if not any([a.seeds, a.arms, a.n, a.conditions, a.phrasings]):
-        for name, cfg in (("PILOT", PILOT), ("FULL", FULL)):
+        for name, cfg in (("SMOKE (litm-smoke)", SMOKE), ("PILOT", PILOT), ("FULL", FULL)):
             print(render(name, cfg)[1])
         return 0
     cfg = dict(PILOT)

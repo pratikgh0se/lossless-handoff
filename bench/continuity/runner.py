@@ -36,6 +36,9 @@ KINDS = {
     # Lost-in-the-middle design (probe design 2). The pilot uses dev seeds. Never report from it.
     "litm-pilot": {"model": "sonnet", "window": 400000, "n": [1, 3, 10], "arms": "A,B,R", "seeds": 2, "seed_file": "seeds-dev.txt",
                    "conditions": "compact,nocompact", "phrasings": "cued,neutral", "probe_design": 2},
+    # One seed, arms A and R, no compaction only: the cheapest live check of DISABLE_AUTO_COMPACT, the validity rule and the hook log.
+    "litm-smoke": {"model": "sonnet", "window": 400000, "n": [1, 3, 10], "arms": "A,R", "seeds": 1, "seed_file": "seeds-dev.txt",
+                   "conditions": "nocompact", "phrasings": "cued,neutral", "probe_design": 2},
     "litm-full": {"model": "sonnet", "window": 400000, "n": [1, 3, 10], "arms": "A,B,R,Z,O", "seeds": 20, "seed_file": "seeds-report.txt",
                   "conditions": "compact,nocompact", "phrasings": "cued,neutral", "probe_design": 2},
 }
@@ -388,12 +391,13 @@ class Session:
 
     def auto_recall_fired(self, fsid):
         """Arm R: did the auto-recall hook run in this fork? The hook appends one line to auto-recall.jsonl for each prompt
-        that passes its trigger (contract F67.d). HANDOFF_STATE_DIR points to this arm's own folder, so we read it first.
-        We also read the default state folder, and keep only the lines of this fork's session id."""
+        that passes its trigger (contract F67.d). The hook (hooks/auto-recall.py, STATE_DIR) writes to $HANDOFF_STATE_DIR when it
+        is set, and logs the session id of its hook input, which is the id of the fork. This arm sets HANDOFF_STATE_DIR to its own
+        folder, so we read only that file. We never read or write the real ~/.local/state/claude-handoffs.
+        Returns (fired, hits, timed_out); (None, None, None) for arms other than R."""
         if self.arm != "R" or not fsid:
-            return None, None
-        paths = [os.path.join(self.statedir, AUTO_RECALL_LOG), os.path.join(HOME, ".local", "state", "claude-handoffs", AUTO_RECALL_LOG)]
-        return recall_log_fired([r for p in paths for r in read_jsonl(p)], fsid)
+            return None, None, None
+        return recall_log_fired(read_jsonl(os.path.join(self.statedir, AUTO_RECALL_LOG)), fsid)
 
     def probe(self, ptype, ckpt, fork_of=None, z_sid=None, phrasing="cued"):
         """Run one probe type. Fork of the main session (arms A, B, O) or a fresh session (arm Z). Write the result lines."""
@@ -425,7 +429,10 @@ class Session:
                     os.remove(pth)
                 elif os.path.isdir(pth) and not os.path.islink(pth):
                     shutil.rmtree(pth)
-        fired, hits = self.auto_recall_fired(fsid)
+        fired, hits, timed_out = self.auto_recall_fired(fsid)
+        if self.arm == "R" and phrasing == "cued" and cfg.get("probe_design", 1) >= 2 and fsid and not fired:
+            raise Fatal("arm R: a cued probe left no line in %s for session %s. The hook did not run, or it logs elsewhere. "
+                        "Stop. Check hooks/auto-recall.py in --lh-path." % (os.path.join(self.statedir, AUTO_RECALL_LOG), fsid))
         posmap = {x["id"]: gen.position_of(script, ptype, x) for x in items}
         u = o.get("usage") if isinstance(o.get("usage"), dict) else {}
         n_actual, pre = (st["boundaries"], st.get("precomputed", 0)) if self.arm != "Z" else (0, 0)
@@ -440,7 +447,7 @@ class Session:
                 "fork_cost_usd": round(o["_delta"], 6), "claude_version": cfg["claude_version"], "model": cfg["model"],
                 "window": self.window, "commit": cfg["lh_commit"], "turn_index": st["turns"],
                 "condition": self.cond, "phrasing": phrasing, "position": posmap.get(g["id"]),
-                "auto_recall_fired": fired, "auto_recall_hits": hits})
+                "auto_recall_fired": fired, "auto_recall_hits": hits, "auto_recall_timed_out": timed_out})
         st["done_forks"].append(fork_key(ckpt, ptype, phrasing))
         self.ctx.save()
 
@@ -457,9 +464,55 @@ def probe_plan(cfg, ptype):
 
 
 def recall_log_fired(rows, fsid):
-    """From the lines of auto-recall.jsonl: (fired, hits) for one session id. fired is False when no line has this id."""
+    """From the lines of auto-recall.jsonl: (fired, hits, timed_out) for one session id. fired is False when no line has this id.
+    The hook logs one line for each prompt that passes its trigger, and shows at most 3 hits (TOP_HITS)."""
     mine = [r for r in rows if isinstance(r, dict) and r.get("session_id") == fsid and r.get("fired")]
-    return bool(mine), (max((r.get("hits") or 0) for r in mine) if mine else 0)
+    return bool(mine), (max((r.get("hits") or 0) for r in mine) if mine else 0), any(bool(r.get("timed_out")) for r in mine)
+
+
+# ---- no-compaction validity. DISABLE_AUTO_COMPACT stops auto compaction only. The binary also clears old tool results
+# (microcompact: "[Old tool result content cleared]"). A session with cleared results is not a long-context session.
+CLEARED_MARKERS = ("Old tool result content cleared", "tool result content cleared")
+NC_CONTEXT_TOLERANCE = 0.75       # the last turn must hold at least this share of the expected context (nc_estimate_tokens)
+
+
+def count_cleared(path):
+    """Count of transcript lines that hold a cleared-tool-result marker."""
+    n = 0
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            for line in f:
+                if any(m in line for m in CLEARED_MARKERS):
+                    n += 1
+    except OSError:
+        pass
+    return n
+
+
+def last_turn_context(calls, name):
+    """Context size of the last main turn of a session: input_tokens + cache_read_input_tokens of its last `turn` call. None if unknown."""
+    last = [c for c in calls if c.get("name") == name and c.get("kind") == "turn"]
+    if not last:
+        return None
+    c = last[-1]
+    if c.get("in") is None and c.get("cache_read") is None:
+        return None
+    return (c.get("in") or 0) + (c.get("cache_read") or 0)
+
+
+def nc_validity(boundaries, cleared, last_ctx, expected, tol=NC_CONTEXT_TOLERANCE):
+    """(valid, reasons). A no-compaction session is valid only if it has no compaction, no cleared marker,
+    and its last turn has at least tol * expected tokens of context."""
+    why = []
+    if boundaries:
+        why.append("%d compaction(s)" % boundaries)
+    if cleared:
+        why.append("%d cleared-result marker line(s)" % cleared)
+    if last_ctx is None:
+        why.append("no token data for the last turn")
+    elif expected and last_ctx < tol * expected:
+        why.append("last-turn context %d is below %d (%.0f%% of expected %d)" % (last_ctx, tol * expected, 100 * tol, expected))
+    return not why, why
 
 
 # ------------------------------------------------------------------ session logic
@@ -579,6 +632,12 @@ def run_nc_session(ctx, ss):
         st["next_turn"] += 1
         ctx.save()
     st["boundaries_at_plant_end"] = st["boundaries"]
+    ok, why = nc_validity(st["boundaries"], count_cleared(ss.transcript(st["sid"])),
+                          last_turn_context(read_jsonl(os.path.join(ctx.dir, "calls.jsonl")), ss.name), cfg.get("nc_estimate_tokens"))
+    st["nc_valid"], st["nc_reasons"] = ok, why
+    if not ok:
+        st["status"], st["reason"] = "invalid", "no-compaction session is not valid: " + "; ".join(why)
+        return
     checkpoint(ctx, ss, 0)          # n_target 0: a compaction in this session makes it a missed checkpoint
 
 
@@ -622,7 +681,7 @@ def run_z(ctx, ss):
 def session_summary(ctx, ss):
     """Facts from the transcript, for the report. The main transcript only; subagent compactions are counted apart."""
     st = ss.st
-    out = {"name": ss.name, "seed": ss.seed, "arm": ss.arm, "condition": ss.cond, "status": st["status"], "turns": st["turns"],
+    out = {"name": ss.name, "seed": ss.seed, "arm": ss.arm, "condition": ss.cond, "nc_valid": st.get("nc_valid"), "nc_reasons": st.get("nc_reasons"), "status": st["status"], "turns": st["turns"],
            "boundaries": st["boundaries"], "precomputed": st.get("precomputed", 0), "missed": st["missed"],
            "fork_leaks": st["fork_leaks"], "boundaries_at_plant_end": st.get("boundaries_at_plant_end"), "cost_usd": round(st.get("cost", 0.0), 4), "reason": st.get("reason"),
            "filler_no_read_turns": st.get("filler_no_read_turns", 0), "filler_retries": st.get("filler_retries", 0),
