@@ -13,6 +13,7 @@ import cost, gates, runner  # noqa: E402
 COST_CAP_USD = 5.0
 COST_RATIO_MAX = 1.3
 REANCHOR_TOKENS = 50000
+NL_ORACLE_MIN = 0.80      # non-literal probes: the oracle must answer at least this share of every type
 BIG_MIN_TOKENS = 250000
 BIG_MAX_TOKENS = 350000     # the paste is sized for 280k to 320k tokens; above this the turn costs more than planned
 DECISION_MARKERS = ("decisions list", "Project decisions for this repo", "Project rules for this repo")
@@ -184,6 +185,16 @@ def check(rd, projects=None, mcp=True):
     kinds = sorted({(r["arm"], r.get("phrasing"), r.get("type"), r.get("condition")) for r in dev})
     add("every probe answer parsed and graded (no grader error)", bool(R.rows) and not unread, "%d probe row(s); unreadable or not graded: %d; model format deviations (entry read, field rejected): %d %s" % (
         len(R.rows), len(unread), len(dev), kinds))
+    # 8b. the non-literal probes must be answerable: the short oracle (arm O, no compaction) gets at least 80% on every type
+    o_nl = [r for r in R.rows if r["arm"] == "O" and r.get("phrasing") == "nonliteral" and cond_row(r) == "nocompact"]
+    by_t = {}
+    for r in o_nl:
+        c = by_t.setdefault(r["type"], [0, 0])
+        c[0] += 1 if r.get("correct") is True else 0
+        c[1] += 1
+    low = {t: "%d/%d" % tuple(c) for t, c in sorted(by_t.items()) if c[0] < NL_ORACLE_MIN * c[1]}
+    add("nonliteral oracle (arm O) accuracy at least %d%% per type" % int(NL_ORACLE_MIN * 100), bool(by_t) and not low,
+        "per type: %s%s" % ({t: "%d/%d" % tuple(c) for t, c in sorted(by_t.items())}, "; below the limit: %s" % low if low else ""))
     # 9. row counts: no probe class is missing (for example non-literal)
     miss_f = gates.missing_forks(runner.expected_forks(R.cfg), R.rows, R.cfg["seeds"])
     add("row count: every expected probe fork (arm x phrasing x condition x type) has rows", not miss_f, "none missing" if not miss_f else gates.describe_missing(miss_f))

@@ -451,17 +451,24 @@ def content_words(text, drop=()):
     return {w for w in re.findall(r"[a-z0-9]+", text.lower()) if w not in STOPWORDS and w not in gone}
 
 
+# Word list of design 3 (told in each bridge turn). First preflight run: the old questions said "lane" for a queue and "the exact string stored"
+# for a settings value, and arms A and O answered null or gave the topic name. The bridge now explains each word, so the question is not ambiguous.
+L3_S_WORD = {"deploy command": "ship step", "output path": "landing folder", "export env line": "shell switch"}
+L3_WORD_LIST = ('Word list for this project: `holding line` means a queue. `ship step` means a deploy command. `landing folder` means an output path. '
+                '`shell switch` means an export env line.')
+
+
 def nonliteral_question(ptype, item):
     """A task that needs the fact but shares no content word with the plant sentence. It names the topic by an alias that only a bridge turn explains."""
     a = item["alias"]
     if ptype == "R":
         return "For %s, give the closing marker that each change record needs to carry." % a
     if ptype == "D":
-        return "For %s, write the name of the lane that jobs are sent to." % a
+        return "For %s, which holding line was picked? Write its name." % a
     if ptype == "X":
-        return "For %s, write the lane that jobs go to today, and list every lane that was dropped on the way." % a
+        return "For %s, write the holding line that is active now, and list every holding line that was set aside." % a
     if ptype == "S":
-        return "For %s, write the exact string that was stored for it, character for character." % a
+        return "For %s, write the %s, character for character." % (a, L3_S_WORD[item["kind"]])
     if ptype == "E":
         return ("For %s, a teammate wants to run the same idea again. Give the go or no-go in proceed. In reason_code, copy the exact "
                 "fault identifier it hit, character for character." % a)
@@ -536,7 +543,7 @@ def build_litm3(seed):
         facts = third_facts[th][:]
         g.r.shuffle(facts)
         bridge = " ".join("In my notes, %s is the one called `%s`." % (it["alias"], it["topic"]) for _t, it in sorted(facts, key=lambda x: x[1]["alias"]))
-        plan.append({"kind": "bridge", "third": th, "prompt": "%s Naming notes for this project, for reference: %s Reply only `ok`." % (prose3(pr, 300, 500), bridge)})
+        plan.append({"kind": "bridge", "third": th, "prompt": "%s Naming notes for this project, for reference: %s %s Reply only `ok`." % (prose3(pr, 300, 500), bridge, L3_WORD_LIST)})
         for _t, it in facts:
             plan.append({"kind": "fact", "third": th, "type": _t, "id": it["id"],
                          "prompt": "%s Note for this project: %s Reply only `ok`." % (prose3(pr, 300, 500), it["plant"])})

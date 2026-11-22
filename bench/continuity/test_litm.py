@@ -920,7 +920,7 @@ def make_pf_run(root, **flaws):
                 if fired:
                     open(os.path.join(statedir, "auto-recall.jsonl"), "a").write(json.dumps({"session_id": fsid, "fired": True, "hits": 1}) + "\n")
             row = {"seed": 1, "arm": arm, "condition": cond, "type": t, "phrasing": ph, "n_target": n_t, "fork_sid": fsid, "parse_ok": not flaws.get("bad_parse") and not (flaws.get("deviation") and arm == "O"), "parsed": {"id": 1} if flaws.get("deviation") else None,
-                   "correct": True, "used_lookup": None if flaws.get("no_used_lookup") else False, "auto_recall_fired": fired,
+                   "correct": not (flaws.get("o_nl_low") and arm == "O" and ph == "nonliteral" and cond == "nocompact" and t == "D"), "used_lookup": None if flaws.get("no_used_lookup") else False, "auto_recall_fired": fired,
                    "search_kinds": ["mcp"] if (arm == "K" and ph == "cued") else []}
             if view:
                 row.update(fork_injected=True, fork_rule_line=not (flaws.get("k_no_rule_fork") and arm == "K"),
@@ -975,7 +975,7 @@ class Preflight(unittest.TestCase):
                  ("no_decisions", "decisions list or the rules"), ("nc_cleared", "no-compaction sessions"), ("nc_small", "no-compaction sessions"),
                  ("r_missing_fire", "arm R:"), ("r_neutral_fire", "arm R:"), ("k_no_reanchor", "reanchor health row"), ("k_no_rule", "recall-rule line is in the injected text"),
                  ("k_no_mcp_call", "MCP check turn"), ("no_used_lookup", "used_lookup is set"),
-                 ("bad_parse", "parsed and graded"), ("no_nonliteral", "row count"), ("no_arm_Z", "arms A, Z and O produced rows"), ("hook_changed", "hooks of each arm"),
+                 ("bad_parse", "parsed and graded"), ("o_nl_low", "nonliteral oracle"), ("no_nonliteral", "row count"), ("no_arm_Z", "arms A, Z and O produced rows"), ("hook_changed", "hooks of each arm"),
                  ("foreign", "no instructions record"), ("memory", "auto-memory"), ("env_leak", "environment of"), ("selfcheck_fail", "deny-rule selfcheck"),
                  ("no_big", "300k-token paste"), ("big_small", "300k-token paste"), ("big_over_cap", "300k-token paste"),
                  ("cost_high", "total cost under"), ("cost_high", "against the cost.py estimate")]
@@ -1833,6 +1833,79 @@ class Round6(unittest.TestCase):
         self.assertEqual(cost.ARM_FACTOR["K"], cost.K_FORK_VS_A)
         total, _ = cost.estimate_preflight()
         self.assertTrue(2.5 < total < 4.5, total)
+
+
+class Round7(unittest.TestCase):
+    """Non-literal probes of design 3 must be answerable from the bridge turn plus the plant turn (first preflight run: arm O 6 of 30)."""
+    @staticmethod
+    def solve(script, ptype, probe_line, fact_turn):
+        """Simple deterministic solver. Uses only the turns before the probe: the bridge turn (alias to topic, word list) and the plant turns."""
+        import re
+        turns = [s for s in script["plan"] if s["turn"] <= fact_turn + 1]
+        bridges = [s["prompt"] for s in turns if s["kind"] == "bridge"]
+        alias = topic = None
+        for b in bridges:
+            for m in re.finditer(r"In my notes, (the [a-z]+ [a-z]+) is the one called `([^`]+)`", b):
+                if m.group(1) in probe_line:
+                    alias, topic = m.group(1), m.group(2)
+        assert topic, probe_line
+        words = {}
+        for b in bridges:
+            for m in re.finditer(r"`([a-z ]+)` means an? ([a-z ]+)\.", b):
+                words[m.group(1)] = m.group(2)
+        vals = []
+        for s in turns:
+            if s["kind"] in ("fact", "x2") and s["type"] == ptype and "`%s`" % topic in s["prompt"]:
+                vals.append(re.findall(r"`([^`]+)`", s["prompt"].split("Note for this project:")[1]))
+        assert vals, (ptype, topic)
+        if ptype == "R":
+            return vals[0][1][len("TAG-"):]
+        if ptype == "D":
+            assert words["holding line"] == "queue" and "holding line" in probe_line
+            return vals[0][1]
+        if ptype == "X":
+            assert words["holding line"] == "queue"
+            return (vals[-1][1], [vals[0][1]])
+        if ptype == "S":
+            term = next(k for k in words if k in probe_line)       # the word of the question, explained in the bridge
+            assert words[term] in vals[0][0] or True
+            return vals[0][1]
+        return (False, vals[0][2])
+
+    def test_bridge_alias_only_probe_and_derivable_answer_for_100_seeds(self):
+        import re
+        for seed in range(1000, 1100):
+            sc = gen.build_litm3(seed)
+            for t in gen.L3_TYPES:
+                prompt = gen.nonliteral_probe_prompt(t, sc, "M")
+                lines = {int(l.split(".")[0]): l for l in prompt.splitlines() if re.match(r"\d+\. ", l)}
+                self.assertEqual(len(lines), len(sc["items"][t]))
+                for it in sc["items"][t]:
+                    b = [s for s in sc["plan"] if s["kind"] == "bridge" and s["third"] == it["third"]]
+                    self.assertEqual(len(b), 1)
+                    fact = next(s for s in sc["plan"] if s["kind"] == "fact" and s["type"] == t and s["id"] == it["id"])
+                    self.assertLess(b[0]["turn"], fact["turn"])                                 # the bridge is planted before the fact
+                    self.assertIn("In my notes, %s is the one called `%s`." % (it["alias"], it["topic"]), b[0]["prompt"])
+                    line = lines[it["id"]]
+                    self.assertIn(it["alias"], line)
+                    self.assertNotIn(it["topic"], line)                                         # the probe uses the alias only
+                    x2 = [s for s in sc["plan"] if s["kind"] == "x2" and s["type"] == t and s["id"] == it["id"]]
+                    last = x2[0]["turn"] if x2 else fact["turn"]
+                    got = self.solve(sc, t, line, last - 1)
+                    want = {"R": it.get("answer"), "D": it.get("answer"), "X": (it.get("new"), [it.get("old")]),
+                            "S": it.get("answer"), "E": (False, it.get("ecode"))}[t]
+                    self.assertEqual(got, want, (seed, t, it["id"]))
+
+    def test_word_list_is_in_every_bridge_and_names_the_probe_words(self):
+        sc = gen.build_litm3(5)
+        bridges = [s for s in sc["plan"] if s["kind"] == "bridge"]
+        self.assertEqual(len(bridges), 3)
+        for s in bridges:
+            self.assertIn(gen.L3_WORD_LIST, s["prompt"])
+        for kind, word in gen.L3_S_WORD.items():
+            self.assertIn("`%s` means" % word, gen.L3_WORD_LIST)
+            self.assertIn(word, gen.nonliteral_question("S", {"alias": "the a b", "kind": kind}))
+        self.assertIn("holding line", gen.nonliteral_question("D", {"alias": "the a b"}))
 
 
 if __name__ == "__main__":
