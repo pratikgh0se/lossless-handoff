@@ -2,7 +2,7 @@
 # Lossless Handoff installer (formerly claude-handoff): copies the hooks and merges them into ~/.claude/settings.json.
 set -euo pipefail
 
-VERSION="0.17.0"
+VERSION="0.18.0"
 usage() {
   cat <<EOF
 Lossless Handoff $VERSION (formerly claude-handoff)
@@ -10,13 +10,13 @@ Default install (F64): the core only. It copies the hooks (nudge, PreCompact han
 SessionStart check, SubagentStart rules, SessionEnd index) and the recall command into ~/.claude/hooks,
 merges them into ~/.claude/settings.json, installs the recall subagent (~/.claude/agents/recall.md, unless a
 file of that name that is not ours is there), keeps the decisions list, and starts a first recall index.
-Hooks 1.19.0 keep the chat store: handoff files live 365 days, and --keep-transcripts raises Claude Code's transcript retention.
-Hooks 1.19.0 also mask secrets in every file they write (see SECURITY.md).
+Hooks 1.20.0 keep the chat store: handoff files live 365 days, and --keep-transcripts raises Claude Code's transcript retention.
+Hooks 1.20.0 also mask secrets in every file they write (see SECURITY.md).
 The default does NOT set CLAUDE_CODE_AUTO_COMPACT_WINDOW, pull a model, or install nightly jobs.
 Add them with the opt-in flags below. A rerun never removes, turns off or changes a part that is already installed
 (window value, meaning search, nightly jobs): a --no-* flag only skips adding it. Use ./uninstall.sh to remove parts.
 
-Usage: ./install.sh [--dry-run] [--force] [--window N] [--nightly] [--semantic [--yes]] [--auto-recall] [--recall-rules] [--recall-mcp] [--reanchor] [--claim-guard] [--save-defaults] [--no-nudge] [--canary] [--managed-hooks] [--keep-transcripts[=DAYS]] [--version] [-h|--help]
+Usage: ./install.sh [--dry-run] [--force] [--window N] [--nightly] [--semantic [--yes]] [--auto-recall] [--recall-rules] [--recall-mcp] [--reanchor] [--claim-guard] [--history-guard] [--action-guard] [--recall-size-trigger] [--save-defaults] [--no-nudge] [--canary] [--managed-hooks] [--keep-transcripts[=DAYS]] [--version] [-h|--help]
 
   --dry-run     list exactly what the chosen options install (and which come from saved defaults), change nothing
   --window N    opt-in: set CLAUDE_CODE_AUTO_COMPACT_WINDOW to N tokens (for example 400000);
@@ -48,18 +48,33 @@ Usage: ./install.sh [--dry-run] [--force] [--window N] [--nightly] [--semantic [
                 ~/.local/state/claude-handoffs/claim-guard.jsonl (no text) and changes nothing else (shadow mode).
                 Set HANDOFF_CLAIM_GUARD=block to make it ask for a search once per turn, 0 to switch it off.
                 Off by default
+  --history-guard
+                opt-in (F77): install the Stop hook history-guard.py. When the context is 100,000 tokens or more and
+                a reply uses a key whose value changed in this chat, it writes one line to
+                ~/.local/state/claude-handoffs/history-guard.jsonl (no text; shadow mode). Set HANDOFF_HISTORY_GUARD=block
+                to give the model the full history of that key once per turn, 0 to switch it off. Off by default
+  --action-guard
+                opt-in (F80): install the PostToolBatch hook action-guard.py. When the context is 100,000 tokens or more and
+                an Edit, Write, MultiEdit, NotebookEdit or Bash call uses a key whose value changed in this chat, it writes one
+                line to ~/.local/state/claude-handoffs/action-guard.jsonl (no text; shadow mode). Set HANDOFF_ACTION_GUARD=inject
+                to give the model the full history of that key before its next step, 0 to switch it off. It never blocks a call.
+                Off by default
+  --recall-size-trigger
+                opt-in (F78): needs --auto-recall. Writes the marker ~/.claude/hooks/.recall-size-trigger. Then
+                auto-recall also fires, with no cue phrase, when the context is 100,000 tokens or more and the prompt
+                names a key that changed in this chat. HANDOFF_AUTO_RECALL_SIZE=0 switches it off. Off by default
   --yes         with --semantic: answer yes to the model pull without asking
   --llm-map, --no-llm-map
                 no longer used. llm-map is now a separate project (https://github.com/pratikgh0se/llm-map).
                 The flags are accepted and print one line; they change nothing else
   --save-defaults
-                save the opt-in flags given in this run (--semantic, --nightly, --auto-recall, --recall-rules, --recall-mcp, --reanchor, --claim-guard, --window N) to
+                save the opt-in flags given in this run (--semantic, --nightly, --auto-recall, --recall-rules, --recall-mcp, --reanchor, --claim-guard, --history-guard, --action-guard, --recall-size-trigger, --window N) to
                 ~/.config/lossless-handoff/install-defaults (key=value lines: semantic=1, nightly=1,
-                auto_recall=1, recall_rules=1, recall_mcp=1, reanchor=1, claim_guard=1, window=N). Every later ./install.sh run reads that file and applies those
+                auto_recall=1, recall_rules=1, recall_mcp=1, reanchor=1, claim_guard=1, history_guard=1, action_guard=1, recall_size_trigger=1, window=N). Every later ./install.sh run reads that file and applies those
                 options as if you gave them. A flag on the command line wins over the file.
                 With --save-defaults, a --no-* flag removes that saved default. Delete the file, or run
                 ./uninstall.sh --purge, to drop all saved defaults
-  --no-semantic, --no-nightly, --no-auto-recall, --no-recall-rules, --no-recall-mcp, --no-reanchor, --no-claim-guard, --no-window
+  --no-semantic, --no-nightly, --no-auto-recall, --no-recall-rules, --no-recall-mcp, --no-reanchor, --no-claim-guard, --no-history-guard, --no-action-guard, --no-recall-size-trigger, --no-window
                 turn one opt-in off for this run, also when a saved default turns it on. They only skip
                 adding the part; they never uninstall one that is there
   --no-nudge    do not install the context nudge (handoff-nudge.py). Use it if another tool already
@@ -87,7 +102,7 @@ search still works (https://ollama.com/download). Ollama itself is never install
 EOF
 }
 
-DRY=0; FORCE=0; WINDOW=400000; SETWINDOW=0; YES=0; NIGHTLY=0; SEMANTIC=0; NOTE_LM=0; OLDFLAG=0; SAVE=0; C_WIN=""; C_NIGHT=""; C_SEM=""; C_AR=""; C_RR=""; C_RM=""; AUTORECALL=0; RECALLRULES=0; RECALLMCP=0; C_RA=""; REANCHOR=0; C_CG=""; CLAIMGUARD=0; MANAGED=0; CANARY=0; NONUDGE=0; KEEP=""
+DRY=0; FORCE=0; WINDOW=400000; SETWINDOW=0; YES=0; NIGHTLY=0; SEMANTIC=0; NOTE_LM=0; OLDFLAG=0; SAVE=0; C_WIN=""; C_NIGHT=""; C_SEM=""; C_AR=""; C_RR=""; C_RM=""; AUTORECALL=0; RECALLRULES=0; RECALLMCP=0; C_RA=""; REANCHOR=0; C_CG=""; CLAIMGUARD=0; C_HG=""; HISTORYGUARD=0; C_AG=""; ACTIONGUARD=0; C_RS=""; RECALLSIZE=0; MANAGED=0; CANARY=0; NONUDGE=0; KEEP=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --dry-run) DRY=1 ;;
@@ -111,6 +126,12 @@ while [ $# -gt 0 ]; do
     --no-reanchor) C_RA=0 ;;
     --claim-guard) C_CG=1 ;;
     --no-claim-guard) C_CG=0 ;;
+    --history-guard) C_HG=1 ;;
+    --no-history-guard) C_HG=0 ;;
+    --action-guard) C_AG=1 ;;
+    --no-action-guard) C_AG=0 ;;
+    --recall-size-trigger) C_RS=1 ;;
+    --no-recall-size-trigger) C_RS=0 ;;
     --llm-map|--no-llm-map) NOTE_LM=1 ;;
     --save-defaults) SAVE=1 ;;
     --no-nudge) NONUDGE=1 ;;
@@ -131,7 +152,7 @@ command -v python3 >/dev/null || { echo "python3 is required" >&2; exit 1; }
 say() { if [ "$DRY" = 1 ]; then echo "[dry-run] $*"; else echo "$*"; fi; }
 # saved defaults: read key=value lines (never sourced); a command-line flag wins over the file
 DEFAULTS_FILE="$HOME/.config/lossless-handoff/install-defaults"
-D_WIN=""; D_NIGHT=""; D_SEM=""; D_AR=""; D_RR=""; D_RM=""; D_RA=""; D_CG=""
+D_WIN=""; D_NIGHT=""; D_SEM=""; D_AR=""; D_RR=""; D_RM=""; D_RA=""; D_CG=""; D_HG=""; D_AG=""; D_RS=""
 if [ -f "$DEFAULTS_FILE" ]; then
   while IFS= read -r line || [ -n "$line" ]; do
     case "$line" in
@@ -142,6 +163,9 @@ if [ -f "$DEFAULTS_FILE" ]; then
       recall_mcp=1) D_RM=1 ;;
       reanchor=1) D_RA=1 ;;
       claim_guard=1) D_CG=1 ;;
+      history_guard=1) D_HG=1 ;;
+      action_guard=1) D_AG=1 ;;
+      recall_size_trigger=1) D_RS=1 ;;
       llm_map=1) NOTE_LM=1 ;;
       window=*) v="${line#window=}"; case "$v" in ''|*[!0-9]*) ;; *) if [ "${#v}" -le 12 ] && [ "$((10#$v))" -gt 0 ]; then D_WIN="$v"; fi ;; esac ;;
     esac
@@ -159,11 +183,14 @@ pick recall_rules "$C_RR" "$D_RR"; [ "$P" = 1 ] && RECALLRULES=1 || RECALLRULES=
 pick recall_mcp "$C_RM" "$D_RM"; [ "$P" = 1 ] && RECALLMCP=1 || RECALLMCP=0
 pick reanchor "$C_RA" "$D_RA"; [ "$P" = 1 ] && REANCHOR=1 || REANCHOR=0
 pick claim_guard "$C_CG" "$D_CG"; [ "$P" = 1 ] && CLAIMGUARD=1 || CLAIMGUARD=0
+pick history_guard "$C_HG" "$D_HG"; [ "$P" = 1 ] && HISTORYGUARD=1 || HISTORYGUARD=0
+pick action_guard "$C_AG" "$D_AG"; [ "$P" = 1 ] && ACTIONGUARD=1 || ACTIONGUARD=0
+pick recall_size_trigger "$C_RS" "$D_RS"; [ "$P" = 1 ] && RECALLSIZE=1 || RECALLSIZE=0
 if [ "$NOTE_LM" = 1 ]; then echo "llm-map is now a separate project: https://github.com/pratikgh0se/llm-map"; fi
 if [ -n "$FROM_SAVED" ]; then say "options from saved defaults ($DEFAULTS_FILE):$FROM_SAVED"; fi
 if [ "$SAVE" = 1 ]; then
   if [ "$DRY" = 1 ]; then say "would save the opt-in flags of this run to $DEFAULTS_FILE"; else
-    HC_DF="$DEFAULTS_FILE" HC_CWIN="$C_WIN" HC_CN="$C_NIGHT" HC_CS="$C_SEM" HC_CA="$C_AR" HC_CRR="$C_RR" HC_CRM="$C_RM" HC_CRA="$C_RA" HC_CCG="$C_CG" python3 - <<'PY'
+    HC_DF="$DEFAULTS_FILE" HC_CWIN="$C_WIN" HC_CN="$C_NIGHT" HC_CS="$C_SEM" HC_CA="$C_AR" HC_CRR="$C_RR" HC_CRM="$C_RM" HC_CRA="$C_RA" HC_CCG="$C_CG" HC_CHG="$C_HG" HC_CAG="$C_AG" HC_CRS="$C_RS" python3 - <<'PY'
 import os
 p = os.environ["HC_DF"]
 cur = {}
@@ -188,6 +215,9 @@ setk("recall_rules", os.environ["HC_CRR"], "1")
 setk("recall_mcp", os.environ["HC_CRM"], "1")
 setk("reanchor", os.environ["HC_CRA"], "1")
 setk("claim_guard", os.environ["HC_CCG"], "1")
+setk("history_guard", os.environ["HC_CHG"], "1")
+setk("action_guard", os.environ["HC_CAG"], "1")
+setk("recall_size_trigger", os.environ["HC_CRS"], "1")
 cur.pop("llm_map", None)
 w = os.environ["HC_CWIN"]
 if w == "off":
@@ -232,6 +262,16 @@ RA_THERE=0; [ -e "$HOOKS_DIR/reanchor.py" ] && RA_THERE=1
 if [ "$REANCHOR" = 1 ] || [ "$RA_THERE" = 1 ]; then FILES="$FILES reanchor.py"; fi
 CG_THERE=0; [ -e "$HOOKS_DIR/claim-guard.py" ] && CG_THERE=1
 if [ "$CLAIMGUARD" = 1 ] || [ "$CG_THERE" = 1 ]; then FILES="$FILES claim-guard.py"; fi
+# F77: history-guard.py is opt-in in the same way. F78: the marker .recall-size-trigger is the whole F78 install.
+HG_THERE=0; [ -e "$HOOKS_DIR/history-guard.py" ] && HG_THERE=1
+if [ "$HISTORYGUARD" = 1 ] || [ "$HG_THERE" = 1 ]; then FILES="$FILES history-guard.py"; fi
+# F80: action-guard.py is opt-in in the same way.
+AG_THERE=0; [ -e "$HOOKS_DIR/action-guard.py" ] && AG_THERE=1
+if [ "$ACTIONGUARD" = 1 ] || [ "$AG_THERE" = 1 ]; then FILES="$FILES action-guard.py"; fi
+RS_THERE=0; [ -e "$HOOKS_DIR/.recall-size-trigger" ] && RS_THERE=1
+# guard_common.py (shared code of F77, F78 and F80) is installed when one of them is, and kept up to date after.
+GC_THERE=0; [ -e "$HOOKS_DIR/guard_common.py" ] && GC_THERE=1
+if [ "$HISTORYGUARD" = 1 ] || [ "$HG_THERE" = 1 ] || [ "$ACTIONGUARD" = 1 ] || [ "$AG_THERE" = 1 ] || { [ "$RECALLSIZE" = 1 ] && { [ "$AUTORECALL" = 1 ] || [ "$AR_THERE" = 1 ]; }; } || [ "$RS_THERE" = 1 ] || [ "$GC_THERE" = 1 ]; then FILES="$FILES guard_common.py"; fi
 # The PreCompact hook keeps its code in the folder hooks/lossless_handoff/. It is part of the install and of the manifest.
 PKG_FILES="$(cd "$SRC/hooks" 2>/dev/null && ls lossless_handoff/*.py 2>/dev/null | tr '\n' ' ')"
 if [ -z "$PKG_FILES" ]; then echo "error: hooks/lossless_handoff/ is missing from this copy; get a full copy of the repo" >&2; exit 1; fi
@@ -368,7 +408,7 @@ fi
 if [ "$CLEANUP_WARN" = 1 ]; then printf "warning: $CLEANUP_LINE_FMT\n" "$EFF_DAYS"; fi
 
 # 3. settings merge
-HC_AR="$AUTORECALL" HC_RA="$REANCHOR" HC_CG="$CLAIMGUARD" HC_KEEP="$KEEP" HC_NONUDGE="$NONUDGE" HC_DRY="$DRY" HC_FORCE="$FORCE" HC_WINDOW="$WINDOW" HC_SETWINDOW="$SETWINDOW" HC_SETTINGS="$SETTINGS" \
+HC_AR="$AUTORECALL" HC_RA="$REANCHOR" HC_CG="$CLAIMGUARD" HC_HG="$HISTORYGUARD" HC_AG="$ACTIONGUARD" HC_KEEP="$KEEP" HC_NONUDGE="$NONUDGE" HC_DRY="$DRY" HC_FORCE="$FORCE" HC_WINDOW="$WINDOW" HC_SETWINDOW="$SETWINDOW" HC_SETTINGS="$SETTINGS" \
 HC_HOOKS="$HOOKS_DIR" HC_TS="$TS" python3 - <<'PY'
 import json, os, shutil, sys
 dry = os.environ["HC_DRY"] == "1"
@@ -380,6 +420,8 @@ nudge = "python3 %s/handoff-nudge.py" % hooks_dir
 auto_recall = "python3 %s/auto-recall.py" % hooks_dir  # F67
 reanchor_cmd = "python3 %s/reanchor.py" % hooks_dir  # F70
 claim_cmd = "python3 %s/claim-guard.py" % hooks_dir  # F71
+history_cmd = "python3 %s/history-guard.py" % hooks_dir  # F77
+action_cmd = "python3 %s/action-guard.py" % hooks_dir  # F80
 post = ["python3 %s/postcompact-inject.py --part %d" % (hooks_dir, n) for n in (1, 2, 3)]
 post_led = ["python3 %s/postcompact-inject.py --ledger --part %d" % (hooks_dir, n) for n in (1, 2, 3)]
 start_led = "python3 %s/postcompact-inject.py --ledger" % hooks_dir  # pre-0.5.0 startup/resume form, migrated away
@@ -411,13 +453,17 @@ if not isinstance(hooks, dict):
     sys.exit("settings.json: hooks is not an object")
 
 # conflict check: the same hook scripts registered from a different path would run twice
-own_cmds = set([pre, nudge, auto_recall, reanchor_cmd, claim_cmd, start_led, check_cmd, subagent_cmd] + post + post_led)
+own_cmds = set([pre, nudge, auto_recall, reanchor_cmd, claim_cmd, history_cmd, action_cmd, start_led, check_cmd, subagent_cmd] + post + post_led)
 names = ["precompact-handoff.py", "postcompact-inject.py", "handoff-nudge.py", "auto-recall.py"]
 # F70, F71: these two names count as ours only when the flag is on or the file is installed (a default install is as on main)
 if os.environ["HC_RA"] == "1" or os.path.exists(os.path.join(hooks_dir, "reanchor.py")):
     names.append("reanchor.py")
 if os.environ["HC_CG"] == "1" or os.path.exists(os.path.join(hooks_dir, "claim-guard.py")):
     names.append("claim-guard.py")
+if os.environ["HC_HG"] == "1" or os.path.exists(os.path.join(hooks_dir, "history-guard.py")):
+    names.append("history-guard.py")
+if os.environ["HC_AG"] == "1" or os.path.exists(os.path.join(hooks_dir, "action-guard.py")):
+    names.append("action-guard.py")
 conflicts = []
 for ev, groups_ in hooks.items():
     if not isinstance(groups_, list):
@@ -504,6 +550,20 @@ if os.environ["HC_CG"] == "1":
     else:
         stp.append({"hooks": [{"type": "command", "command": claim_cmd, "timeout": 5}]})
         changes.append("add Stop claim-guard hook (timeout 5)")
+if os.environ["HC_HG"] == "1":
+    stp = hooks.setdefault("Stop", [])
+    if has_cmd(stp, history_cmd):
+        changes.append("Stop history-guard hook already present")
+    else:
+        stp.append({"hooks": [{"type": "command", "command": history_cmd, "timeout": 5}]})
+        changes.append("add Stop history-guard hook (timeout 5)")
+if os.environ["HC_AG"] == "1":
+    ptb = hooks.setdefault("PostToolBatch", [])
+    if has_cmd(ptb, action_cmd):
+        changes.append("PostToolBatch action-guard hook already present")
+    else:
+        ptb.append({"hooks": [{"type": "command", "command": action_cmd, "timeout": 5}]})
+        changes.append("add PostToolBatch action-guard hook (timeout 5)")
 
 groups = hooks.setdefault("SessionStart", [])
 grp = next((g for g in groups if isinstance(g, dict) and g.get("matcher") == "compact"
@@ -740,12 +800,30 @@ elif [ "$RM_THERE" = 1 ]; then
   say "recall-mcp: already installed, kept"
 fi
 
-# F70, F71: opt-in hooks are never removed by a rerun.
+# F78: the size trigger is a marker for auto-recall. It needs auto-recall (installed now or before).
+if [ "$RECALLSIZE" = 1 ] && [ "$RS_THERE" = 0 ]; then
+  if [ "$AUTORECALL" = 1 ] || [ "$AR_THERE" = 1 ]; then
+    say "install recall size trigger marker: $HOOKS_DIR/.recall-size-trigger"
+    if [ "$DRY" = 0 ]; then mkdir -p "$HOOKS_DIR"; : > "$HOOKS_DIR/.recall-size-trigger"; chmod 644 "$HOOKS_DIR/.recall-size-trigger"; fi
+  else
+    say "recall-size-trigger: needs --auto-recall; skipped"
+  fi
+elif [ "$RS_THERE" = 1 ]; then
+  say "recall-size-trigger: already installed, kept"
+fi
+
+# F70, F71, F77: opt-in hooks are never removed by a rerun.
 if [ "$REANCHOR" = 0 ] && [ "$RA_THERE" = 1 ]; then
   say "reanchor: already installed, kept"
 fi
 if [ "$CLAIMGUARD" = 0 ] && [ "$CG_THERE" = 1 ]; then
   say "claim-guard: already installed, kept"
+fi
+if [ "$HISTORYGUARD" = 0 ] && [ "$HG_THERE" = 1 ]; then
+  say "history-guard: already installed, kept"
+fi
+if [ "$ACTIONGUARD" = 0 ] && [ "$AG_THERE" = 1 ]; then
+  say "action-guard: already installed, kept"
 fi
 
 # --no-nudge: remove a nudge file left by an earlier install

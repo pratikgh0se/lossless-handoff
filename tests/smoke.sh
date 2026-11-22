@@ -75,7 +75,7 @@ python3 - "$H" <<'PY'
 import hashlib, json, sys
 h = sys.argv[1]
 m = json.load(open(h + "/.handoff-manifest.json"))
-assert m["version"] == "1.19.0" and m["installed_at"], m
+assert m["version"] == "1.20.0" and m["installed_at"], m
 pkg = ["lossless_handoff/%s.py" % n for n in "__init__ transcript summary ledger handoff runtime redaction pipeline reconcile prove claims".split()]
 assert sorted(m["files"]) == sorted(["claims.json", "handoff-nudge.py", "postcompact-inject.py", "precompact-handoff.py", "recall.py"] + pkg), m
 for n, want in m["files"].items():
@@ -916,8 +916,8 @@ PY
   [ ! -e "$F/precompact-handoff.py" ] || fail "F66.a: uninstall did not finish its other work"
   rm "$F/llm_map.py" "$SK"; rmdir "$(dirname "$SK")"; o="$("$ROOT/uninstall.sh")"; ! grep -q "llm-map: kept" <<<"$o" || fail "F66.a: kept line without llm-map files"
   # F66.d versions
-  [ "$("$ROOT/install.sh" --version)" = "Lossless Handoff 0.17.0" ] || fail "F66.d: product version"
-  [ "$(grep -c '^HOOK_VERSION = "1.19.0"$' "$ROOT/hooks/precompact-handoff.py" "$ROOT/hooks/postcompact-inject.py" | grep -c ':1$')" = 2 ] || fail "F66.d: HOOK_VERSION"
+  [ "$("$ROOT/install.sh" --version)" = "Lossless Handoff 0.18.0" ] || fail "F66.d: product version"
+  [ "$(grep -c '^HOOK_VERSION = "1.20.0"$' "$ROOT/hooks/precompact-handoff.py" "$ROOT/hooks/postcompact-inject.py" | grep -c ':1$')" = 2 ] || fail "F66.d: HOOK_VERSION"
   # F66.c: README holds no claim markers; evidence page does; claims-lint default path
   ! grep -qE '\[C[1-8]\]' "$ROOT/README.md" && ! grep -qiE '^#+ .*proof|\*\*proof' "$ROOT/README.md" || fail "F66.c: README holds Proof or claim markers"
   grep -qE '\[C1\]' "$ROOT/docs/evidence.md" || fail "F66.c: docs/evidence.md has no markers"
@@ -964,7 +964,7 @@ rows = {json.loads(x)["sid"]: json.loads(x) for x in open(sys.argv[1]) if x.stri
 a, b = rows["f56a"], rows["f56b"]
 assert a["excerpt_chars"] > 0 and a["excerpt_dropped"] == 0, a
 assert b["excerpt_dropped"] > 0 and 0 < b["excerpt_chars"] <= 120000, b
-assert a["hook_version"] == "1.19.0"
+assert a["hook_version"] == "1.20.0"
 PY
   p="$(python3 "$ROOT/hooks/precompact-handoff.py" --prove --days 1; echo "rc=$?")"
   grep -qE "^excerpt cut: 1 of 2 compactions, median dropped [0-9]+ chars$" <<<"$p" || fail "F56.b: prove line: $p"
@@ -1130,7 +1130,7 @@ PY
 import json, sys
 rows = [json.loads(x) for x in open(sys.argv[1]) if x.strip()]
 r = [x for x in rows if x.get("event") == "subagent_start"][-1]
-assert r["rules"] == 2 and r["chars"] > 0 and r["hook_version"] == "1.19.0" and r["agent_type"] == "general-purpose", r
+assert r["rules"] == 2 and r["chars"] > 0 and r["hook_version"] == "1.20.0" and r["agent_type"] == "general-purpose", r
 PY
   # AC 262: no handoff text, no agent notes
   printf '# Handoff\n- cwd: %s\nLATESTTOKEN\n' "$PROJ" > "$STF/s58-latest.md"; printf 'AGENTTOKEN\n' > "$STF/s58-agent.md"
@@ -1904,7 +1904,7 @@ PY
   CMD="python3 $F/auto-recall.py"
   echo '{"model": "opus"}' > "$FS"
   grep -q -- "--auto-recall" <<<"$("$ROOT/install.sh" --help)" || fail "F67.a: --help lacks --auto-recall"
-  [ "$(grep -c '^HOOK_VERSION = "1.19.0"$' "$ROOT/hooks/auto-recall.py")" = 1 ] || fail "F67.e: auto-recall HOOK_VERSION"
+  [ "$(grep -c '^HOOK_VERSION = "1.20.0"$' "$ROOT/hooks/auto-recall.py")" = 1 ] || fail "F67.e: auto-recall HOOK_VERSION"
   # default install: not installed, not registered
   "$ROOT/install.sh" >/dev/null
   [ ! -e "$F/auto-recall.py" ] && ! grep -q "auto-recall" "$FS" && ! grep -q "auto-recall" "$F/.handoff-manifest.json" || fail "F67.a: default install holds auto-recall"
@@ -2050,7 +2050,7 @@ SH
   [ ! -e "$F/recall-mcp.py" ] && ! grep -q "recall-mcp" "$F/.handoff-manifest.json" && [ ! -s "$FAKE_CLAUDE_LOG" ] || fail "F69: default install holds recall-mcp or called claude"
   ! grep -q "recall-mcp" <<<"$(PATH="$D/fakebin:$PATH" "$ROOT/install.sh" --dry-run)" || fail "F69: default dry-run mentions recall-mcp"
   grep -q -- "--recall-mcp" <<<"$("$ROOT/install.sh" --help)" || fail "F69: --help lacks --recall-mcp"
-  [ "$(grep -c '^HOOK_VERSION = "1.19.0"$' "$ROOT/hooks/recall-mcp.py")" = 1 ] || fail "F69: HOOK_VERSION"
+  [ "$(grep -c '^HOOK_VERSION = "1.20.0"$' "$ROOT/hooks/recall-mcp.py")" = 1 ] || fail "F69: HOOK_VERSION"
   # dry-run lists the file and the command; runs nothing
   o="$(PATH="$D/fakebin:$PATH" "$ROOT/install.sh" --recall-mcp --dry-run)"
   grep -q "install hook: .*/recall-mcp.py" <<<"$o" && grep -qF "claude mcp add --scope user lossless-recall -- $MC" <<<"$o" || fail "F69: dry-run: $o"
@@ -2156,7 +2156,7 @@ out, raw = run([
 by = {o.get("id"): o for o in out}
 assert [o.get("id") for o in out].count(2) == 1 and 99 not in by
 init = by[1]["result"]
-assert init["protocolVersion"] == "2025-06-18" and init["serverInfo"] == {"name": "lossless-recall", "version": "1.19.0"}, init
+assert init["protocolVersion"] == "2025-06-18" and init["serverInfo"] == {"name": "lossless-recall", "version": "1.20.0"}, init
 ins = init["instructions"]
 assert len(ins) < 4096 and "recall rule: before you state an earlier number, path, name, command or decision, search for it. Do not answer from memory. If the search finds nothing, say so." in ins, ins
 assert by[2]["result"] == {}
@@ -2219,7 +2219,7 @@ def tr(name, tokens):
 tr("t30k", 29985); tr("t60k", 59985); tr("t120k", 119985); tr("t20k", 19985)
 PY
   ra() { python3 -c 'import json,sys; print(json.dumps({"session_id":sys.argv[1],"transcript_path":sys.argv[2],"cwd":sys.argv[3],"hook_event_name":"PostToolUse","tool_name":"Bash"}))' "$1" "$D/$2.jsonl" "$W" | python3 "$HK"; }
-  [ "$(grep -c '^HOOK_VERSION = "1.19.0"$' "$HK")" = 1 ] || fail "F70: HOOK_VERSION"
+  [ "$(grep -c '^HOOK_VERSION = "1.20.0"$' "$HK")" = 1 ] || fail "F70: HOOK_VERSION"
   # below the interval: nothing, no state file
   [ -z "$(ra s1 t30k)" ] && [ ! -e "$HANDOFF_STATE_DIR/reanchor-s1.json" ] || fail "F70: output below 50,000"
   # at 60,000: exactly one JSON object, exact shape and first line, the rules block, the recall line is not required to exist here
@@ -2271,7 +2271,7 @@ PY
   set -e
   D="$T/f71"; mkdir -p "$D"; export HOME="$D/home"; mkdir -p "$HOME/.claude"
   export HANDOFF_STATE_DIR="$D/state"; HK="$ROOT/hooks/claim-guard.py"; LOG="$HANDOFF_STATE_DIR/claim-guard.jsonl"; unset HANDOFF_CLAIM_GUARD
-  [ "$(grep -c '^HOOK_VERSION = "1.19.0"$' "$HK")" = 1 ] || fail "F71: HOOK_VERSION"
+  [ "$(grep -c '^HOOK_VERSION = "1.20.0"$' "$HK")" = 1 ] || fail "F71: HOOK_VERSION"
   python3 - "$D" <<'PY'
 import json, sys
 d = sys.argv[1]
@@ -2713,6 +2713,364 @@ assert m.identifiers("plain words only") == []
 assert m.query_words("what did we decide earlier about previous rejected proposal values staging database") == ["database", "staging"] or set(m.query_words("what did we decide earlier about previous rejected proposal values staging database")) == {"staging", "database"}
 PY
   ok "F73-F75: history output, token boundary, exclusions, fork dedupe, cap, search ranking, key_history tool, auto-recall identifiers and health"
+)
+
+# F77, F78, F80: history guard (Stop), size trigger (auto-recall), action guard (PostToolBatch)
+(
+  set -e
+  mode_of() { python3 -c 'import os,sys; print(oct(os.stat(sys.argv[1]).st_mode & 0o777)[2:])' "$1"; }
+  D="$T/f77"; mkdir -p "$D"; export HOME="$D/home"; W="$D/work"; W2="$D/work2"; mkdir -p "$HOME/.claude" "$W" "$W2"
+  export HANDOFF_STATE_DIR="$D/state"; unset HANDOFF_HOOKS_HOME HANDOFF_HISTORY_GUARD HANDOFF_ACTION_GUARD HANDOFF_AUTO_RECALL HANDOFF_AUTO_RECALL_SIZE HANDOFF_HISTORY_GUARD_TOKENS HANDOFF_ACTION_GUARD_TOKENS HANDOFF_AUTO_RECALL_TOKENS
+  git -C "$W" init -q; : > "$W2/queue-limit"
+  HG="$ROOT/hooks/history-guard.py"; AG="$ROOT/hooks/action-guard.py"; AR="$ROOT/hooks/auto-recall.py"
+  for f in history-guard.py action-guard.py auto-recall.py guard_common.py; do
+    [ "$(grep -c '^HOOK_VERSION = "1.20.0"$' "$ROOT/hooks/$f")" = 1 ] || fail "F77: HOOK_VERSION of $f"
+  done
+  python3 - "$HOME" "$W" "$D" <<'PY'
+import json, os, re, sys
+home, w, d = sys.argv[1:4]
+real = os.path.realpath(w)
+pd = os.path.join(home, ".claude", "projects", re.sub(r"[^A-Za-z0-9]", "-", real)); os.makedirs(pd)
+def user(ts, text, u):
+    return {"type": "user", "timestamp": ts, "cwd": real, "sessionId": "ssss0001", "uuid": u, "message": {"role": "user", "content": text}}
+def asst(ts, blocks, tokens, u):
+    return {"type": "assistant", "timestamp": ts, "cwd": real, "sessionId": "ssss0001", "uuid": u,
+            "message": {"role": "assistant", "content": blocks, "usage": {"input_tokens": 10, "cache_read_input_tokens": tokens - 10, "cache_creation_input_tokens": 0, "output_tokens": 5}}}
+def text(t): return [{"type": "text", "text": t}]
+def base(tokens):
+    return [user("2026-11-22T10:00:00Z", "Set queue-limit to 50 for the mailer. The deploy region is eu-west-1.", "u1"),
+            asst("2026-11-22T10:01:00Z", text("Done, queue-limit is 50."), tokens, "a1"),
+            user("2026-11-22T10:02:00Z", "Change queue-limit to 75. Also queue-limit-eu stays at 10.", "u2"),
+            asst("2026-11-22T10:03:00Z", text("Now queue-limit is 75."), tokens, "a2"),
+            user("2026-11-22T10:04:00Z", "Undo that, queue-limit is back to 50.", "u3"),
+            asst("2026-11-22T10:05:00Z", text("Undone."), tokens, "a3"),
+            user("2026-11-22T10:06:00Z", "Please write the config file now.", "ucur")]
+def w(name, rows):
+    open(os.path.join(pd, name + ".jsonl"), "w").write("".join(json.dumps(r) + "\n" for r in rows))
+    os.symlink(os.path.join(pd, name + ".jsonl"), os.path.join(d, name + ".jsonl"))
+big = 150000
+w("main", base(big) + [asst("2026-11-22T10:07:00Z", text("Wrote the file."), big, "a4")])
+w("small", base(50000) + [asst("2026-11-22T10:07:00Z", text("Wrote the file."), 50000, "a4")])
+ev = base(big) + [asst("2026-11-22T10:07:00Z", [{"type": "tool_use", "id": "tc1", "name": "mcp__lossless-recall__key_history", "input": {"identifier": "queue-limit"}}], big, "a4"),
+                  {"type": "user", "timestamp": "2026-11-22T10:07:01Z", "uuid": "r1", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "tc1", "content": "history"}]}},
+                  asst("2026-11-22T10:07:02Z", text("Wrote the file."), big, "a5")]
+w("evidence", ev)
+w("bashev", base(big) + [asst("2026-11-22T10:07:00Z", [{"type": "tool_use", "id": "tc1", "name": "Bash", "input": {"command": "python3 ~/.claude/hooks/recall.py history queue-limit"}}], big, "a4")])
+w("injected", base(big) + [{"type": "attachment", "attachment": {"type": "hook_additional_context", "content": ["Lossless Handoff auto-recall: history of queue-limit: 4 mention(s), oldest first."]}},
+                           asst("2026-11-22T10:07:02Z", text("Wrote the file."), big, "a5")])
+# a chat where a key is stated one time only, and the guard tokens at 100,000
+w("once", [user("2026-11-22T10:00:00Z", "The deploy region is eu-west-1.", "u1"), asst("2026-11-22T10:01:00Z", text("Noted."), big, "a1"),
+           user("2026-11-22T10:02:00Z", "Please write the config file now.", "ucur"), asst("2026-11-22T10:03:00Z", text("Wrote it."), big, "a2")])
+PY
+  hg() { python3 -c 'import json,sys; print(json.dumps({"session_id":sys.argv[1],"transcript_path":sys.argv[2],"cwd":sys.argv[4],"stop_hook_active":sys.argv[5]=="1","last_assistant_message":sys.argv[3]}))' "$1" "$D/$2.jsonl" "$3" "${4:-$W}" "${5:-0}" | python3 "$HG"; }
+  LOG="$HANDOFF_STATE_DIR/history-guard.jsonl"
+  # shadow (default): one row, no output; the row has no text
+  o="$(hg s1 main "I set the limit: queue-limit is 75.")"; [ -z "$o" ] || fail "F77: shadow mode printed: $o"
+  python3 - "$LOG" <<'PY'
+import json, sys
+rows = [json.loads(l) for l in open(sys.argv[1])]
+assert len(rows) == 1 and set(rows[0]) == {"ts", "session_id", "mode", "fired", "subjects", "anchors", "tokens", "chars", "ms"}, rows
+r = rows[0]; assert r["mode"] == "shadow" and r["fired"] is True and r["subjects"] == 1 and r["anchors"] == 1 and r["tokens"] == 150000 and r["session_id"] == "s1", r
+PY
+  ! grep -q "queue-limit\|75" "$LOG" || fail "F77: text in the log"
+  [ "$(mode_of "$LOG")" = 600 ] || fail "F77: log mode"
+  # a fact stated one time, a sibling, a key never seen, a small context: no row
+  n0="$(wc -l < "$LOG")"
+  hg s2 once "The region is eu-west-1." >/dev/null
+  hg s2 main "The europe value is queue-limit-eu and nothing else." >/dev/null
+  hg s2 main "We could use queue-limit-v2 or other-name here." >/dev/null
+  hg s2 small "I set queue-limit to 75." >/dev/null
+  hg s2 main "No identifier in this reply at all." >/dev/null
+  [ "$(wc -l < "$LOG")" = "$n0" ] || fail "F77: a row for a once-fact, a sibling, an unknown key or a small context"
+  # an existing path below cwd is not an anchor
+  hg s2 main "I set queue-limit to 75." "$W2" >/dev/null; [ "$(wc -l < "$LOG")" = "$n0" ] || fail "F77: an existing path was an anchor"
+  # evidence in this turn: a key_history call, a recall.py history call, an injected block
+  for t in evidence bashev injected; do hg s2 "$t" "I set queue-limit to 75." >/dev/null; done
+  [ "$(wc -l < "$LOG")" = "$n0" ] || fail "F77: evidence did not stop the row"
+  # off switch and loop guard
+  o="$(HANDOFF_HISTORY_GUARD=0 hg s3 main "I set queue-limit to 75.")"; [ -z "$o" ] && [ "$(wc -l < "$LOG")" = "$n0" ] || fail "F77: switch 0"
+  o="$(HANDOFF_HISTORY_GUARD=block hg s3 main "I set queue-limit to 75." "$W" 1)"; [ -z "$o" ] && [ "$(wc -l < "$LOG")" = "$n0" ] || fail "F77: stop_hook_active"
+  # the threshold env
+  o="$(HANDOFF_HISTORY_GUARD_TOKENS=200000 hg s3 main "I set queue-limit to 75.")"; [ "$(wc -l < "$LOG")" = "$n0" ] || fail "F77: threshold env (high)"
+  HANDOFF_HISTORY_GUARD_TOKENS=40000 hg s3 small "I set queue-limit to 75." >/dev/null; [ "$(( $(wc -l < "$LOG") ))" = "$((n0 + 1))" ] || fail "F77: threshold env (low)"
+  # block mode: the documented Stop form, line 1 exact, the full history, once per user turn
+  o="$(HANDOFF_HISTORY_GUARD=block hg s4 main "I set queue-limit to 75.")"
+  python3 - "$o" <<'PY'
+import json, sys
+d = json.loads(sys.argv[1])
+assert list(d) == ["hookSpecificOutput"] and d["hookSpecificOutput"]["hookEventName"] == "Stop", d
+t = d["hookSpecificOutput"]["additionalContext"]
+l1, rest = t.split("\n", 1)
+assert l1 == "Lossless Handoff history check: your reply uses values that changed in this chat. The full history is below, oldest first. A later mention can be a rejected proposal, a dry run or an undo. Read every mention in order. If your reply is correct, send the same reply again. If it is not, send the corrected reply. Do not mention this check.", l1
+assert "history of queue-limit:" in rest and "50" in rest and "75" in rest and "Please write the config" not in rest and "queue-limit-eu" not in rest.replace("queue-limit-eu stays", ""), rest
+assert len(t) <= 6000
+PY
+  o="$(HANDOFF_HISTORY_GUARD=block hg s4 main "I set queue-limit to 75.")"; [ -z "$o" ] || fail "F77: a second stop in the same turn fired"
+  [ "$(mode_of "$HANDOFF_STATE_DIR/history-guard-s4.json")" = 600 ] || fail "F77: state file mode"
+  o="$(HANDOFF_HISTORY_GUARD=block hg s5 main "I set queue-limit to 75.")"; [ -n "$o" ] || fail "F77: a different session did not fire"
+  # errors: no output, exit 0
+  r=0; o="$(echo "not json" | python3 "$HG")" || r=$?; [ "$r" = 0 ] && [ -z "$o" ] || fail "F77: bad stdin"
+  r=0; o="$(echo '{"session_id":"x","transcript_path":"/no/such","last_assistant_message":"queue-limit"}' | HANDOFF_HISTORY_GUARD=block python3 "$HG")" || r=$?; [ "$r" = 0 ] && [ -z "$o" ] || fail "F77: missing transcript"
+  r=0; o="$(echo '{"session_id":"x","transcript_path":"'"$D"'/main.jsonl","last_assistant_message":5}' | HANDOFF_HISTORY_GUARD=block python3 "$HG")" || r=$?; [ "$r" = 0 ] && [ -z "$o" ] || fail "F77: bad reply type"
+  r=0; o="$(HANDOFF_STATE_DIR=/dev/null/x HANDOFF_HISTORY_GUARD=block hg s6 main "I set queue-limit to 75.")" || r=$?; [ "$r" = 0 ] && [ -z "$o" ] || fail "F77: unwritable state dir"
+  r=0; o="$(HANDOFF_HOOKS_HOME="$D/nohooks" HANDOFF_HISTORY_GUARD=block hg s7 main "I set queue-limit to 75.")" || r=$?; [ "$r" = 0 ] || fail "F77: bad hooks home"
+  ok "F77: shadow row, no text, once-fact, sibling, small context, path, evidence, switch, loop guard, block form, once per turn, errors"
+
+  # F80: action guard
+  ag() { python3 -c 'import json,sys; print(json.dumps({"session_id":sys.argv[1],"transcript_path":sys.argv[2],"cwd":sys.argv[3],"hook_event_name":"PostToolBatch","tool_calls":json.loads(sys.argv[4])}))' "$1" "$D/$2.jsonl" "${4:-$W}" "$3" | python3 "$AG"; }
+  ALOG="$HANDOFF_STATE_DIR/action-guard.jsonl"
+  EDIT='[{"tool_name":"Edit","tool_input":{"file_path":"/x/app.conf","old_string":"queue-limit=75","new_string":"queue-limit=75\nmailer=on"}}]'
+  BASH='[{"tool_name":"Bash","tool_input":{"command":"echo queue-limit=75 >> app.conf"}}]'
+  OLDONLY='[{"tool_name":"Edit","tool_input":{"file_path":"/x/queue-limit.conf","old_string":"queue-limit=75","new_string":"mailer=on"}}]'
+  READ='[{"tool_name":"Read","tool_input":{"file_path":"/x/queue-limit.conf"}}]'
+  o="$(ag a1 main "$EDIT")"; [ -z "$o" ] || fail "F80: shadow printed: $o"
+  python3 - "$ALOG" <<'PY'
+import json, sys
+rows = [json.loads(l) for l in open(sys.argv[1])]
+assert len(rows) == 1 and set(rows[0]) == {"ts", "session_id", "mode", "fired", "subjects", "anchors", "tokens", "chars", "ms", "tool"}, rows
+assert rows[0]["mode"] == "shadow" and rows[0]["tool"] == "Edit" and rows[0]["subjects"] == 1 and rows[0]["tokens"] == 150000, rows
+PY
+  ! grep -q "queue-limit\|mailer" "$ALOG" || fail "F80: text in the log"
+  [ "$(mode_of "$ALOG")" = 600 ] || fail "F80: log mode"
+  # inject mode: an Edit with a changed key fires, the documented PostToolBatch form, line 1 exact, no deny
+  o="$(HANDOFF_ACTION_GUARD=inject ag a2 main "$EDIT")"
+  python3 - "$o" <<'PY'
+import json, sys
+d = json.loads(sys.argv[1])
+assert list(d) == ["hookSpecificOutput"] and d["hookSpecificOutput"]["hookEventName"] == "PostToolBatch", d
+t = d["hookSpecificOutput"]["additionalContext"]
+assert t.split("\n", 1)[0] == "Lossless Handoff history check: your last tool call used names whose values changed in this chat. The full history is below, oldest first. A later mention can be a rejected proposal, a dry run or an undo. If the call used an old, rejected or undone value, fix it now. If it is correct, go on. Do not mention this check.", t[:200]
+assert "history of queue-limit:" in t and len(t) <= 6000
+PY
+  # a Bash command naming a changed key fires
+  o="$(HANDOFF_ACTION_GUARD=inject ag a3 main "$BASH")"; [ -n "$o" ] && grep -q "history of queue-limit:" <<<"$o" || fail "F80: Bash did not fire: $o"
+  # only old_string, a Read call, an existing path, a small context, the switch: nothing
+  n0="$(wc -l < "$ALOG")"
+  for c in "$OLDONLY" "$READ"; do o="$(HANDOFF_ACTION_GUARD=inject ag a4 main "$c")"; [ -z "$o" ] || fail "F80: fired on old_string or Read"; done
+  o="$(HANDOFF_ACTION_GUARD=inject ag a4 main "$EDIT" "$W2")"; [ -z "$o" ] || fail "F80: an existing path fired"
+  o="$(HANDOFF_ACTION_GUARD=inject ag a4 small "$EDIT")"; [ -z "$o" ] || fail "F80: a small context fired"
+  o="$(HANDOFF_ACTION_GUARD=inject ag a4 once "$EDIT")"; [ -z "$o" ] || fail "F80: a once-fact fired"
+  for t in evidence bashev injected; do o="$(HANDOFF_ACTION_GUARD=inject ag a4 "$t" "$EDIT")"; [ -z "$o" ] || fail "F80: evidence ($t) did not stop it"; done
+  o="$(HANDOFF_ACTION_GUARD=0 ag a4 main "$EDIT")"; [ -z "$o" ] || fail "F80: switch 0"
+  [ "$(wc -l < "$ALOG")" = "$n0" ] || fail "F80: a row was written for a case without a fire"
+  # the shared cooldown: a key shown by F77 in this change does not fire again in F80 (and the other way round)
+  o="$(HANDOFF_HISTORY_GUARD=block hg c1 main "I set queue-limit to 75.")"; [ -n "$o" ] || fail "F80: setup (F77 fire)"
+  o="$(HANDOFF_ACTION_GUARD=inject ag c1 main "$EDIT")"; [ -z "$o" ] || fail "F80: fired again after F77"
+  o="$(HANDOFF_ACTION_GUARD=inject ag c2 main "$EDIT")"; [ -n "$o" ] || fail "F80: setup (F80 fire)"
+  o="$(HANDOFF_ACTION_GUARD=inject ag c2 main "$EDIT")"; [ -z "$o" ] || fail "F80: cooldown (same change)"
+  o="$(HANDOFF_HISTORY_GUARD=block hg c2 main "I set queue-limit to 75.")"; [ -z "$o" ] || fail "F77: fired again after F80"
+  # errors: no output, exit 0
+  r=0; o="$(echo "not json" | python3 "$AG")" || r=$?; [ "$r" = 0 ] && [ -z "$o" ] || fail "F80: bad stdin"
+  r=0; o="$(echo '{"session_id":"x","transcript_path":"/no/such","tool_calls":[]}' | HANDOFF_ACTION_GUARD=inject python3 "$AG")" || r=$?; [ "$r" = 0 ] && [ -z "$o" ] || fail "F80: missing transcript"
+  r=0; o="$(echo '{"session_id":"x","transcript_path":"'"$D"'/main.jsonl","tool_calls":"nope"}' | HANDOFF_ACTION_GUARD=inject python3 "$AG")" || r=$?; [ "$r" = 0 ] && [ -z "$o" ] || fail "F80: bad tool_calls"
+  r=0; o="$(echo '{"session_id":"x","transcript_path":"'"$D"'/main.jsonl","tool_calls":[5,{"tool_name":"Edit","tool_input":7}]}' | HANDOFF_ACTION_GUARD=inject python3 "$AG")" || r=$?; [ "$r" = 0 ] && [ -z "$o" ] || fail "F80: bad call shapes"
+  r=0; o="$(HANDOFF_STATE_DIR=/dev/null/x HANDOFF_ACTION_GUARD=inject ag c3 main "$EDIT")" || r=$?; [ "$r" = 0 ] && [ -z "$o" ] || fail "F80: unwritable state dir"
+  ok "F80: shadow row, inject form, Bash, old_string, path, small context, evidence, switch, shared cooldown with F77, errors"
+
+  # review fixes: the current turn counts (long autonomous turn), shadow saves the cooldown, a tool result excludes an anchor,
+  # stdin is read before the mode check, the state file holds no key text
+  python3 - "$HOME" "$W" "$D" <<'PY'
+import json, os, re, sys
+home, w, d = sys.argv[1:4]
+real = os.path.realpath(w)
+pd = os.path.join(home, ".claude", "projects", re.sub(r"[^A-Za-z0-9]", "-", real))
+def user(ts, text, u): return {"type": "user", "timestamp": ts, "cwd": real, "sessionId": "ssss0002", "uuid": u, "message": {"role": "user", "content": text}}
+def asst(ts, blocks, u):
+    return {"type": "assistant", "timestamp": ts, "cwd": real, "sessionId": "ssss0002", "uuid": u,
+            "message": {"role": "assistant", "content": blocks, "usage": {"input_tokens": 10, "cache_read_input_tokens": 149990, "cache_creation_input_tokens": 0, "output_tokens": 5}}}
+def text(t): return [{"type": "text", "text": t}]
+def w2(name, rows):
+    open(os.path.join(pd, name + ".jsonl"), "w").write("".join(json.dumps(r) + "\n" for r in rows))
+    os.symlink(os.path.join(pd, name + ".jsonl"), os.path.join(d, name + ".jsonl"))
+# a user states retry-count one time, then a long turn: the prompt names it, the model changes it inside the turn
+w2("turn", [user("2026-11-22T10:00:00Z", "Use retry-count 3 for the worker.", "t1"), asst("2026-11-22T10:01:00Z", text("Done."), "t2"),
+            user("2026-11-22T10:02:00Z", "Work alone now. Keep retry-count as it is.", "tcur"),
+            asst("2026-11-22T10:03:00Z", text("I will change retry-count to 5 for the test run."), "t3"),
+            asst("2026-11-22T10:04:00Z", [{"type": "tool_use", "id": "x1", "name": "Edit", "input": {"file_path": "/x/w.conf", "old_string": "a", "new_string": "retry-count=5"}}], "t4")])
+w2("turn2", [user("2026-11-22T10:00:00Z", "Use retry-count 3 for the worker.", "t1"), asst("2026-11-22T10:01:00Z", text("Done."), "t2"),
+             user("2026-11-22T10:02:00Z", "Work alone now. Keep retry-count as it is.", "tcur"),
+             asst("2026-11-22T10:03:00Z", text("I will change retry-count to 5 for the test run."), "t3"),
+             asst("2026-11-22T10:04:00Z", text("Test run done."), "t4")])
+w2("toolres", [user("2026-11-22T10:00:00Z", "Set queue-limit to 50.", "t1"), asst("2026-11-22T10:01:00Z", text("Done."), "t2"),
+               user("2026-11-22T10:02:00Z", "Now queue-limit is 75, ok?", "t3"), asst("2026-11-22T10:03:00Z", text("Yes."), "t4"),
+               user("2026-11-22T10:04:00Z", "Check the file.", "tcur"),
+               asst("2026-11-22T10:05:00Z", [{"type": "tool_use", "id": "x1", "name": "Read", "input": {"file_path": "/x/w.conf"}}], "t5"),
+               {"type": "user", "timestamp": "2026-11-22T10:05:01Z", "uuid": "r1", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "x1", "content": "queue-limit=75"}]}},
+               asst("2026-11-22T10:06:00Z", text("The file is fine."), "t6")])
+PY
+  RET='[{"tool_name":"Edit","tool_input":{"file_path":"/x/w.conf","old_string":"a","new_string":"retry-count=3"}}]'
+  o="$(HANDOFF_ACTION_GUARD=inject ag d1 turn "$RET")"; grep -q "history of retry-count:" <<<"$o" || fail "F80: a key changed in the current turn did not fire: $o"
+  grep -q "retry-count to 5" <<<"$o" || fail "F80: the history block lacks the current turn: $o"
+  o="$(HANDOFF_HISTORY_GUARD=block hg d2 turn2 "retry-count is now 5.")"; grep -q "history of retry-count:" <<<"$o" || fail "F77: current turn not counted: $o"
+  # shadow saves the cooldown: the second shadow run for the same change logs no row
+  n0="$(( $(wc -l < "$ALOG") ))"; ag d3 turn "$RET" >/dev/null; ag d3 turn "$RET" >/dev/null
+  [ "$(( $(wc -l < "$ALOG") ))" = "$((n0 + 1))" ] || fail "F80: shadow did not save the cooldown"
+  n0="$(( $(wc -l < "$LOG") ))"; hg d4 turn2 "retry-count is 5." >/dev/null; hg d4 turn2 "retry-count is 5." >/dev/null
+  [ "$(( $(wc -l < "$LOG") ))" = "$((n0 + 1))" ] || fail "F77: shadow did not save the cooldown"
+  # the state file holds a hash, not the key text
+  ! grep -q "retry-count" "$HANDOFF_STATE_DIR/history-guard-d3.json" && [ "$(mode_of "$HANDOFF_STATE_DIR/history-guard-d3.json")" = 600 ] || fail "F77: key text in the state file"
+  # a tool result of the turn excludes the anchor
+  n0="$(( $(wc -l < "$LOG") ))"; hg d5 toolres "The queue-limit is 75." >/dev/null
+  [ "$(( $(wc -l < "$LOG") ))" = "$n0" ] || fail "F77: a tool result did not exclude the anchor"
+  # stdin is read before the mode check: a large input, switch 0, no broken pipe (pipefail is on)
+  python3 -c 'import json; print(json.dumps({"session_id":"p","transcript_path":"/x","last_assistant_message":"x"*400000,"tool_calls":[]}))' > "$D/big.json"
+  for i in 1 2 3 4 5 6 7 8; do
+    HANDOFF_HISTORY_GUARD=0 python3 -c 'import sys; sys.stdout.write(open(sys.argv[1]).read())' "$D/big.json" | HANDOFF_HISTORY_GUARD=0 python3 "$HG"
+    python3 -c 'import sys; sys.stdout.write(open(sys.argv[1]).read())' "$D/big.json" | HANDOFF_ACTION_GUARD=0 python3 "$AG"
+    python3 -c 'import sys; sys.stdout.write(open(sys.argv[1]).read())' "$D/big.json" | HANDOFF_CLAIM_GUARD=0 python3 "$ROOT/hooks/claim-guard.py"
+  done
+  ok "review fixes: current turn counts, shadow cooldown, tool result excludes anchor, hashed state key, stdin read first"
+
+  # backticked identifiers (Zeta, MaxVal) fire; a tool result of either content shape (string, list) excludes the anchor;
+  # the guard fallback identifier rule equals auto-recall.identifiers on a corpus
+  python3 - "$HOME" "$W" "$D" <<'PY'
+import json, os, re, sys
+home, w, d = sys.argv[1:4]
+real = os.path.realpath(w)
+pd = os.path.join(home, ".claude", "projects", re.sub(r"[^A-Za-z0-9]", "-", real))
+def user(ts, text, u): return {"type": "user", "timestamp": ts, "cwd": real, "sessionId": "ssss0003", "uuid": u, "message": {"role": "user", "content": text}}
+def asst(ts, blocks, u):
+    return {"type": "assistant", "timestamp": ts, "cwd": real, "sessionId": "ssss0003", "uuid": u,
+            "message": {"role": "assistant", "content": blocks, "usage": {"input_tokens": 10, "cache_read_input_tokens": 149990, "cache_creation_input_tokens": 0, "output_tokens": 5}}}
+def text(t): return [{"type": "text", "text": t}]
+def w3(name, rows):
+    open(os.path.join(pd, name + ".jsonl"), "w").write("".join(json.dumps(r) + "\n" for r in rows))
+    os.symlink(os.path.join(pd, name + ".jsonl"), os.path.join(d, name + ".jsonl"))
+head = [user("2026-11-22T10:00:00Z", "Set `Zeta` to 5 and `MaxVal` to 1.", "t1"), asst("2026-11-22T10:01:00Z", text("Done."), "t2"),
+        user("2026-11-22T10:02:00Z", "Change `Zeta` to 7 and `MaxVal` to 2.", "t3"), asst("2026-11-22T10:03:00Z", text("Done."), "t4"),
+        user("2026-11-22T10:04:00Z", "Check it.", "tcur")]
+call = asst("2026-11-22T10:05:00Z", [{"type": "tool_use", "id": "x1", "name": "Read", "input": {"file_path": "/x/w.conf"}}], "t5")
+def res(content): return {"type": "user", "timestamp": "2026-11-22T10:05:01Z", "uuid": "r1", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "x1", "content": content}]}}
+fin = asst("2026-11-22T10:06:00Z", text("Fine."), "t6")
+w3("zeta", head + [fin])
+w3("trstr", head + [call, res("Zeta=7"), fin])
+w3("trlist", head + [call, res([{"type": "text", "text": "Zeta=7"}]), fin])
+PY
+  o="$(HANDOFF_HISTORY_GUARD=block hg e1 zeta 'The `Zeta` is 10.')"; grep -q "history of Zeta:" <<<"$o" || fail "F77: a backticked Zeta did not fire: $o"
+  o="$(HANDOFF_HISTORY_GUARD=block hg e2 zeta 'The `MaxVal` is 10.')"; grep -q "history of MaxVal:" <<<"$o" || fail "F77: a backticked MaxVal did not fire: $o"
+  for t in trstr trlist; do o="$(HANDOFF_HISTORY_GUARD=block hg e3 "$t" 'The `Zeta` is 10.')"; [ -z "$o" ] || fail "F77: tool result ($t) did not exclude the anchor: $o"; done
+  python3 - "$ROOT/hooks" <<'PY'
+import importlib.util, sys
+def load(n, p):
+    s = importlib.util.spec_from_file_location(n, p); m = importlib.util.module_from_spec(s); s.loader.exec_module(m); return m
+g = load("gc", sys.argv[1] + "/guard_common.py"); a = load("ar", sys.argv[1] + "/auto-recall.py")
+corpus = ["The `Zeta` is 10.", "`MaxVal` and `dry` and `x1`", "set queue-limit and dry-run via a/b.c and_x https://a-b.c/d `my.key`", "as you said `value`",
+          "e.g. and/or i.e. foo.bar, `Foo`, `a-b`, `eu-west-1` `v2`", "plain words only here", "`two words` `snake_case` Camel.Case x-y-z 1.2.3"]
+for t in corpus:
+    assert g.identifiers(t) == a.identifiers(t) == g._identifiers_fallback(t), (t, g.identifiers(t), a.identifiers(t), g._identifiers_fallback(t))
+PY
+  ok "review fixes 2: backticked identifiers, tool result shapes, one identifier rule"
+
+  # Amendment A: the anchor is an identifier; its mentions are counted with the F73 token match (plain words count)
+  python3 - "$HOME" "$W" "$D" <<'PY'
+import json, os, re, sys
+home, w, d = sys.argv[1:4]
+real = os.path.realpath(w)
+pd = os.path.join(home, ".claude", "projects", re.sub(r"[^A-Za-z0-9]", "-", real))
+def rec(t, ts, content, u=None):
+    r = {"type": t, "timestamp": ts, "cwd": real, "sessionId": "ssss0004", "parentUuid": None, "isSidechain": False, "userType": "external",
+         "message": {"role": t, "content": content}}
+    if u: r["uuid"] = u
+    return r
+rows = []
+for name in ("Quark", "Vexel"):
+    rows += [rec("user", "2026-03-01T10:00:00.000Z", "%s step 0 is the value 0" % name, "%s-0" % name),
+             rec("assistant", "2026-03-01T10:01:00.000Z", [{"type": "text", "text": "%s step 1 is the value 10" % name}], "%s-1" % name),
+             rec("user", "2026-03-01T10:02:00.000Z", "%s step 2 is the value 20" % name, "%s-2" % name)]
+rows += [dict(rec("assistant", "2026-03-01T13:00:00Z", [{"type": "text", "text": "working"}]), message={"role": "assistant", "content": [{"type": "text", "text": "working"}], "usage": {"input_tokens": 150000, "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0, "output_tokens": 0}}),
+         rec("user", "2026-03-02T12:00:00.000Z", "please go on with the task", "cur-p")]
+open(os.path.join(pd, "plain.jsonl"), "w").write("".join(json.dumps(r) + "\n" for r in rows))
+os.symlink(os.path.join(pd, "plain.jsonl"), os.path.join(d, "plain.jsonl"))
+PY
+  for k in Quark Vexel; do
+    o="$(HANDOFF_HISTORY_GUARD=block hg f1$k plain "The \`$k\` is 10.")"
+    python3 - "$o" "$k" <<'PY'
+import json, sys
+t = json.loads(sys.argv[1])["hookSpecificOutput"]["additionalContext"]; k = sys.argv[2]
+assert "history of %s: 3 mention(s)" % k in t, t
+PY
+  done
+  o="$(HANDOFF_HISTORY_GUARD=block hg f2 plain "The \`VEXEL\` is 10.")"; grep -q "history of VEXEL: 3 mention(s)" <<<"$o" || fail "F77: case-insensitive count: $(cut -c1-300 <<<"$o")"
+  o="$(HANDOFF_HISTORY_GUARD=block hg f3 plain "Quark is 10.")"; [ -z "$o" ] || fail "F77: a bare capital word fired"
+  o="$(HANDOFF_ACTION_GUARD=inject ag f4 plain '[{"tool_name":"Bash","tool_input":{"command":"echo `Quark` 10"}}]')"; grep -q "history of Quark:" <<<"$o" || fail "F80: plain-word mentions not counted"
+  ok "Amendment A: anchor is an identifier, mentions counted by the F73 token match (F77, F80)"
+
+  # F78: size trigger in auto-recall
+  mkdir -p "$HOME/.claude/hooks"
+  ar() { python3 -c 'import json,sys; print(json.dumps({"session_id":"z1","transcript_path":sys.argv[1],"cwd":sys.argv[3],"prompt":sys.argv[2]}))' "$D/${3:-main}.jsonl" "$1" "${2:-$W}" | python3 "$AR"; }
+  RLOG="$HANDOFF_STATE_DIR/auto-recall.jsonl"; P="Now write the file with the queue-limit value."
+  [ -z "$(ar "$P")" ] || fail "F78: no marker, but output"
+  : > "$HOME/.claude/hooks/.recall-size-trigger"
+  o="$(ar "$P")"
+  grep -q "^Lossless Handoff" <<<"$o" && grep -q "queue-limit" <<<"$o" && ! grep -q "queue-limit-eu" <<<"$(head -n 1 <<<"$o")" || fail "F78: no history output: $o"
+  python3 - "$RLOG" <<'PY'
+import json, sys
+r = [json.loads(l) for l in open(sys.argv[1])][-1]
+assert r["cue"] == "size" and r["mode"] == "history" and r["identifiers"] == 1 and r["fired"] is True, r
+PY
+  n0="$(wc -l < "$RLOG")"
+  [ -z "$(HANDOFF_AUTO_RECALL_SIZE=0 ar "$P")" ] || fail "F78: switch 0"
+  [ -z "$(ar "$P" "$W" small)" ] || fail "F78: small context"
+  [ -z "$(HANDOFF_AUTO_RECALL_TOKENS=900000 ar "$P")" ] || fail "F78: token env"
+  [ -z "$(ar "/compact queue-limit")" ] || fail "F78: slash prompt"
+  [ -z "$(ar "Use the region eu-west-1 now.")" ] || fail "F78: a fact stated one time"
+  [ -z "$(ar "$P" "$W2")" ] || fail "F78: an existing path"
+  [ -z "$(ar "Write the file with no key at all.")" ] || fail "F78: no identifier"
+  [ "$(wc -l < "$RLOG")" = "$n0" ] || fail "F78: a row for a no-fire case"
+  o="$(ar "As we decided, queue-limit is 75.")"; [ "$(python3 -c 'import json,sys; print(json.loads(open(sys.argv[1]).read().splitlines()[-1])["cue"] != "size")' "$RLOG")" = True ] || fail "F78: a cue prompt did not keep its cue"
+  r=0; o="$(echo "not json" | python3 "$AR")" || r=$?; [ "$r" = 0 ] && [ -z "$o" ] || fail "F78: bad stdin"
+  r=0; o="$(python3 -c 'import json; print(json.dumps({"prompt":"queue-limit now","transcript_path":"/no/such","cwd":"/tmp"}))' | python3 "$AR")" || r=$?; [ "$r" = 0 ] && [ -z "$o" ] || fail "F78: missing transcript"
+  ok "F78: marker gate, history output, cue size, switch, token env, slash, once-fact, path, no identifier, cue kept, errors"
+)
+# F77, F78, F80: install, default off, dry-run, entries, kept message, skip message, uninstall, saved defaults
+(
+  set -e
+  export HOME="$T/f77inst"; mkdir -p "$HOME/.claude"; F="$HOME/.claude/hooks"; FS="$HOME/.claude/settings.json"; DF="$HOME/.config/lossless-handoff/install-defaults"
+  echo '{"model": "opus"}' > "$FS"
+  for fl in history-guard action-guard recall-size-trigger; do grep -q -- "--$fl" <<<"$("$ROOT/install.sh" --help)" || fail "F77: --help lacks --$fl"; done
+  "$ROOT/install.sh" >/dev/null
+  [ ! -e "$F/history-guard.py" ] && [ ! -e "$F/action-guard.py" ] && [ ! -e "$F/guard_common.py" ] && [ ! -e "$F/.recall-size-trigger" ] && ! grep -Eq "history-guard|action-guard|guard_common|recall-size" "$FS" "$F/.handoff-manifest.json" || fail "F77: the default install holds them"
+  ! grep -Eq "history-guard|action-guard|recall-size" <<<"$("$ROOT/install.sh" --dry-run)" || fail "F77: default dry-run mentions them"
+  # F78 without auto-recall: the skip message, exit 0, no marker
+  r=0; o="$("$ROOT/install.sh" --recall-size-trigger)" || r=$?
+  [ "$r" = 0 ] && grep -qx "recall-size-trigger: needs --auto-recall; skipped" <<<"$o" && [ ! -e "$F/.recall-size-trigger" ] || fail "F78: skip: $o"
+  cp "$FS" "$T/f77-before.json"
+  o="$("$ROOT/install.sh" --auto-recall --history-guard --action-guard --recall-size-trigger --dry-run)"
+  grep -q "install hook: .*/history-guard.py" <<<"$o" && grep -q "install hook: .*/action-guard.py" <<<"$o" && grep -q "install hook: .*/guard_common.py" <<<"$o" && grep -q "add Stop history-guard hook" <<<"$o" && grep -q "add PostToolBatch action-guard hook" <<<"$o" && grep -q ".recall-size-trigger" <<<"$o" || fail "F77: dry-run: $o"
+  [ ! -e "$F/history-guard.py" ] && cmp -s "$FS" "$T/f77-before.json" || fail "F77: dry-run changed something"
+  "$ROOT/install.sh" --auto-recall --history-guard --action-guard --recall-size-trigger >/dev/null
+  [ -x "$F/history-guard.py" ] && [ -x "$F/action-guard.py" ] && [ -e "$F/guard_common.py" ] && [ -e "$F/.recall-size-trigger" ] && grep -q '"history-guard.py"' "$F/.handoff-manifest.json" && grep -q '"action-guard.py"' "$F/.handoff-manifest.json" && grep -q '"guard_common.py"' "$F/.handoff-manifest.json" || fail "F77: files or manifest"
+  python3 - "$FS" "$F" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1])); f = sys.argv[2]
+hg = "python3 %s/history-guard.py" % f; ag = "python3 %s/action-guard.py" % f
+s = [x for x in d["hooks"]["Stop"] if any(h["command"] == hg for h in x["hooks"])]
+assert len(s) == 1 and [h for h in s[0]["hooks"] if h["command"] == hg] == [{"type": "command", "command": hg, "timeout": 5}], s
+b = [x for x in d["hooks"]["PostToolBatch"] if any(h["command"] == ag for h in x["hooks"])]
+assert len(b) == 1 and [h for h in b[0]["hooks"] if h["command"] == ag] == [{"type": "command", "command": ag, "timeout": 5}], b
+assert d["model"] == "opus"
+PY
+  o="$("$ROOT/install.sh")"
+  grep -qx "history-guard: already installed, kept" <<<"$o" && grep -qx "action-guard: already installed, kept" <<<"$o" && grep -qx "recall-size-trigger: already installed, kept" <<<"$o" || fail "F77: kept messages: $o"
+  o="$("$ROOT/install.sh" --no-history-guard --no-action-guard --no-recall-size-trigger)"
+  [ -x "$F/history-guard.py" ] && [ -e "$F/.recall-size-trigger" ] && grep -q "history-guard.py" "$FS" || fail "F77: --no-* removed something"
+  "$ROOT/install.sh" --history-guard --action-guard >/dev/null
+  [ "$(grep -c "history-guard.py" "$FS")" = 1 ] && [ "$(grep -c "action-guard.py" "$FS")" = 1 ] || fail "F77: registered twice"
+  o="$("$ROOT/uninstall.sh" --dry-run)"; grep -q "history-guard.py" <<<"$o" && grep -q "action-guard.py" <<<"$o" && grep -q "recall-size-trigger" <<<"$o" || fail "F77: uninstall dry-run"
+  [ -e "$F/history-guard.py" ] || fail "F77: uninstall dry-run removed a file"
+  "$ROOT/uninstall.sh" >/dev/null
+  [ ! -e "$F/history-guard.py" ] && [ ! -e "$F/action-guard.py" ] && [ ! -e "$F/guard_common.py" ] && [ ! -e "$F/.recall-size-trigger" ] && ! grep -Eq "history-guard|action-guard" "$FS" || fail "F77: uninstall left something"
+  python3 -c "import json,sys; d=json.load(open(sys.argv[1])); assert d == {'model': 'opus'}, d" "$FS" || fail "F77: settings not restored"
+  # saved defaults
+  "$ROOT/install.sh" --save-defaults --auto-recall --history-guard --action-guard --recall-size-trigger >/dev/null
+  grep -qx "history_guard=1" "$DF" && grep -qx "action_guard=1" "$DF" && grep -qx "recall_size_trigger=1" "$DF" && [ -x "$F/history-guard.py" ] && [ -e "$F/.recall-size-trigger" ] || fail "F77: --save-defaults"
+  "$ROOT/uninstall.sh" >/dev/null
+  o="$("$ROOT/install.sh" --dry-run)"; grep -q "saved defaults.*history" <<<"$o" && grep -q "history-guard.py" <<<"$o" || fail "F77: saved default not applied: $o"
+  "$ROOT/install.sh" --no-history-guard --no-action-guard --no-recall-size-trigger --no-auto-recall >/dev/null
+  [ ! -e "$F/history-guard.py" ] && [ ! -e "$F/action-guard.py" ] && [ ! -e "$F/.recall-size-trigger" ] && grep -qx "history_guard=1" "$DF" || fail "F77: --no-* did not skip, or touched the default"
+  "$ROOT/install.sh" --save-defaults --no-history-guard --no-action-guard --no-recall-size-trigger --no-auto-recall >/dev/null
+  ! grep -Eq "history_guard|action_guard|recall_size_trigger" "$DF" || fail "F77: --save-defaults --no-* kept the lines"
+  ok "F77, F78, F80: install, default off, skip message, dry-run, entries, kept messages, uninstall, saved defaults"
 )
 
 # F73-F75 amendments (PR #41 review): slots, current session by id, redaction before the split, whole-token ranking
