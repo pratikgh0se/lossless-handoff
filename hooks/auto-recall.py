@@ -85,6 +85,10 @@ def write_health(hits, timed_out):
     try:
         os.makedirs(STATE_DIR, exist_ok=True)
         fd = os.open(os.path.join(STATE_DIR, "auto-recall.jsonl"), os.O_APPEND | os.O_CREAT | os.O_WRONLY, 0o600)
+        try:
+            os.fchmod(fd, 0o600)  # an existing log with looser rights is tightened
+        except OSError:
+            pass
         with os.fdopen(fd, "a", encoding="utf-8") as f:
             f.write(json.dumps({"ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "session_id": str(_state["sid"])[:36],
                                 "fired": True, "cue": _state["cue"], "hits": int(hits),
