@@ -770,19 +770,19 @@ class Design3(unittest.TestCase):
     def test_cost_of_the_three_runs(self):
         smoke, _, _ = cost.estimate3(1, ["A", "B", "R", "K"], [1, 3], ["compact", "nocompact"])
         nc_smoke, _, _ = cost.estimate3(1, ["A", "R"], [1, 3, 10], ["nocompact"])
-        self.assertTrue(8 < nc_smoke < 12, nc_smoke)
+        self.assertTrue(1.5 < nc_smoke < 5, nc_smoke)       # calibrated with the first preflight run (CAL_NC_MAIN, CAL_NC_FORK)
         pilot, _, _ = cost.estimate3(2, ["A", "B", "R", "K"], [1, 3, 10], ["compact", "nocompact"])
         full, _, _ = cost.estimate3(20, ["A", "B", "R", "K", "Z", "O"], [1, 3, 10], ["compact", "nocompact"])
         self.assertTrue(40 < smoke < 60, smoke)
         self.assertTrue(150 < pilot < 250, pilot)
-        self.assertTrue(1900 < full < 3000, full)
+        self.assertTrue(1800 < full < 3000, full)
         nc_main, nc_forks = cost.d3_nc_main(), cost.d3_nc_forks()
-        self.assertLess(nc_forks, nc_main)                           # one main session for each seed: the forks are cheaper than the session
+        self.assertTrue(0.5 < nc_forks / nc_main < 2.0, (nc_forks, nc_main))      # measured (first preflight run): the forks of one arm cost about as much as the main session
         self.assertLess(cost.estimate3(1, ["A", "B", "R", "K"], [10], ["nocompact"])[0], 4 * cost.d3_nc_unit())    # saving: B, R and K do not run their own session
         f23, _, _ = cost.estimate3(23, ["A", "B", "R", "K", "Z", "O"], [1, 3, 10, 30], ["compact", "nocompact"])
         f23r, _, _ = cost.estimate3(23, ["A", "B", "R", "K", "Z", "O"], [1, 3, 10, 30], ["compact", "nocompact"], skip=(("R", "compact"),))
         self.assertTrue(f23r < f23 and f23 > full, (f23, f23r))
-        self.assertGreater(cost.d3_nc_unit(), cost.NC_UNIT)        # a 300k session costs more than the short one of design 2
+        self.assertGreater(cost.d3_nc_unit(), 0.5)                  # calibrated with the first preflight run; the old design-2 unit of $5 was an assumption
         self.assertGreater(cost.ARM_FACTOR["K"], cost.ARM_FACTOR["R"])
         txt = "\n".join(cost.ASSUMPTIONS3)
         for w in ("prices", "75 turns", "probe forks", "slack", "cache has expired", "power"):
@@ -919,11 +919,12 @@ def make_pf_run(root, **flaws):
                     fired = True
                 if fired:
                     open(os.path.join(statedir, "auto-recall.jsonl"), "a").write(json.dumps({"session_id": fsid, "fired": True, "hits": 1}) + "\n")
-            row = {"seed": 1, "arm": arm, "condition": cond, "type": t, "phrasing": ph, "n_target": n_t, "fork_sid": fsid, "parse_ok": not flaws.get("bad_parse"),
+            row = {"seed": 1, "arm": arm, "condition": cond, "type": t, "phrasing": ph, "n_target": n_t, "fork_sid": fsid, "parse_ok": not flaws.get("bad_parse") and not (flaws.get("deviation") and arm == "O"), "parsed": {"id": 1} if flaws.get("deviation") else None,
                    "correct": True, "used_lookup": None if flaws.get("no_used_lookup") else False, "auto_recall_fired": fired,
                    "search_kinds": ["mcp"] if (arm == "K" and ph == "cued") else []}
             if view:
-                row.update(fork_injected=True, fork_rule_line=not (flaws.get("k_no_rule_fork") and arm == "K"))
+                row.update(fork_injected=True, fork_rule_line=not (flaws.get("k_no_rule_fork") and arm == "K"),
+                           fork_rule_source=["mcp_instructions"] if arm == "K" else [])
             rows.append(row)
     with open(os.path.join(rd, "results.jsonl"), "w") as f:
         for r in rows:
@@ -1629,7 +1630,7 @@ class Round5(unittest.TestCase):
         self.assertEqual(line[1], "INFO")
         self.assertIn("K = R + MCP tool", line[2])
         ok = [x for x in Preflight().run_check() if "every no-compaction fork" in x[0]][0]
-        self.assertIn("K = R + recall rule line + MCP tool", ok[2])
+        self.assertIn("K = R + recall rule line (from MCP server instructions, not a hook) + MCP tool", ok[2])
         info = [x for x in res if "live ~/.claude/hooks/recall.py" in x[0]]
         self.assertEqual(len(info), 1)
         self.assertEqual(info[0][1], "INFO")
@@ -1649,7 +1650,7 @@ class Round5(unittest.TestCase):
         v1 = cost.estimate3(23, ["A", "B", "R", "K", "Z", "O"], [1, 3, 10, 30], ["compact", "nocompact"])[0]
         v3 = cost.estimate3(23, ["A", "B", "R", "K", "Z", "O"], [1, 3, 10, 30], ["compact", "nocompact"], n_by_arm={"R": [1, 3, 10], "K": [1, 3, 10]})[0]
         v5 = cost.estimate3(23, ["A", "B", "K", "Z", "O"], [1, 3, 10, 30], ["compact", "nocompact"], n_by_arm={"K": [10]})[0]
-        self.assertTrue(5500 < v1 < 5700 and 3800 < v3 < 4000 and 3350 < v5 < 3550, (v1, v3, v5))
+        self.assertTrue(5350 < v1 < 5550 and 3650 < v3 < 3850 and 3200 < v5 < 3350, (v1, v3, v5))     # calibrated
         self.assertLess(v5, v3)
         self.assertLess(v3, v1)
         self.assertEqual(cost.estimate_per_seed(dict(k3, kind="litm3-full-v3", arms=k3["arms"].split(","), conditions=k3["conditions"].split(","), phrasings=k3["phrasings"].split(","))) * 23, v3)
@@ -1744,6 +1745,94 @@ class AbortGates(unittest.TestCase):
         src = open(os.path.join(HERE, "runner.py"), encoding="utf-8").read()
         self.assertIn("ex.submit(run_unit_gated", src)
         self.assertIn("--ignore-gates", src)
+
+
+class Round6(unittest.TestCase):
+    """Fixes from the first real preflight run (20261122T110446-preflight). The fixture holds a real record and a real reply, ids removed."""
+    @classmethod
+    def setUpClass(cls):
+        with open(os.path.join(FIX, "preflight-real-shapes.json"), encoding="utf-8") as f:
+            cls.fx = json.load(f)
+
+    # item 2: the real instruction record is an MCP server record, not a file
+    def test_real_mcp_instructions_record_is_not_a_foreign_file(self):
+        rec = self.fx["mcp_instructions_record"]
+        self.assertEqual(sorted(rec["attachment"]), ["addedBlocks", "addedNames", "removedNames", "type"])
+        self.assertEqual(rec["attachment"]["type"], "mcp_instructions_delta")
+        self.assertEqual(gates.instruction_paths([rec]), [])
+        self.assertEqual(gates.foreign_instructions([rec], "/work/proj"), [])
+        self.assertEqual(gates.mcp_instruction_servers([rec]), ["lossless-recall"])
+
+    def test_a_real_file_outside_the_project_still_fails(self):
+        rec = self.fx["mcp_instructions_record"]
+        f = {"type": "instructions", "files": [{"path": "/Users/u/.claude/CLAUDE.md", "type": "User"}]}
+        self.assertEqual(gates.foreign_instructions([rec, f], "/work/proj"), ["/Users/u/.claude/CLAUDE.md"])
+        self.assertEqual(gates.foreign_instructions([rec, {"type": "instructions"}], "/work/proj"), ["?"])    # unknown file path is still foreign
+
+    def test_rule_line_source(self):
+        rec = self.fx["mcp_instructions_record"]
+        rule = "recall rule: before you state an earlier number"
+        self.assertEqual(gates.rule_line_sources([rec, {"type": "user"}], rule), ["mcp_instructions"])
+        hook = {"type": "attachment", "attachment": {"type": "hook_additional_context", "content": rule}}
+        self.assertEqual(gates.rule_line_sources([rec, hook], rule), ["hook", "mcp_instructions"])
+        self.assertEqual(gates.rule_line_sources([{"type": "user", "message": rule}], rule), ["other"])
+        self.assertEqual(gates.rule_line_sources([], rule), [])
+
+    # item 3: one list of overrides
+    def test_every_runner_override_is_allowed(self):
+        import re
+        src = open(os.path.join(HERE, "runner.py"), encoding="utf-8").read()
+        names = set(re.findall(r'ov\["([A-Z_]+)"\]', src)) | set(re.findall(r'ov = \{"([A-Z_]+)"', src)) | {"DISABLE_AUTOUPDATER"}
+        self.assertTrue({"DISABLE_AUTOUPDATER", "DISABLE_AUTO_COMPACT", "HANDOFF_HOOKS_HOME"} <= names, names)
+        import preflight
+        allowed = preflight.allowed_env_names({})
+        self.assertTrue(names <= allowed, names - allowed)
+        self.assertIn("DISABLE_AUTOUPDATER", allowed)
+
+    # item 1: the real six rows
+    def test_real_e_reply_with_proceed_null(self):
+        items = [{"id": int(i), "ecode": c} for i, c in sorted(self.fx["e_item_codes"].items())]
+        g = grade.grade("E", items, self.fx["e_reply_raw"])
+        self.assertEqual(len(g), 6)
+        # unchanged rule: proceed null is neither an answer nor an abstention (the main field is reason_code)
+        self.assertTrue(all(not x["parse_ok"] and not x["correct"] and not x["abstained"] for x in g))
+        self.assertTrue(all(isinstance(x["parsed"], dict) for x in g))       # the entry was read: a model format deviation, not a harness error
+        ok = self.fx["e_reply_raw"].replace('"proceed":null', '"proceed":false')
+        g2 = grade.grade("E", items, ok)
+        self.assertTrue(all(x["parse_ok"] and x["correct"] for x in g2))
+
+    def test_e_prompt_names_the_main_field_for_every_arm(self):
+        s = gen.build_litm3(7)
+        for fn in (lambda: gen.neutral_probe_prompt("E", s, "M1"), lambda: gen.nonliteral_probe_prompt("E", s, "M1")):
+            self.assertIn("main field is reason_code", fn())
+        self.assertNotIn("reason_code. Always", gen.neutral_probe_prompt("R", s, "M1"))
+
+    def test_preflight_separates_format_deviation_from_unreadable_reply(self):
+        p = Preflight()
+        res = p.run_check(deviation=True)
+        line = [x for x in res if "parsed and graded" in x[0]][0]
+        self.assertEqual(line[1], "PASS")
+        self.assertIn("model format deviations (entry read, field rejected): ", line[2])
+        self.assertIn("unreadable or not graded: 0", line[2])
+        self.assertEqual(p.status(p.run_check(bad_parse=True), "parsed and graded"), "FAIL")
+
+    # item 4: the big paste
+    def test_big_paste_sizing_from_measured_tokens_per_char(self):
+        self.assertAlmostEqual(runner.BIG_TOKENS_PER_CHAR, (467684 - runner.O_OVERHEAD_TOKENS) / 961706, delta=0.01)
+        docs = runner.big_docs(961706 / 43.0)
+        tokens = runner.O_OVERHEAD_TOKENS + docs * (961706 / 43.0) * (467684 - runner.O_OVERHEAD_TOKENS) / 961706
+        self.assertTrue(280000 <= tokens <= 320000, (docs, tokens))
+        self.assertEqual(runner.BIG_CAP_USD, 2.5)
+        self.assertEqual(cost.BIG_PRICE_RATIO, 1.06)
+
+    # item 6: calibration
+    def test_cost_calibration_constants(self):
+        self.assertAlmostEqual(cost.CAL_NC_MAIN, 0.0921 / 0.6435, delta=0.01)
+        self.assertAlmostEqual(cost.CAL_NC_FORK, 0.1092 / 0.2340, delta=0.01)
+        self.assertAlmostEqual(cost.K_FORK_VS_A, 0.4279 / 0.1092, delta=0.05)
+        self.assertEqual(cost.ARM_FACTOR["K"], cost.K_FORK_VS_A)
+        total, _ = cost.estimate_preflight()
+        self.assertTrue(2.5 < total < 4.5, total)
 
 
 if __name__ == "__main__":

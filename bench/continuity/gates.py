@@ -3,6 +3,7 @@
 The thresholds are fixed here and in README.md (ladder), before any data. A gate stops the run with a clear message.
 The run can resume from the last finished seed (run.sh resume <run-id>). To switch the gates off you need --ignore-gates --i-know.
 """
+import json
 import os
 
 INVALID_RATE_MAX = 0.10      # invalid sessions / finished sessions
@@ -116,7 +117,8 @@ def instruction_paths(records):
             continue
         cands = [r] + [r[k] for k in ("attachment", "data", "message") if isinstance(r.get(k), dict)]
         for c in cands:
-            if "instructions" in str(c.get("type", "")).lower():
+            t = str(c.get("type", "")).lower()
+            if "instructions" in t and "mcp" not in t:          # mcp_instructions_delta is a record of MCP server instructions, not a file
                 if isinstance(c.get("files"), list):          # the real record shape: files[].path (each file has a type such as Project or User)
                     out += [f["path"] if isinstance(f, dict) and isinstance(f.get("path"), str) and f.get("path") else "?" for f in c["files"]]
                     break
@@ -124,6 +126,30 @@ def instruction_paths(records):
                 out.append(p or "?")
                 break
     return out
+
+
+def mcp_instruction_servers(records):
+    """Names of the MCP servers whose instructions Claude Code added to the session. The real record (claude 2.1.326) has the type
+    'mcp_instructions_delta' inside the key attachment, with the keys type, addedNames (list of server names), addedBlocks (list of text), removedNames."""
+    out = []
+    for r in records:
+        a = r.get("attachment") if isinstance(r, dict) else None
+        if isinstance(a, dict) and a.get("type") == "mcp_instructions_delta" and isinstance(a.get("addedNames"), list):
+            out += [n for n in a["addedNames"] if isinstance(n, str)]
+    return out
+
+
+def rule_line_sources(records, text):
+    """Where does a text (the recall rule sentence) appear in the records of a transcript? Returns a sorted list of labels:
+    'mcp_instructions' (an mcp_instructions_delta record), 'hook' (a record whose type holds the word hook), 'other'."""
+    found = set()
+    for r in records:
+        if not isinstance(r, dict) or text not in json.dumps(r):
+            continue
+        a = r.get("attachment") if isinstance(r.get("attachment"), dict) else {}
+        t = (str(a.get("type", "")) + " " + str(r.get("type", ""))).lower()
+        found.add("mcp_instructions" if "mcp_instructions" in t else "hook" if "hook" in t else "other")
+    return sorted(found)
 
 
 def project_instructions(records, proj):

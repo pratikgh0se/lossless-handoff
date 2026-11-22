@@ -1,0 +1,40 @@
+{
+ "mcp_instructions_record": {
+  "parentUuid": "00000000-0000-0000-0000-000000000000",
+  "isSidechain": false,
+  "attachment": {
+   "type": "mcp_instructions_delta",
+   "addedNames": [
+    "lossless-recall"
+   ],
+   "addedBlocks": [
+    "## lossless-recall\n- recall rule: before you state an earlier number, path, name, command or decision, search for it. Do not answer from memory. If the search finds nothing, say so.\nUse search_earlier_chat to find exact earlier messages of this project (word for word, secrets masked). Use open_message with a hit id to read the full message."
+   ],
+   "removedNames": []
+  },
+  "type": "attachment",
+  "uuid": "00000000-0000-0000-0000-000000000000",
+  "timestamp": "2026-01-01T00:00:00.000Z",
+  "rendered": [
+   {
+    "content": "<system-reminder>\n# MCP Server Instructions\n\nThe following MCP servers have provided instructions for how to use their tools and resources:\n\n## lossless-recall\n- recall rule: before you state an earlier number, path, name, command or decision, search for it. Do not answer from memory. If the search finds nothing, say so.\nUse search_earlier_chat to find exact earlier messages of this project (word for word, secrets masked). Use open_message with a hit id to read the full message.\n</system-reminder>"
+   }
+  ],
+  "renderedRole": "system",
+  "userType": "external",
+  "entrypoint": "sdk-cli",
+  "cwd": "/work/proj",
+  "sessionId": "00000000-0000-0000-0000-000000000000",
+  "version": "2.1.326",
+  "gitBranch": "HEAD"
+ },
+ "e_reply_raw": "```json\n{\"answers\":[{\"id\":1,\"proceed\":null,\"reason_code\":\"ERR-3709-TULWER\"},{\"id\":2,\"proceed\":null,\"reason_code\":\"ERR-2702-GHY4J3\"},{\"id\":3,\"proceed\":null,\"reason_code\":\"ERR-0471-BXTJBF\"},{\"id\":4,\"proceed\":null,\"reason_code\":\"ERR-1194-8A6D78\"},{\"id\":5,\"proceed\":null,\"reason_code\":\"ERR-7782-GPJ9HX\"},{\"id\":6,\"proceed\":null,\"reason_code\":\"ERR-1422-U8QC8F\"}]}\n```",
+ "e_item_codes": {
+  "1": "ERR-3709-TULWER",
+  "2": "ERR-2702-GHY4J3",
+  "3": "ERR-0471-BXTJBF",
+  "4": "ERR-1194-8A6D78",
+  "5": "ERR-7782-GPJ9HX",
+  "6": "ERR-1422-U8QC8F"
+ }
+}

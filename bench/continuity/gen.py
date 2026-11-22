@@ -335,6 +335,11 @@ def probe_prompt(ptype, script, marker, ckpt=None, items=None, phrasing="cued", 
     return head + body + "\nReply with JSON only, in this form: " + form
 
 
+# Type E has two fields. In the first preflight run (2026-11-22) the oracle arm answered 6 of 6 E items with the right code and "proceed": null,
+# because "the main field" was not clear. The note names the main field. It is the same for every arm.
+E_NOTE = " For error codes the main field is reason_code. Always set proceed to true or false."
+
+
 # ---- position and phrasing (probe design 2, added with the lost-in-the-middle design; see README.md)
 # These helpers read a script. They never change a script, so every old seed gives the same script and the same old probe text.
 FILL_PER_EPOCH = 6                       # nominal filler turns after the plant turns of each epoch
@@ -404,7 +409,7 @@ def neutral_probe_prompt(ptype, script, marker, items=None):
     """Neutral probe text: the same JSON form and the same grader as the cued probe, a different question."""
     if items is None:
         items = script["items"][ptype]
-    head = "[%s] Do not guess. If you do not know a value, set the main field to null.\n" % marker
+    head = "[%s] Do not guess. If you do not know a value, set the main field to null.%s\n" % (marker, E_NOTE if ptype == "E" else "")
     body = "\n".join("%d. %s" % (x["id"], neutral_question(ptype, x)) for x in items)
     form = {"X": '{"answers":[{"id":1,"current":"...","replaced":["..."]}]}',
             "E": '{"answers":[{"id":1,"proceed":true,"reason_code":"..."}]}'}.get(ptype, '{"answers":[{"id":1,"answer":"..."}]}')
@@ -467,7 +472,7 @@ def nonliteral_probe_prompt(ptype, script, marker, items=None):
     """Same head, JSON form and grader as the neutral probe. Only the question differs."""
     if items is None:
         items = script["items"][ptype]
-    head = "[%s] Do not guess. If you do not know a value, set the main field to null.\n" % marker
+    head = "[%s] Do not guess. If you do not know a value, set the main field to null.%s\n" % (marker, E_NOTE if ptype == "E" else "")
     body = "\n".join("%d. %s" % (x["id"], nonliteral_question(ptype, x)) for x in items)
     form = {"X": '{"answers":[{"id":1,"current":"...","replaced":["..."]}]}',
             "E": '{"answers":[{"id":1,"proceed":true,"reason_code":"..."}]}'}.get(ptype, '{"answers":[{"id":1,"answer":"..."}]}')
