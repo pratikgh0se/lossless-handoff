@@ -1,7 +1,7 @@
 {
-  "version": 5,
+  "version": 6,
   "registered": "2026-11-18",
-  "note": "Pass thresholds. They come from the verification plan. v2 adds the headroom gate for generator v4. Committed before any v4 run. Do not change after a run to make a result pass. v3 adds the litm block (lost in the middle, phrasing, auto-recall), committed before any run of probe design 2. v4 adds H1n, H6, H7 and the design-3 settings, committed before any run of probe design 3. v5 adds the audit fixes (null-control margin, H7 ceiling, design-3 controls, pilot stop rule as fork counts), committed before any run of probe design 3.",
+  "note": "Pass thresholds. They come from the verification plan. v2 adds the headroom gate for generator v4. Committed before any v4 run. Do not change after a run to make a result pass. v3 adds the litm block (lost in the middle, phrasing, auto-recall), committed before any run of probe design 2. v4 adds H1n, H6, H7 and the design-3 settings, committed before any run of probe design 3. v5 adds the audit fixes (null-control margin, H7 ceiling, design-3 controls, pilot stop rule as fork counts), committed before any run of probe design 3. v6 (round 5): the K label depends on the data (fork_rule_line), the full run is V3, DISABLE_AUTOUPDATER is set.",
   "amnesia_max_accuracy": 0.02,
   "oracle_min_accuracy": 0.95,
   "fresh_min_accuracy": 0.95,
@@ -74,7 +74,7 @@
       ],
       "nonliteral_content_word_overlap_with_plant": 0,
       "filler": "pasted documents in user turns, one small task each (not graded)",
-      "no_compaction": "one main session for each seed, run as arm A; arms A, B, R and K fork it at the probe point with their own settings. B tests the startup injection only, R adds auto-recall, K adds recall rules and the MCP tool."
+      "no_compaction": "one main session for each seed, run as arm A; arms A, B, R and K fork it at the probe point with their own settings. B tests the startup injection only, R adds auto-recall, K adds the MCP tool, and the recall rule line only if the preflight shows it in the K forks (fork_rule_line true)."
     },
     "registered_v5": "2026-11-22",
     "null_control_margin_points": 5,
@@ -94,6 +94,8 @@
       "null_control_pass_required": true,
       "controls_pass_required": true,
       "invalid_session_rate_max": 0.1
-    }
+    },
+    "k_label_rule": "If every K no-compaction fork has the recall rule line in its transcript (fork_rule_line true): K = R + recall rule line + MCP tool. Otherwise: K = R + MCP tool. The report prints the label from the data (out k_label).",
+    "full_run": "litm3-full-v3 is the default full run (23 seeds; compaction: A and B to N=30, R and K to N=10). litm3-full-v5 (no R, K at N=10 only) and litm3-full (V1, as designed) stay available."
   }
 }

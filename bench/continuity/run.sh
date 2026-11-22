@@ -22,7 +22,7 @@ D="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cmd="${1:-}"
 [ $# -gt 0 ] && shift
 case "$cmd" in
-  slice|full|preflight|litm-smoke|litm-pilot|litm-full|litm3-smoke|litm3-nc-smoke|litm3-pilot|litm3-full)
+  slice|full|preflight|litm-smoke|litm-pilot|litm-full|litm3-smoke|litm3-nc-smoke|litm3-pilot|litm3-full|litm3-full-v3|litm3-full-v5)
     python3 "$D/runner.py" run "$cmd" "$@"
     rc=$?
     if [ "$cmd" = preflight ] && [ "$rc" -ne 3 ] && [ "$rc" -ne 4 ]; then

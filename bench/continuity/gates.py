@@ -97,6 +97,14 @@ def abort_reasons(sessions, rows, est_per_seed, finished_seeds, session_costs=No
     return why
 
 
+def version_reasons(cfg_version, versions):
+    """The Claude Code version must not change inside a run (the updater is off, but check). versions: {session name: version}."""
+    seen = {v for v in list(versions.values()) + [cfg_version] if v}
+    if len(seen) > 1:
+        return ["claude version changed inside the run: %s" % ", ".join(sorted(seen))]
+    return []
+
+
 def instruction_paths(records):
     """Paths of the instruction files (CLAUDE.md and rules) that Claude Code loaded, from the records of one transcript.
     A record counts when its type, or the type of its attachment, holds the word 'instructions'. The record shape of Claude Code is not
@@ -109,10 +117,19 @@ def instruction_paths(records):
         cands = [r] + [r[k] for k in ("attachment", "data", "message") if isinstance(r.get(k), dict)]
         for c in cands:
             if "instructions" in str(c.get("type", "")).lower():
+                if isinstance(c.get("files"), list):          # the real record shape: files[].path (each file has a type such as Project or User)
+                    out += [f["path"] if isinstance(f, dict) and isinstance(f.get("path"), str) and f.get("path") else "?" for f in c["files"]]
+                    break
                 p = next((c[k] for k in ("path", "filePath", "file_path", "source", "file") if isinstance(c.get(k), str) and c.get(k)), None)
                 out.append(p or "?")
                 break
     return out
+
+
+def project_instructions(records, proj):
+    """Instruction paths that are inside the project folder of the session (expected: none, the bench folders hold no CLAUDE.md)."""
+    base = os.path.realpath(proj)
+    return [p for p in instruction_paths(records) if p != "?" and (os.path.realpath(p) == base or os.path.realpath(p).startswith(base + os.sep))]
 
 
 def foreign_instructions(records, proj):

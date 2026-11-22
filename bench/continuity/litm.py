@@ -6,6 +6,8 @@ new design (no neutral rows, no no-compaction rows, no arm R). So the report of 
 It uses the same bootstrap as report.py: the seed is the unit, 95% interval, the draws and the RNG seed from thresholds.json.
 """
 import os, sys
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from gates import dedupe_rows  # noqa: E402
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -54,6 +56,7 @@ def section(rows, sessions, th, draws, helpers=None):
     from report import Boot, fmt_cell, fmt_diff, pct
     if not is_new(rows):
         return [], {}
+    rows = dedupe_rows(rows)        # a restarted session wrote its rows twice: keep the highest attempt
     lt = th.get("litm", {})
     cells = Cells(rows)
     S = len(cells.seeds)
@@ -319,18 +322,26 @@ def section(rows, sessions, th, draws, helpers=None):
         meas = "cued %s (%d/%d), neutral %s (%d/%d)" % (pct(cf[0] / cf[1]), cf[0], cf[1], pct(nf[0] / nf[1]), nf[0], nf[1])
     hyp("H5 (%s) the hook fires on cued probes and not on neutral probes" % lt.get("h5_label", "plumbing check"),
         "cued >= %s and neutral <= %s" % (pct(cmin), pct(nmax)), meas, res)
+    k_nc = [r for r in rows if r["arm"] == "K" and cond_of(r) == "nocompact"]
+    if not k_nc:
+        klabel = "K, no data"
+    elif all(r.get("fork_rule_line") for r in k_nc):
+        klabel = "K = R + recall rule line + MCP tool"
+    else:
+        klabel = "K = R + MCP tool (the recall rule line was not in the K forks)"
+    out["k_label"] = klabel
     # H6 and H7: do the recall levers (arm K) make the model search, and does it help? No compaction, neutral probes, K against B.
     vk = cells.vec(lambda r: base("K", "nocompact", "neutral")(r), val=lambda r: bool(r.get("used_lookup")))
     vb = cells.vec(lambda r: base("B", "nocompact", "neutral")(r), val=lambda r: bool(r.get("used_lookup")))
     d6 = boot.diff(*vk, *vb)
-    hyp("H6 search rate: K minus B, no compaction, neutral probes (K = R + recall rules + MCP tool at the start of the fork; reanchor cannot fire here)", "> 0 pts and CI lower bound > 0 (%s)" % lt.get("h6_note", "stop rule: if K does not search more than B in the pilot, stop and remove the levers"),
+    hyp("H6 search rate: K minus B, no compaction, neutral probes (%s; reanchor cannot fire here)" % klabel, "> 0 pts and CI lower bound > 0 (%s)" % lt.get("h6_note", "stop rule: if K does not search more than B in the pilot, stop and remove the levers"),
         fmt_diff(d6), "NO DATA" if d6[0] is None else ("SUPPORTED" if d6[0] > 0 and d6[1] > 0 else "NOT SUPPORTED"))
     d7 = boot.diff(*cells.vec(lambda r: base("K", "nocompact", "neutral")(r)), *cells.vec(lambda r: base("B", "nocompact", "neutral")(r)))
     p7 = lt.get("h7_k_minus_b_neutral_accuracy_min_points", 5)
     cb7, tb7 = cells.vec(lambda r: base("B", "nocompact", "neutral")(r))
     ceil7 = lt.get("h7_ceiling_max_accuracy", 0.95)
     too_easy7 = bool(sum(tb7)) and sum(cb7) / sum(tb7) > ceil7
-    hyp("H7 accuracy: K minus B, no compaction, neutral probes (K = R + recall rules + MCP tool; no claim about all levers)",
+    hyp("H7 accuracy: K minus B, no compaction, neutral probes (%s; no claim about all levers)" % klabel,
         ">= %+d pts and CI lower bound > 0; TOO EASY if B accuracy > %s" % (p7, pct(ceil7)), fmt_diff(d7) + (" (B accuracy %s)" % pct(sum(cb7) / sum(tb7)) if sum(tb7) else ""),
         "NO DATA" if d7[0] is None else ("TOO EASY: no claim" if too_easy7 else ("SUPPORTED" if 100 * d7[0] >= p7 and d7[1] > 0 else "NOT SUPPORTED")))
     md.append("\nA hypothesis that is NOT SUPPORTED or REFUTED stays in the report. The thresholds do not change after a run.\n")

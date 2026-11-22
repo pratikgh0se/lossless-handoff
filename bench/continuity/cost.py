@@ -33,6 +33,8 @@ SMOKE3 = {"seeds": 1, "arms": ["A", "B", "R", "K"], "n": [1, 3], "conditions": [
 NC_SMOKE3 = {"seeds": 1, "arms": ["A", "R"], "n": [1, 3, 10], "conditions": ["nocompact"], "phrasings": ["cued", "neutral", "nonliteral"]}
 PILOT3 = {"seeds": 2, "arms": ["A", "B", "R", "K"], "n": [1, 3, 10], "conditions": ["compact", "nocompact"], "phrasings": ["cued", "neutral", "nonliteral"]}
 FULL3 = {"seeds": 23, "arms": ["A", "B", "R", "K", "Z", "O"], "n": [1, 3, 10, 30], "conditions": ["compact", "nocompact"], "phrasings": ["cued", "neutral", "nonliteral"]}
+FULL3_V3 = dict(FULL3, n_by_arm={"R": [1, 3, 10], "K": [1, 3, 10]})      # litm3-full-v3: the default full run
+FULL3_V5 = dict(FULL3, arms=["A", "B", "K", "Z", "O"], n_by_arm={"K": [10]})    # litm3-full-v5
 FULL3_NO_R = dict(FULL3, skip=(("R", "compact"),))      # variant: arm R is not run in the compaction condition (arm K contains R)
 FULL = {"seeds": 20, "arms": ["A", "B", "R", "Z", "O"], "n": [1, 3, 10], "conditions": ["compact", "nocompact"], "phrasings": ["cued", "neutral"]}
 
@@ -74,7 +76,7 @@ def d3_nc_unit():
 D3_CONTROL_USD = {"Z": 0.15, "O": 0.30}      # no-compaction controls of design 3: Z = amnesia forks of an empty session, O = short oracle (about 35 small turns)
 
 
-def estimate3(seeds, arms, n, conditions, phrasings=("cued", "neutral", "nonliteral"), skip=()):
+def estimate3(seeds, arms, n, conditions, phrasings=("cued", "neutral", "nonliteral"), skip=(), n_by_arm=None):
     """Design 3. Compaction units: the design-2 model (cued and neutral phrasings), with the arm factor. No-compaction condition: ONE main session
     for each seed (arm A) plus the forks of each arm A, B, R, K on it (token model). skip: (arm, condition) pairs that are not run."""
     mult = fork_multiplier(["cued", "neutral"])
@@ -84,9 +86,10 @@ def estimate3(seeds, arms, n, conditions, phrasings=("cued", "neutral", "nonlite
         if a in ARM_FACTOR:
             f = ARM_FACTOR[a]
             if "compact" in conditions and (a, "compact") not in skip:
-                u = (BASE + PER_COMPACTION * max(n)) * mult * (1.2 if a == "K" else 1.0)
+                nn = (n_by_arm or {}).get(a, n)
+                u = (BASE + PER_COMPACTION * max(nn)) * mult * (1.2 if a == "K" else 1.0)
                 per_seed += u
-                lines.append("arm %s, with compactions (N up to %d): $%.2f per seed" % (a, max(n), u))
+                lines.append("arm %s, with compactions (N up to %d): $%.2f per seed" % (a, max(nn), u))
             if "nocompact" in conditions and (a, "nocompact") not in skip:
                 u = d3_nc_forks() * f + (d3_nc_main() if a == "A" else 0.0)
                 per_seed += u
@@ -239,7 +242,7 @@ def estimate_per_seed(cfg):
     if kind == "slice":
         return None
     if cfg.get("probe_design", 1) >= 3:
-        return estimate3(1, arms, cfg["n"], conds, cfg.get("phrasings", ["cued"]))[2]
+        return estimate3(1, arms, cfg["n"], conds, cfg.get("phrasings", ["cued"]), n_by_arm=cfg.get("n_by_arm"))[2]
     return estimate(1, arms, cfg["n"], conds, cfg.get("phrasings", ["cued"]))[2]
 
 
@@ -254,12 +257,12 @@ def unit_estimate(cfg, arm, cond):
     if cfg.get("probe_design", 1) >= 3:
         if arm == "A" and cond == "nocompact":        # the unit holds the forks of arms B, R and K
             return estimate3(1, [x for x in arms if x in ("A", "B", "R", "K")], cfg["n"], ["nocompact"], cfg.get("phrasings", ["cued"]))[2]
-        return estimate3(1, [arm], cfg["n"], [cond], cfg.get("phrasings", ["cued"]))[2]
+        return estimate3(1, [arm], cfg["n"], [cond], cfg.get("phrasings", ["cued"]), n_by_arm=cfg.get("n_by_arm"))[2]
     return estimate(1, [arm], cfg["n"], [cond], cfg.get("phrasings", ["cued"]))[2]
 
 
 def render3(name, cfg):
-    total, lines, per_seed = estimate3(cfg["seeds"], cfg["arms"], cfg["n"], cfg["conditions"], cfg["phrasings"], skip=cfg.get("skip", ()))
+    total, lines, per_seed = estimate3(cfg["seeds"], cfg["arms"], cfg["n"], cfg["conditions"], cfg["phrasings"], skip=cfg.get("skip", ()), n_by_arm=cfg.get("n_by_arm"))
     out = ["%s: %d seeds, arms %s, N=%s, conditions %s, phrasings %s" % (
         name, cfg["seeds"], ",".join(cfg["arms"]), ",".join(map(str, cfg["n"])), ",".join(cfg["conditions"]), ",".join(cfg["phrasings"]))]
     out += ["  " + x for x in lines]
@@ -292,7 +295,8 @@ def main(argv=None):
     a = ap.parse_args(argv)
     if not any([a.seeds, a.arms, a.n, a.conditions, a.phrasings]):
         print("PROBE DESIGN 3 (litm3-smoke, litm3-pilot, litm3-full)")
-        for name, cfg in (("SMOKE (litm3-smoke)", SMOKE3), ("NC SMOKE (litm3-nc-smoke)", NC_SMOKE3), ("PILOT (litm3-pilot)", PILOT3), ("FULL (litm3-full, 23 seeds, N up to 30)", FULL3), ("FULL VARIANT without arm R in the compaction condition", FULL3_NO_R)):
+        for name, cfg in (("SMOKE (litm3-smoke)", SMOKE3), ("NC SMOKE (litm3-nc-smoke)", NC_SMOKE3), ("PILOT (litm3-pilot)", PILOT3), ("FULL (litm3-full, 23 seeds, N up to 30)", FULL3), ("FULL VARIANT without arm R in the compaction condition", FULL3_NO_R),
+                          ("FULL V3 (litm3-full-v3, the default full run: R and K to N=10)", FULL3_V3), ("FULL V5 (litm3-full-v5: no R, K at N=10 only)", FULL3_V5)):
             print(render3(name, cfg)[1])
         pf_total, pf_lines = estimate_preflight()
         print("PREFLIGHT (preflight): Haiku, 1 dev seed, arms A,B,R,K,Z,O, types R,X, N=1, both conditions, cued, neutral and nonliteral, plus selfcheck and one Sonnet 300k turn")

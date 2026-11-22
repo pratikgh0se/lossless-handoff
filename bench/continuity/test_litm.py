@@ -973,7 +973,7 @@ class Preflight(unittest.TestCase):
         cases = [("no_compaction", "a compaction happened"), ("no_receipt", "receipt was written"), ("no_inject", "was injected after"),
                  ("no_decisions", "decisions list or the rules"), ("nc_cleared", "no-compaction sessions"), ("nc_small", "no-compaction sessions"),
                  ("r_missing_fire", "arm R:"), ("r_neutral_fire", "arm R:"), ("k_no_reanchor", "reanchor health row"), ("k_no_rule", "recall-rule line is in the injected text"),
-                 ("k_no_rule_fork", "every no-compaction fork"), ("k_no_mcp_call", "MCP check turn"), ("no_used_lookup", "used_lookup is set"),
+                 ("k_no_mcp_call", "MCP check turn"), ("no_used_lookup", "used_lookup is set"),
                  ("bad_parse", "parsed and graded"), ("no_nonliteral", "row count"), ("no_arm_Z", "arms A, Z and O produced rows"), ("hook_changed", "hooks of each arm"),
                  ("foreign", "no instructions record"), ("memory", "auto-memory"), ("env_leak", "environment of"), ("selfcheck_fail", "deny-rule selfcheck"),
                  ("no_big", "300k-token paste"), ("big_small", "300k-token paste"), ("big_over_cap", "300k-token paste"),
@@ -1399,7 +1399,10 @@ class Round4(unittest.TestCase):
         self.assertIn("Table L7", text)
         self.assertIn("PASS", text.split("Table L7")[1].split("###")[0])
         self.assertIn("FAIL", text.split("Table L7")[1].split("###")[0])
-        self.assertIn("K = R + recall rules + MCP tool", text)
+        self.assertIn("K = R + MCP tool (the recall rule line was not in the K forks)", text)         # no fork_rule_line in these rows
+        flagged = [dict(r, fork_rule_line=True) if r["arm"] == "K" else r for r in rows]
+        self.assertEqual(litm.section(flagged, [], th, 100)[1]["k_label"], "K = R + recall rule line + MCP tool")
+        self.assertEqual(litm.section([r for r in rows if r["arm"] != "K"], [], th, 100)[1]["k_label"], "K, no data")
 
     # ---- P10
     def test_question_order_is_a_seeded_shuffle_and_not_position(self):
@@ -1471,6 +1474,185 @@ class Round4(unittest.TestCase):
         for w in ("two-step word bridge", "CLAUDE_CODE_DISABLE_AUTO_MEMORY", "autoMemoryEnabled", "HANDOFF_HOOKS_HOME", "true by construction",
                   "forks the session of arm A", "ToolSearch", "--i-know", "pilot stop rule", "below HOME"):
             self.assertIn(w, t, w)
+
+
+class Round5(unittest.TestCase):
+    # 1. retry replay
+    def retry_setup(self, d, with_answer):
+        ctx, cfg = r4_cfg(d)
+        ss = runner.Session(ctx, "s1-A", 1, "A", ctx.sess("s1-A"), "compact")
+        ss.proj = os.path.join(d, "proj")
+        os.makedirs(os.path.join(runner.PROJECTS, runner.slug(ss.proj)), exist_ok=True)
+        prompt = "PLANT TURN: the answer is in this sentence " * 3
+        with open(ss.transcript("sid1"), "w") as f:
+            f.write(json.dumps({"type": "user", "message": {"content": prompt}}) + "\n")
+            if with_answer:
+                f.write(json.dumps({"type": "assistant", "message": {"content": [{"type": "text", "text": "noted"}]}}) + "\n")
+        return ctx, ss, prompt
+
+    def test_replay_needs_an_answer_and_is_counted(self):
+        d = tempfile.mkdtemp()
+        old = (runner.PROJECTS, runner.subprocess.Popen)
+        runner.PROJECTS = os.path.join(d, "projects")
+
+        class P:
+            def __init__(self, *a, **k):
+                self.returncode, self.pid = 1, 1
+
+            def communicate(self, input=None, timeout=None):
+                return "not json", ""
+        runner.subprocess.Popen = P
+        try:
+            ctx, ss, prompt = self.retry_setup(d, with_answer=True)
+            o = ss.call(prompt, "turn", sid="sid1")
+            self.assertTrue(o["_replayed"])
+            self.assertEqual(ss.st["replays"], 1)
+            ctx2, ss2, prompt2 = self.retry_setup(os.path.join(d, "two"), with_answer=False)
+            with self.assertRaises(runner.CallError) as cm:
+                ss2.call(prompt2, "turn", sid="sid1")
+            self.assertIn("no assistant answer", str(cm.exception))
+            self.assertEqual(ss2.st.get("replays", 0), 0)
+        finally:
+            runner.PROJECTS, runner.subprocess.Popen = old
+            shutil.rmtree(d)
+
+    # 2. dedupe in the report and in litm
+    def test_dedupe_in_litm_and_report(self):
+        th = json.load(open(os.path.join(HERE, "thresholds.json")))
+        rows = d3_rows(0.9, 0.1)
+        new = [dict(r, attempt=1) for r in rows]
+        old = [dict(r, attempt=0, correct=not r["correct"]) for r in rows]
+        self.assertEqual("\n".join(litm.section(old + new, [], th, 100)[0]), "\n".join(litm.section(new, [], th, 100)[0]))
+        self.assertIn("gates.dedupe_rows(load_jsonl", open(os.path.join(HERE, "report.py"), encoding="utf-8").read())
+
+    # 3. stale views
+    def test_views_run_again_when_the_main_session_restarts(self):
+        d = tempfile.mkdtemp()
+        try:
+            ctx, ss, probes = Round4.run_nc3(self, d)
+            n1 = len([p for p in probes if p[0] == "B"])
+            self.assertEqual(n1, 15)
+            probes2 = []
+            saved = runner.Session.probe
+
+            def probe(self, ptype, ckpt, fork_of=None, z_sid=None, phrasing="cued"):
+                probes2.append((self.arm, self.st["restarts"]))
+                self.st["done_forks"].append(runner.fork_key(ckpt, ptype, phrasing))
+            runner.Session.probe = probe
+            try:
+                runner.run_fork_view(ctx, ss, "B")                      # same attempt: nothing runs
+                self.assertEqual(probes2, [])
+                ss.st["restarts"] = 1                                   # the main session restarted
+                runner.run_fork_view(ctx, ss, "B")
+            finally:
+                runner.Session.probe = saved
+            self.assertEqual(len(probes2), 15)
+            self.assertEqual({r for a, r in probes2}, {1})              # new rows carry the new attempt
+            self.assertEqual(ctx.state["sessions"]["s1-B-nc"]["status"], "done")
+        finally:
+            shutil.rmtree(d)
+
+    # 4. updater and version
+    def test_updater_off_and_version_gate(self):
+        d = tempfile.mkdtemp()
+        try:
+            ctx, cfg = r4_cfg(d)
+            for arm in "ABRK":
+                s = runner.Session(ctx, "s1-" + arm, 1, arm, {}, "compact")
+                self.assertEqual(s.overrides["DISABLE_AUTOUPDATER"], "1")
+                self.assertEqual(s.env()["DISABLE_AUTOUPDATER"], "1")
+        finally:
+            shutil.rmtree(d)
+        self.assertEqual(gates.version_reasons("2.1.326", {"a": "2.1.326", "b": "2.1.326"}), [])
+        self.assertEqual(gates.version_reasons("2.1.326", {"a": None}), [])
+        why = gates.version_reasons("2.1.326", {"a": "2.1.326", "b": "2.1.327"})
+        self.assertTrue(why and "changed" in why[0], why)
+        ctx_src = open(os.path.join(HERE, "runner.py"), encoding="utf-8").read()
+        self.assertIn('st["claude_version"] = claude_version()', ctx_src)
+        self.assertIn('out["claude_version"]', ctx_src)
+
+    # 5. the real instruction record shape: files[].path
+    def test_instruction_record_shape(self):
+        proj = "/tmp/proj-x"
+        rec = {"type": "instructions", "files": [{"path": proj + "/CLAUDE.md", "type": "Project"}, {"path": "/Users/u/.claude/CLAUDE.md", "type": "User"}]}
+        nested = {"type": "attachment", "attachment": {"type": "instructions_loaded", "files": [{"path": "/Users/u/CLAUDE.md", "type": "Project"}]}}
+        empty = {"type": "instructions", "files": []}
+        self.assertEqual(gates.instruction_paths([rec]), [proj + "/CLAUDE.md", "/Users/u/.claude/CLAUDE.md"])
+        self.assertEqual(gates.project_instructions([rec], proj), [proj + "/CLAUDE.md"])
+        self.assertEqual(gates.foreign_instructions([rec], proj), ["/Users/u/.claude/CLAUDE.md"])
+        self.assertEqual(gates.foreign_instructions([nested], proj), ["/Users/u/CLAUDE.md"])
+        self.assertEqual(gates.foreign_instructions([empty], proj), [])
+        self.assertEqual(gates.foreign_instructions([{"type": "instructions", "files": [{"type": "User"}]}], proj), ["?"])     # a file with no path is unknown
+        self.assertEqual(gates.foreign_instructions([{"type": "user"}], proj), [])
+        # the preflight FAILS on a foreign file and not on an empty list (flaw 'foreign' in the fixture)
+        res = Preflight().run_check(foreign=True)
+        self.assertEqual([s for l, s, _ in res if "no instructions record" in l], ["FAIL"])
+
+    # 7. K cap
+    def test_k_forks_have_a_higher_cap(self):
+        d = tempfile.mkdtemp()
+        caps = []
+
+        class P:
+            def __init__(self, cmd, *a, **k):
+                caps.append((cmd[cmd.index("--max-budget-usd") + 1], "--fork-session" in cmd))
+                self.returncode, self.pid = 1, 1
+
+            def communicate(self, input=None, timeout=None):
+                return "not json", ""
+        old = runner.subprocess.Popen
+        runner.subprocess.Popen = P
+        try:
+            ctx, cfg = r4_cfg(d)
+            for arm in "BK":
+                s = runner.Session(ctx, "s1-" + arm, 1, arm, ctx.sess("s1-" + arm), "nocompact")
+                s.proj = d
+                with self.assertRaises(runner.CallError):
+                    s.call("hi", "fork", fork_of="main")
+            self.assertEqual(caps[0][0], "1.50")
+            self.assertEqual([c for c in caps if c[0] == "3.00"][0][1], True)
+            self.assertEqual(runner.K_FORK_CAP_USD, 3.0)
+        finally:
+            runner.subprocess.Popen = old
+            shutil.rmtree(d)
+
+    # 8. the K claim depends on the data
+    def test_k_claim_is_conditional_in_files_and_preflight(self):
+        t = open(os.path.join(HERE, "thresholds.json"), encoding="utf-8").read()
+        self.assertNotIn("K adds recall rules", t)
+        self.assertIn("k_label_rule", t)
+        r = open(os.path.join(HERE, "README.md"), encoding="utf-8").read()
+        self.assertNotIn("K adds recall rules", r)
+        self.assertIn("otherwise K = R + MCP tool", r)
+        res = Preflight().run_check(k_no_rule_fork=True)
+        line = [x for x in res if "every no-compaction fork" in x[0]][0]
+        self.assertEqual(line[1], "INFO")
+        self.assertIn("K = R + MCP tool", line[2])
+        ok = [x for x in Preflight().run_check() if "every no-compaction fork" in x[0]][0]
+        self.assertIn("K = R + recall rule line + MCP tool", ok[2])
+        info = [x for x in res if "live ~/.claude/hooks/recall.py" in x[0]]
+        self.assertEqual(len(info), 1)
+        self.assertEqual(info[0][1], "INFO")
+
+    # 9. presets
+    def test_full_presets_v3_and_v5(self):
+        k3, k5, k1 = runner.KINDS["litm3-full-v3"], runner.KINDS["litm3-full-v5"], runner.KINDS["litm3-full"]
+        self.assertEqual((k3["seeds"], k3["n"], k3["n_by_arm"]), (23, [1, 3, 10, 30], {"R": [1, 3, 10], "K": [1, 3, 10]}))
+        self.assertEqual((k5["seeds"], k5["arms"], k5["n_by_arm"]), (23, "A,B,K,Z,O", {"K": [10]}))
+        self.assertEqual((k1["seeds"], k1["arms"], k1["n"]), (23, "A,B,R,K,Z,O", [1, 3, 10, 30]))      # V1 stays as designed
+        for name in ("litm3-full-v3", "litm3-full-v5"):
+            self.assertIn(name, open(os.path.join(HERE, "run.sh")).read())
+        cfg = {"n": [1, 3, 10, 30], "n_by_arm": k3["n_by_arm"]}
+        self.assertEqual(runner.checkpoints(cfg, "A"), [(1, 0), (3, 0), (10, 0), (30, 0)])
+        self.assertEqual(runner.checkpoints(cfg, "K"), [(1, 0), (3, 0), (10, 0)])
+        self.assertEqual(runner.checkpoints({"n": [1, 3], "n_by_arm": {}}, "R"), [(1, 0), (3, 0)])
+        v1 = cost.estimate3(23, ["A", "B", "R", "K", "Z", "O"], [1, 3, 10, 30], ["compact", "nocompact"])[0]
+        v3 = cost.estimate3(23, ["A", "B", "R", "K", "Z", "O"], [1, 3, 10, 30], ["compact", "nocompact"], n_by_arm={"R": [1, 3, 10], "K": [1, 3, 10]})[0]
+        v5 = cost.estimate3(23, ["A", "B", "K", "Z", "O"], [1, 3, 10, 30], ["compact", "nocompact"], n_by_arm={"K": [10]})[0]
+        self.assertTrue(5500 < v1 < 5700 and 3800 < v3 < 4000 and 3350 < v5 < 3550, (v1, v3, v5))
+        self.assertLess(v5, v3)
+        self.assertLess(v3, v1)
+        self.assertEqual(cost.estimate_per_seed(dict(k3, kind="litm3-full-v3", arms=k3["arms"].split(","), conditions=k3["conditions"].split(","), phrasings=k3["phrasings"].split(","))) * 23, v3)
 
 
 class AbortGates(unittest.TestCase):

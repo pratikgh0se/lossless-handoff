@@ -160,8 +160,11 @@ def check(rd, projects=None, mcp=True):
         add("arm K: the recall-rule line is in the injected text (compaction session)", bool([x for x in k_sess if cond(x) == "compact"]) and not rule_bad, "missing in: %s" % (rule_bad or "none"))
         k_rows = [r for r in R.rows if r["arm"] == "K" and cond_row(r) == "nocompact"]
         k_bad = [r for r in k_rows if not r.get("fork_rule_line")]
-        add("arm K: the recall-rule line is in the transcript of every no-compaction fork (startup injection at the fork)", bool(k_rows) and not k_bad,
-            "%d fork row(s); without the line: %d" % (len(k_rows), len(k_bad)))
+        add("arm K: the recall-rule line is in the transcript of every no-compaction fork (conditional, decides the label of K; not a FAIL)", None,
+            "%d fork row(s); without the line: %d; claim: %s" % (len(k_rows), len(k_bad), "K = R + recall rule line + MCP tool" if (k_rows and not k_bad) else "K = R + MCP tool"))
+        kf = [(s["name"], s.get("first_fork_cost_usd")) for s in k_sess if s.get("view_of_arm_a")]
+        add("arm K: cost of the first fork (a cache miss writes about 300k tokens; per-call cap of K forks $%.2f)" % runner.K_FORK_CAP_USD, None,
+            "first K fork $%s; other arms: %s" % (kf[0][1] if kf else "n/a", [(s["name"], s.get("first_fork_cost_usd")) for s in views if s["arm"] != "K"]))
     v_rows = [r for r in R.rows if r["arm"] in ("B", "R") and cond_row(r) == "nocompact"]
     add("arms B and R: startup injection seen in the no-compaction forks (recorded, not required)", None,
         "%d fork row(s); with an injection marker: %d" % (len(v_rows), len([r for r in v_rows if r.get("fork_injected")])))
@@ -194,6 +197,10 @@ def check(rd, projects=None, mcp=True):
             h_bad.append(s["name"] + " (no .recall-rules)")
     add("hooks of each arm with hooks: sha256 of every hook file recorded in sessions.jsonl and unchanged (private copy, HANDOFF_HOOKS_HOME)",
         bool([x for x in R.sessions if x["arm"] in runner.LH_ARMS]) and not h_bad, "wrong or missing: %s" % (h_bad or "none"))
+    live = runner.sha256_file(os.path.join(runner.HOME, ".claude", "hooks", "recall.py"))
+    add("live ~/.claude/hooks/recall.py (the injected text still names it; recorded at run start)", None,
+        "sha256 at start %s; now %s%s; pinned copy %s" % ((R.cfg.get("live_recall_sha256") or "none")[:12], (live or "none")[:12],
+                                                          " (CHANGED during the run)" if R.cfg.get("live_recall_sha256") != live else "", (R.cfg.get("pinned_recall_sha256") or "none")[:12]))
     # 12. machine state
     fi = [(s["name"], s.get("foreign_instructions")) for s in R.sessions if s.get("foreign_instructions")]
     add("no instructions record loaded from outside the project folder of the session", not fi and any("foreign_instructions" in s for s in R.sessions), "found: %s" % (fi or "none"))

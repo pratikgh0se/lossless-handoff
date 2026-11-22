@@ -40,6 +40,7 @@ ENV_ALLOW = ("PATH", "HOME", "USER", "LOGNAME", "SHELL", "TMPDIR", "LANG", "LC_A
 # Auto-memory off for every arm. Source: the installed binary (claude 2.1.326) holds the environment variable name CLAUDE_CODE_DISABLE_AUTO_MEMORY
 # and the settings key autoMemoryEnabled. We set both (the env var in the overrides, the key in the project settings).
 MEMORY_ENV = "CLAUDE_CODE_DISABLE_AUTO_MEMORY"
+K_FORK_CAP_USD = 3.0     # per-call cap of a fork in arm K. MCP tools change the tool list, so the first K fork may miss the cache and write about 300k tokens ($1.1 to $2.3), above the normal cap of $1.50
 NC3_FORK_ARMS = ("B", "R", "K")  # design 3, no compaction: these arms fork the session of arm A with their own settings
 MAX_NO_BOUNDARY = 10        # filler turns in a row with no new compaction: the session is invalid
 KINDS = {
@@ -64,6 +65,11 @@ KINDS = {
                     "conditions": "compact,nocompact", "phrasings": "cued,neutral,nonliteral", "probe_design": 3},
     "litm3-full": {"model": "sonnet", "window": 400000, "n": [1, 3, 10, 30], "arms": "A,B,R,K,Z,O", "seeds": 23, "seed_file": "seeds-report.txt",
                    "conditions": "compact,nocompact", "phrasings": "cued,neutral,nonliteral", "probe_design": 3},
+    # V3 (the default full run): A and B to N=30, R and K to N=10 in the compaction condition. V5: A and B to N=30, K at N=10 only, no R. litm3-full is V1 (as designed).
+    "litm3-full-v3": {"model": "sonnet", "window": 400000, "n": [1, 3, 10, 30], "n_by_arm": {"R": [1, 3, 10], "K": [1, 3, 10]}, "arms": "A,B,R,K,Z,O", "seeds": 23,
+                      "seed_file": "seeds-report.txt", "conditions": "compact,nocompact", "phrasings": "cued,neutral,nonliteral", "probe_design": 3},
+    "litm3-full-v5": {"model": "sonnet", "window": 400000, "n": [1, 3, 10, 30], "n_by_arm": {"K": [10]}, "arms": "A,B,K,Z,O", "seeds": 23,
+                      "seed_file": "seeds-report.txt", "conditions": "compact,nocompact", "phrasings": "cued,neutral,nonliteral", "probe_design": 3},
     "litm-full": {"model": "sonnet", "window": 400000, "n": [1, 3, 10], "arms": "A,B,R,Z,O", "seeds": 20, "seed_file": "seeds-report.txt",
                   "conditions": "compact,nocompact", "phrasings": "cued,neutral", "probe_design": 2},
 }
@@ -142,6 +148,11 @@ def work_base(arg=None):
         raise SystemExit("the work base %s is below HOME (%s). Claude Code reads the CLAUDE.md files of parent folders, so the real user "
                          "instructions would enter every arm. Use a folder outside HOME (default: the system temp folder)." % (p, home))
     return p
+
+
+def claude_version():
+    """`claude --version` (no model call)."""
+    return sh(["claude", "--version"])
 
 
 def sha256_file(path):
@@ -309,7 +320,7 @@ class Session:
         self.script = ctx.script3(seed) if (cond == "nocompact" and cfg.get("probe_design", 1) >= 3) else ctx.script(seed)
         self.d3 = self.script.get("design") == 3
         self.view_of = None     # design 3, no compaction, arms B R K: the main session of arm A, which this arm forks
-        ov = {"CLAUDE_CODE_AUTO_COMPACT_WINDOW": str(self.window), "RECALL_EMBED_URL": "http://127.0.0.1:9", MEMORY_ENV: "1"}
+        ov = {"CLAUDE_CODE_AUTO_COMPACT_WINDOW": str(self.window), "RECALL_EMBED_URL": "http://127.0.0.1:9", MEMORY_ENV: "1", "DISABLE_AUTOUPDATER": "1"}
         if cond == "nocompact":
             ov["DISABLE_AUTO_COMPACT"] = "1"      # same session length as the compaction run, compaction off
         if arm in LH_ARMS:
@@ -419,7 +430,12 @@ class Session:
             ctx.check_budget()
             if attempt == 2 and not fork_of and sid:
                 seen, text = self.recorded(sid, prompt)
+                if seen and not text:
+                    # the prompt is in the transcript but no assistant text follows: attempt 1 failed (an API error, a budget cap, a timeout).
+                    # Do not call this a success: an error on every turn would look like a good session.
+                    raise CallError("retry: the prompt is recorded but no assistant answer follows it (attempt 1 failed)")
                 if seen:
+                    self.st["replays"] = self.st.get("replays", 0) + 1
                     return {"result": text, "session_id": sid, "total_cost_usd": self.st["last_cost"], "usage": {}, "_delta": 0.0, "is_error": False, "_replayed": True}
                 first = first and not os.path.isfile(self.transcript(sid))
             big = len(prompt) > 100000          # argv is limited (about 1 MB on macOS, 128 KB for one argument on Linux): a big prompt goes through stdin
@@ -432,7 +448,7 @@ class Session:
                     "--settings", self.settings_json(),
                     "--strict-mcp-config", "--mcp-config", self.mcp_config(), "--disable-slash-commands",
                     "--output-format", "json", "--permission-mode", "acceptEdits",
-                    "--allowedTools", self.allowed_tools(), "--max-budget-usd", "%.2f" % (cap or cfg["call_cap_usd"])] + ([] if big else [prompt])
+                    "--allowedTools", self.allowed_tools(), "--max-budget-usd", "%.2f" % (cap or (K_FORK_CAP_USD if (self.arm == "K" and fork_of) else cfg["call_cap_usd"]))] + ([] if big else [prompt])
             t0 = time.time()
             p = subprocess.Popen(cmd, cwd=self.proj, env=self.env(), stdin=subprocess.PIPE if big else subprocess.DEVNULL, stdout=subprocess.PIPE,
                                  stderr=subprocess.PIPE, text=True, start_new_session=True)
@@ -567,6 +583,8 @@ class Session:
                 "window": self.window, "commit": cfg["lh_commit"], "turn_index": st["turns"],
                 "condition": self.cond, "phrasing": phrasing, "position": posmap.get(g["id"]), "attempt": st.get("restarts", 0), **view_fields,
                 "auto_recall_fired": fired, "auto_recall_hits": hits, "auto_recall_timed_out": timed_out})
+        if self.view_of is not None:
+            st.setdefault("first_fork_cost_usd", round(o["_delta"], 6))      # K: the cache-miss check of the preflight
         st["done_forks"].append(fork_key(ckpt, ptype, phrasing))
         self.ctx.save()
 
@@ -638,7 +656,7 @@ def nc_validity(boundaries, cleared, last_ctx, expected, tol=NC_CONTEXT_TOLERANC
 def checkpoints(cfg, arm):
     if arm == "O":
         return [(0, cfg["oracle_turns"])]
-    return [(n, 0) for n in cfg["n"]]
+    return [(n, 0) for n in cfg.get("n_by_arm", {}).get(arm, cfg["n"])]
 
 
 def need_epoch(cfg, arm, target):
@@ -777,14 +795,21 @@ def run_fork_view(ctx, main, arm, valid=True):
     cfg = ctx.cfg
     name = "s%d-%s-nc" % (main.seed, arm)
     st = ctx.sess(name)
-    if st["status"] == "done":
+    main_r = main.st.get("restarts", 0)
+    if st["status"] == "done" and st.get("main_restarts", 0) == main_r:
         return
+    if st.get("main_restarts", 0) != main_r:      # the main session restarted (new attempt): the old forks are stale, run them again
+        st.update({"done_forks": [], "status": "new"})
+        st.pop("mcp_check", None)
+        st.pop("first_fork_cost_usd", None)
+    st["main_restarts"] = st["restarts"] = main_r      # the rows of the view carry the attempt of the main session
     v = Session(ctx, name, main.seed, arm, st, "nocompact")
     v.proj, v.view_of = main.proj, main
     os.makedirs(v.statedir, exist_ok=True)
     v.hooks_dir()
     st.update({"sid": main.st["sid"], "boundaries": main.st["boundaries"], "turns": main.st["turns"], "last_cost": main.st["last_cost"],
-               "nc_valid": main.st.get("nc_valid"), "nc_reasons": main.st.get("nc_reasons"), "first": False, "status": "running"})
+               "nc_valid": main.st.get("nc_valid"), "nc_reasons": main.st.get("nc_reasons"), "first": False, "status": "running",
+               "claude_version": main.st.get("claude_version")})
     ctx.save()
     if valid:
         for t in gen.L3_TYPES:
@@ -927,6 +952,9 @@ def session_summary(ctx, ss):
            "filler_no_read_turns": st.get("filler_no_read_turns", 0), "filler_retries": st.get("filler_retries", 0),
            "filler_retry_no_read": st.get("filler_retry_no_read", 0)}
     out["restarts"] = st.get("restarts", 0)
+    out["replays"] = st.get("replays", 0)                    # retries that replayed a recorded answer
+    out["claude_version"] = st.get("claude_version")
+    out["first_fork_cost_usd"] = st.get("first_fork_cost_usd")
     out["env_keys"] = sorted(ss.env())            # names only, never values
     out["hook_sha256"] = ss.hook_hashes()
     out["mcp_check"] = st.get("mcp_check")
@@ -934,6 +962,7 @@ def session_summary(ctx, ss):
     out["memory_files"] = memory_files(ss)
     if ss.arm != "Z" and st.get("sid"):
         out["foreign_instructions"] = gates.foreign_instructions(read_jsonl(ss.transcript(st["sid"])), ss.proj)
+        out["project_instructions"] = gates.project_instructions(read_jsonl(ss.transcript(st["sid"])), ss.proj)
         main = ss.transcript(st["sid"])
         reads = 0
         for r in read_jsonl(main):
@@ -1034,7 +1063,8 @@ def check_session_gates(ctx):
     for n in list(costs):
         if re.match(r"s\d+-[BRK]-nc$", n) and ctx.cfg.get("probe_design", 1) >= 3:
             del costs[n]
-    return gates.session_reasons(statuses, costs)
+    versions = {n: st.get("claude_version") for n, st in sess.items() if st.get("claude_version")}
+    return gates.session_reasons(statuses, costs) + gates.version_reasons(ctx.cfg.get("claude_version"), versions)
 
 
 def expected_forks(cfg, seeds=None):
@@ -1084,6 +1114,7 @@ def run_unit(ctx, seed, arm, cond="compact"):
     if st["status"] == "done":
         return
     ss = Session(ctx, name, seed, arm, st, cond)
+    st["claude_version"] = claude_version()
     try:
         ss.prepare()
         st["status"] = "running"
@@ -1269,6 +1300,9 @@ def build_cfg(kind, a):
         "o_estimate_tokens": o_est,
         "conditions": conds, "phrasings": phr, "probe_design": k.get("probe_design", 1), "search_used": bool(k.get("search_used")), "gates": True,
         "mcp_check": bool(k.get("mcp_check")), "selfcheck": bool(k.get("selfcheck")), "big_check": bool(k.get("big_check")), "big_model": "sonnet", "big_cap_usd": 3.0,
+        "n_by_arm": k.get("n_by_arm", {}),
+        "live_recall_sha256": sha256_file(os.path.join(HOME, ".claude", "hooks", "recall.py")),      # the injected text still names ~/.claude/hooks/recall.py
+        "pinned_recall_sha256": sha256_file(os.path.join(lh, "hooks", "recall.py")),
         "env_allowlist": list(ENV_ALLOW), "auto_memory": "off (%s=1 and autoMemoryEnabled=false)" % MEMORY_ENV,
         "nc_window": nc_window, "nc_lines": nc_lines, "nc_estimate_tokens": nc_est,
         "work_base": work_base(a.work_base), "call_cap_usd": a.call_cap_usd or 1.50,

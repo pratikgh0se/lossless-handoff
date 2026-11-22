@@ -143,7 +143,8 @@ def build(run_id, draws=None):
     cfg = json.load(open(os.path.join(rd, "config.json"), encoding="utf-8"))
     state = json.load(open(os.path.join(rd, "state.json"), encoding="utf-8"))
     th = json.load(open(os.path.join(HERE, "thresholds.json"), encoding="utf-8"))
-    rows_all = load_jsonl(os.path.join(rd, "results.jsonl"))
+    import gates
+    rows_all = gates.dedupe_rows(load_jsonl(os.path.join(rd, "results.jsonl")))      # a restarted session wrote its rows twice
     rows = [r for r in rows_all if r.get("phrasing", "cued") == "cued" and r.get("condition", "compact") == "compact"]   # old tables: cued probes, with compactions
     sess_all = load_jsonl(os.path.join(rd, "sessions.jsonl"))
     sess = [s for s in sess_all if s.get("condition", "compact") == "compact"]
