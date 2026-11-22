@@ -1209,7 +1209,7 @@ Amends F67.c. The trigger (F67.b) does not change.
 Why: in a long chat a key can have many values (set, changed, rejected, undone). The model can use an old value. These three parts show the full history of a key when the model is about to use it. All three are opt-in. The default install does not change. They share the rules below and the code in `guard_common.py`.
 
 **Terms.**
-- *Identifier*: the F75 rule.
+- *Identifier*: the F75 rule with its amendments. `guard_common.py` loads `identifiers()` from `auto-recall.py` (looked up like the other parts, F72), so there is one rule. If `auto-recall.py` is not installed, a fallback copy is used; `tests/smoke.sh` checks that both give the same result on a corpus. A tool input or tool result excludes an anchor by name: every name-like token in it (not only identifier-form tokens) counts, for string and list content.
 - *Text message*: a real user message or a message of the assistant. Tool input, tool result, recall output and hook text are not text messages.
 - *Subject*: an identifier (whole token, case-insensitive) that is in 2 to 40 text messages of the current session, and at least 2 of them are user messages. For F77 and F80 the messages of the turn in progress count: the current user prompt and the text messages of the assistant in this turn. This covers a long turn with no guidance, where the model changes a key itself. For F78 the current prompt is not counted. One user message is not enough: it gives too many fires on ordinary hyphen words.
 - *Context count*: the usage of the last assistant entry (input, cache read and cache creation tokens), skipping an entry with a total of 0. Same rule as `reanchor.py`.

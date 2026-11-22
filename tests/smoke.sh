@@ -2862,6 +2862,46 @@ PY
   done
   ok "review fixes: current turn counts, shadow cooldown, tool result excludes anchor, hashed state key, stdin read first"
 
+  # backticked identifiers (Zeta, MaxVal) fire; a tool result of either content shape (string, list) excludes the anchor;
+  # the guard fallback identifier rule equals auto-recall.identifiers on a corpus
+  python3 - "$HOME" "$W" "$D" <<'PY'
+import json, os, re, sys
+home, w, d = sys.argv[1:4]
+real = os.path.realpath(w)
+pd = os.path.join(home, ".claude", "projects", re.sub(r"[^A-Za-z0-9]", "-", real))
+def user(ts, text, u): return {"type": "user", "timestamp": ts, "cwd": real, "sessionId": "ssss0003", "uuid": u, "message": {"role": "user", "content": text}}
+def asst(ts, blocks, u):
+    return {"type": "assistant", "timestamp": ts, "cwd": real, "sessionId": "ssss0003", "uuid": u,
+            "message": {"role": "assistant", "content": blocks, "usage": {"input_tokens": 10, "cache_read_input_tokens": 149990, "cache_creation_input_tokens": 0, "output_tokens": 5}}}
+def text(t): return [{"type": "text", "text": t}]
+def w3(name, rows):
+    open(os.path.join(pd, name + ".jsonl"), "w").write("".join(json.dumps(r) + "\n" for r in rows))
+    os.symlink(os.path.join(pd, name + ".jsonl"), os.path.join(d, name + ".jsonl"))
+head = [user("2026-11-22T10:00:00Z", "Set `Zeta` to 5 and `MaxVal` to 1.", "t1"), asst("2026-11-22T10:01:00Z", text("Done."), "t2"),
+        user("2026-11-22T10:02:00Z", "Change `Zeta` to 7 and `MaxVal` to 2.", "t3"), asst("2026-11-22T10:03:00Z", text("Done."), "t4"),
+        user("2026-11-22T10:04:00Z", "Check it.", "tcur")]
+call = asst("2026-11-22T10:05:00Z", [{"type": "tool_use", "id": "x1", "name": "Read", "input": {"file_path": "/x/w.conf"}}], "t5")
+def res(content): return {"type": "user", "timestamp": "2026-11-22T10:05:01Z", "uuid": "r1", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "x1", "content": content}]}}
+fin = asst("2026-11-22T10:06:00Z", text("Fine."), "t6")
+w3("zeta", head + [fin])
+w3("trstr", head + [call, res("Zeta=7"), fin])
+w3("trlist", head + [call, res([{"type": "text", "text": "Zeta=7"}]), fin])
+PY
+  o="$(HANDOFF_HISTORY_GUARD=block hg e1 zeta 'The `Zeta` is 10.')"; grep -q "history of Zeta:" <<<"$o" || fail "F77: a backticked Zeta did not fire: $o"
+  o="$(HANDOFF_HISTORY_GUARD=block hg e2 zeta 'The `MaxVal` is 10.')"; grep -q "history of MaxVal:" <<<"$o" || fail "F77: a backticked MaxVal did not fire: $o"
+  for t in trstr trlist; do o="$(HANDOFF_HISTORY_GUARD=block hg e3 "$t" 'The `Zeta` is 10.')"; [ -z "$o" ] || fail "F77: tool result ($t) did not exclude the anchor: $o"; done
+  python3 - "$ROOT/hooks" <<'PY'
+import importlib.util, sys
+def load(n, p):
+    s = importlib.util.spec_from_file_location(n, p); m = importlib.util.module_from_spec(s); s.loader.exec_module(m); return m
+g = load("gc", sys.argv[1] + "/guard_common.py"); a = load("ar", sys.argv[1] + "/auto-recall.py")
+corpus = ["The `Zeta` is 10.", "`MaxVal` and `dry` and `x1`", "set queue-limit and dry-run via a/b.c and_x https://a-b.c/d `my.key`", "as you said `value`",
+          "e.g. and/or i.e. foo.bar, `Foo`, `a-b`, `eu-west-1` `v2`", "plain words only here", "`two words` `snake_case` Camel.Case x-y-z 1.2.3"]
+for t in corpus:
+    assert g.identifiers(t) == a.identifiers(t) == g._identifiers_fallback(t), (t, g.identifiers(t), a.identifiers(t), g._identifiers_fallback(t))
+PY
+  ok "review fixes 2: backticked identifiers, tool result shapes, one identifier rule"
+
   # F78: size trigger in auto-recall
   mkdir -p "$HOME/.claude/hooks"
   ar() { python3 -c 'import json,sys; print(json.dumps({"session_id":"z1","transcript_path":sys.argv[1],"cwd":sys.argv[3],"prompt":sys.argv[2]}))' "$D/${3:-main}.jsonl" "$1" "${2:-$W}" | python3 "$AR"; }

@@ -17,7 +17,6 @@ REM = re.compile(r"<system-reminder>.*?</system-reminder>", re.S)
 URL_RE = re.compile(r"(?:https?://|www\.)\S+", re.I)
 TOKEN_RE = re.compile(r"`([^`\s]+)`|([A-Za-z0-9_./-]+)")
 FULL_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_./-]*[_./-][A-Za-z0-9_./-]*[A-Za-z0-9]")
-NOT_IDENT = {"e.g", "i.e"}
 SENT = re.compile(r"(?<=[.?!])\s+|\n+")
 
 
@@ -38,19 +37,81 @@ def recall_candidates(hook_file):
     return [os.path.join(HOME, ".claude", "hooks", "recall.py"), os.path.join(os.path.dirname(os.path.abspath(hook_file)), "recall.py")]
 
 
-def identifiers(text):
-    """The F75 rule: a token in backticks, or a token of 3+ characters with - _ . or / inside. A URL is not one."""
-    out = []
-    for m in TOKEN_RE.finditer(URL_RE.sub(" ", text)):
+_AR = []
+
+
+def _auto_recall():
+    """The module auto-recall.py: the one place of the identifier rule (F75 and its amendments). Looked up like the
+    other parts (F72): the override folder only, or ~/.claude/hooks, or the folder of this file. None if it is absent."""
+    if _AR:
+        return _AR[0]
+    mod = None
+    h = hooks_home()
+    cands = [os.path.join(h, "auto-recall.py")] if h else [os.path.join(HOME, ".claude", "hooks", "auto-recall.py"),
+                                                           os.path.join(os.path.dirname(os.path.abspath(__file__)), "auto-recall.py")]
+    for p in cands:
+        if os.path.isfile(p):
+            try:
+                import importlib.util
+                spec = importlib.util.spec_from_file_location("lh_auto_recall", p)
+                m = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(m)
+                if callable(getattr(m, "identifiers", None)):
+                    mod = m
+            except Exception:
+                mod = None
+            break
+    _AR.append(mod)
+    return mod
+
+
+# Fallback only, for an install that has no auto-recall.py. tests/smoke.sh checks that it gives the same result as
+# auto-recall.identifiers on a corpus, so the two cannot drift.
+CUES = ["what did i say", "what did you say", "what did we decide", "did we decide", "did we agree", "did i say", "did i tell you",
+        "we decided", "we agreed", "i told you", "i said", "you said", "you mentioned", "i mentioned", "last time", "previously",
+        "as we discussed", "as discussed", "which one did", "earlier you", "earlier i", "earlier we", "said earlier", "said before",
+        "as before", "like before", "same as before", "do you remember", "remember when", "remember what"]
+STOP = {"previous", "replaced", "rejected", "proposal", "remember", "current", "earlier", "value", "values", "answer",
+        "answers", "setting", "settings", "before", "which", "there", "their", "about", "would", "could", "should"}
+HYPHEN_WORD_RE = re.compile(r"[a-z]+(?:-[a-z]+)+")
+IDENT_TOKEN_RE = TOKEN_RE
+IDENT_FULL_RE = FULL_RE
+PLAIN_WORD_RE = re.compile(r"[a-z]{1,8}")
+NOT_IDENT = {"e.g", "i.e", "and/or"}
+
+
+def _identifiers_fallback(prompt):
+    rest = URL_RE.sub(" ", prompt)
+    seen, groups = set(), ([], [], [], [])
+    for m in IDENT_TOKEN_RE.finditer(rest):
         if m.group(1) is not None:
-            tok = m.group(1).strip()
+            tok, ticks = m.group(1).strip(), True
         else:
-            tok = m.group(2).strip("._/-")
-            if not FULL_RE.fullmatch(tok):
+            tok, ticks = m.group(2).strip("._/-"), False
+            if not IDENT_FULL_RE.fullmatch(tok):
                 continue
-        if tok and tok.lower() not in NOT_IDENT:
-            out.append(tok)
-    return out
+        k = tok.lower()
+        if len(tok) < 1 or k in seen or k in NOT_IDENT or k in CUES:
+            continue
+        form = bool(IDENT_FULL_RE.fullmatch(tok)) and any(c.isalpha() for c in tok)
+        if form and ticks:
+            gi = 0
+        elif form:
+            gi = 2 if HYPHEN_WORD_RE.fullmatch(tok) else 1
+        elif ticks and k not in STOP and not (PLAIN_WORD_RE.fullmatch(tok) and not any(c.isdigit() for c in tok)):
+            gi = 3
+        else:
+            continue
+        seen.add(k)
+        groups[gi].append(tok)
+    return [t for grp in groups for t in grp]
+
+
+def identifiers(text):
+    """The identifier rule: auto-recall.identifiers (F75 with its amendments), loaded by path; the fallback copy only if
+    auto-recall.py is not installed."""
+    m = _auto_recall()
+    return m.identifiers(text) if m is not None else _identifiers_fallback(text)
 
 
 def threshold(env, default=100000):
@@ -90,6 +151,17 @@ def context_tokens(path):
         if size <= n:
             break
     return None
+
+
+def name_tokens(text):
+    """Every name-like token of a tool input or result, lower case: the whole-token rule of the history search, but
+    without the identifier form (a plain word such as Zeta, in a result, still excludes the anchor Zeta)."""
+    out = set()
+    for m in TOKEN_RE.finditer(URL_RE.sub(" ", text)):
+        t = (m.group(1) if m.group(1) is not None else m.group(2)).strip("._/-` ").lower()
+        if t:
+            out.add(t)
+    return out
 
 
 def strings(o, depth=0):
@@ -139,7 +211,7 @@ def read_session(path, deadline, prompt=None, include_turn=False):
                     for b in tools:
                         for s in strings(b.get("content")):
                             turn["strs"].append(s)
-                            turn["tool"].update(t.lower() for t in identifiers(s))  # a tool result excludes an anchor
+                            turn["tool"].update(name_tokens(s))  # a tool result excludes an anchor
                     continue
                 if user_text and not user_text.startswith(NOT_USER):
                     msgs.extend(pending)  # the previous turn is complete: its messages count
@@ -157,7 +229,7 @@ def read_session(path, deadline, prompt=None, include_turn=False):
                             s = json.dumps(inp, ensure_ascii=False)
                         except Exception:
                             s = str(inp)
-                        turn["tool"].update(t.lower() for t in identifiers(s))
+                        turn["tool"].update(name_tokens(s))
                         name = b.get("name") if isinstance(b.get("name"), str) else ""
                         cmd = str(inp.get("command")) if isinstance(inp, dict) else ""
                         if name.startswith("mcp__lossless-recall__") and name.endswith("key_history"):
