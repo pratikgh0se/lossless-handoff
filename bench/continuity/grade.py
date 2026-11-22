@@ -159,6 +159,42 @@ def lookup_used(records, marker):
     return False
 
 
+MCP_PREFIX = "mcp__lossless-recall__"
+INJECTION_TEXT = "Lossless Handoff auto-recall:"
+
+
+def search_used(records, marker):
+    """Probe design 3. (used, kinds): did the fork search for the fact? kinds holds "bash" (a recall.py call or a transcript read),
+    "mcp" (an mcp__lossless-recall__ call) and "injection" (an auto-recall injection in the probe turn).
+    Only records from the probe message on count, because a fork copies the parent history."""
+    kinds, seen = [], False
+    for r in records:
+        if not isinstance(r, dict):
+            continue
+        if not seen:
+            m = r.get("message")
+            c = m.get("content") if isinstance(m, dict) else None
+            txt = c if isinstance(c, str) else " ".join(b.get("text", "") for b in (c or []) if isinstance(b, dict) and b.get("type") == "text")
+            if marker in txt and r.get("type") == "user":
+                seen = True
+            else:
+                continue
+        blob = json.dumps(r, ensure_ascii=False)
+        if INJECTION_TEXT in blob and "injection" not in kinds and "tool_use" not in blob:
+            kinds.append("injection")
+        m = r.get("message")
+        c = m.get("content") if isinstance(m, dict) else None
+        if isinstance(c, list):
+            for b in c:
+                if isinstance(b, dict) and b.get("type") == "tool_use":
+                    s = json.dumps(b.get("input"))
+                    if str(b.get("name") or "").startswith(MCP_PREFIX) and "mcp" not in kinds:
+                        kinds.append("mcp")
+                    if (".claude/projects" in s or ".jsonl" in s or "recall.py" in s) and "bash" not in kinds:
+                        kinds.append("bash")
+    return bool(kinds), kinds
+
+
 def lookup_calls(records, marker, limit=300):
     """Tool calls after the probe message (the one with the marker), in order:
     [{"tool": name, "input": input as JSON text cut to `limit` characters}]. Information only."""

@@ -11,7 +11,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 SCORED = ["R", "D", "X", "S", "E", "C"]      # scored types that have one plant turn, so a position tag. M has no position.
 POS = ["start", "middle", "end"]
-NAMES = {"A": "A plain", "B": "B Lossless Handoff", "R": "R auto-recall", "Z": "Z no history", "O": "O no compaction"}
+NAMES = {"A": "A plain", "B": "B Lossless Handoff", "R": "R auto-recall", "K": "K recall levers", "Z": "Z no history", "O": "O no compaction"}
 
 
 def cond_of(r):
@@ -23,7 +23,7 @@ def phr_of(r):
 
 
 def is_new(rows):
-    return any(phr_of(r) == "neutral" or cond_of(r) == "nocompact" or r["arm"] == "R" for r in rows)
+    return any(phr_of(r) in ("neutral", "nonliteral") or cond_of(r) == "nocompact" or r["arm"] in ("R", "K") for r in rows)
 
 
 class Cells:
@@ -33,11 +33,13 @@ class Cells:
         self.rows = [r for r in rows if r["type"] in SCORED]
         self.seeds = sorted({r["seed"] for r in self.rows})
 
-    def vec(self, flt):
+    def vec(self, flt, val=None):
+        """val: what counts as a hit (default: the answer is correct)."""
+        val = val or (lambda r: r["correct"])
         cs, ts = [], []
         for s in self.seeds:
             sel = [r for r in self.rows if r["seed"] == s and flt(r)]
-            cs.append(sum(1 for r in sel if r["correct"]))
+            cs.append(sum(1 for r in sel if val(r)))
             ts.append(len(sel))
         return cs, ts
 
@@ -57,7 +59,7 @@ def section(rows, sessions, th, draws, helpers=None):
     if not S:
         return [], {}
     boot = Boot(S, draws or th["bootstrap_draws"], th["bootstrap_rng_seed"], th["ci_level"])
-    arms = [a for a in ("A", "B", "R", "Z", "O") if any(r["arm"] == a for r in rows)]
+    arms = [a for a in ("A", "B", "R", "K", "Z", "O") if any(r["arm"] == a for r in rows)]
     md, out = [], {"tables": {}, "hypotheses": []}
     ns = sorted({r["n_target"] for r in rows if cond_of(r) == "compact" and r["n_target"] > 0})
 
@@ -80,22 +82,23 @@ def section(rows, sessions, th, draws, helpers=None):
               "\"Fired with hits\" counts forks whose log line has hits above 0.\n")
     md.append("| Condition | Phrasing | Probe forks | Fired | Rate | Fired with hits > 0 | Timed out |")
     md.append("|---|---|---|---|---|---|---|")
-    fire = {}
-    for cond in ("compact", "nocompact"):
-        for phr in ("cued", "neutral"):
+    fire, fire_k = {}, {}
+    for arm_f, cond, phr in [(a_, c_, p_) for a_ in ("R", "K") for c_ in ("compact", "nocompact") for p_ in ("cued", "neutral", "nonliteral")]:
+        if True:
             forks = {}
             for r in rows:
-                if r["arm"] == "R" and cond_of(r) == cond and phr_of(r) == phr and r.get("auto_recall_fired") is not None:
+                if r["arm"] == arm_f and cond_of(r) == cond and phr_of(r) == phr and r.get("auto_recall_fired") is not None:
                     forks[(r["seed"], r["n_target"], r["type"], r["fork_sid"])] = (
                         bool(r["auto_recall_fired"]), (r.get("auto_recall_hits") or 0) > 0, bool(r.get("auto_recall_timed_out")))
             if forks:
                 f, h, to = (sum(v[i] for v in forks.values()) for i in range(3))
                 n_ = len(forks)
-                fire["%s/%s" % (cond, phr)] = [f, n_, h, to]
-                md.append("| %s | %s | %d | %d | %s | %d (%s) | %d (%s) |" % (cond, phr, n_, f, pct(f / n_), h, pct(h / n_), to, pct(to / n_)))
-    if not fire:
+                (fire if arm_f == "R" else fire_k)["%s/%s" % (cond, phr)] = [f, n_, h, to]
+                md.append("| %s%s | %s | %d | %d | %s | %d (%s) | %d (%s) |" % ("" if arm_f == "R" else "K: ", cond, phr, n_, f, pct(f / n_), h, pct(h / n_), to, pct(to / n_)))
+    if not fire and not fire_k:
         md.append("| no data | | | | | | |")
-    else:
+    out["tables"]["fire_k"] = fire_k
+    if fire:
         tc = [sum(v[0] for k, v in fire.items() if k.endswith("/" + p)) for p in ("cued", "neutral")]
         tt = [sum(v[1] for k, v in fire.items() if k.endswith("/" + p)) for p in ("cued", "neutral")]
         md.append("\nThe hook fired on %s of cued and %s of neutral probes (arm R)." % (
@@ -111,8 +114,8 @@ def section(rows, sessions, th, draws, helpers=None):
     t1 = {}
     for a in arms:
         for cond in ("compact", "nocompact"):
-            for phr in ("cued", "neutral"):
-                if a in ("Z", "O") and (cond == "nocompact" or phr == "neutral"):
+            for phr in ("cued", "neutral", "nonliteral"):
+                if a in ("Z", "O") and (cond == "nocompact" or phr != "cued"):
                     continue
                 f0 = base(a, cond, phr)
                 if not any(f0(r) for r in cells.rows):
@@ -146,6 +149,16 @@ def section(rows, sessions, th, draws, helpers=None):
             t2["%s/%s" % (a, cond)] = {"cued": [sum(cc), sum(ct)], "neutral": [sum(nc_), sum(nt)]}
             md.append("| %s | %s | %s | %s | %s |" % (NAMES[a], cond, ctx_, ntx, fmt_diff(d)))
     out["tables"]["phrasing"] = t2
+    md.append("\n### Table L2b: non-literal minus neutral (no compaction, probe design 3, types R D X S E)\n")
+    md.append("| Arm | neutral | nonliteral | nonliteral minus neutral |")
+    md.append("|---|---|---|---|")
+    for a in [x for x in arms if x not in ("Z", "O")]:
+        fn, fl = base(a, "nocompact", "neutral"), base(a, "nocompact", "nonliteral")
+        if not any(fl(r) for r in cells.rows):
+            continue
+        nc_, nt, ntx = cell(lambda r: fn(r) and r["type"] in NT)
+        lc, lt_, ltx = cell(lambda r: fl(r) and r["type"] in NT)
+        md.append("| %s | %s | %s | %s |" % (NAMES[a], ntx, ltx, fmt_diff(boot.diff(lc, lt_, nc_, nt))))
     md.append("\nL2 is not a pure cue contrast. The neutral head also drops \"Answer from this session's history only\" and adds a rule to answer null when unsure. "
               "The cued head of design 2 adds a cue sentence. So L2 compares two prompt styles, not only the cue.\n")
 
@@ -168,6 +181,34 @@ def section(rows, sessions, th, draws, helpers=None):
         md.append("| %s | %s |" % (NAMES[a], " | ".join(row)))
     out["tables"]["curve_diff"] = t3
     md.append("")
+
+    # ---- search rate (probe design 3 records used_lookup for every probe of every arm)
+    md.append("### Table L5: search rate by arm, phrasing and position (share of probe items whose fork searched: recall.py call, MCP call or auto-recall injection)\n")
+    md.append("| Arm | Condition | Phrasing | start | middle | end |")
+    md.append("|---|---|---|---|---|---|")
+    t5 = {}
+    for a in arms:
+        for cond in ("compact", "nocompact"):
+            for phr in ("cued", "neutral", "nonliteral"):
+                f0 = base(a, cond, phr)
+                if a in ("Z", "O") or not any(f0(r) and "used_lookup" in r for r in cells.rows):
+                    continue
+                row = []
+                for p in POS:
+                    cs, ts = cells.vec(lambda r, p=p, f0=f0: f0(r) and r.get("position") == p, val=lambda r: bool(r.get("used_lookup")))
+                    row.append(fmt_cell(sum(cs), sum(ts), boot.one(cs, ts) if sum(ts) else (None, None)))
+                    t5["%s/%s/%s/%s" % (a, cond, phr, p)] = [sum(cs), sum(ts)]
+                md.append("| %s | %s | %s | %s |" % (NAMES[a], cond, phr, " | ".join(row)))
+    out["tables"]["search_rate"] = t5
+    md.append("")
+
+    # ---- null control
+    md.append("### Table L6: NULL CONTROL, B minus A with no compaction (cued)\n")
+    md.append("In the no-compaction condition the core handoff (PreCompact summary, post-compact injection) never runs. B has nothing to restore, so B minus A here must be about 0. "
+              "Only arms R and K add anything in this condition (auto-recall, recall rules, MCP search, reanchor). Do not credit the core handoff with any lost-in-the-middle gain.\n")
+    dnull = boot.diff(*cells.vec(base("B", "nocompact", "cued")), *cells.vec(base("A", "nocompact", "cued")))
+    md.append("B minus A, no compaction, cued: %s\n" % fmt_diff(dnull))
+    out["tables"]["null_control"] = list(dnull)
 
     # ---- hypotheses
     md.append("### Table L4: pre-registered hypotheses (thresholds in thresholds.json, committed before any data)\n")
@@ -194,6 +235,21 @@ def section(rows, sessions, th, draws, helpers=None):
         res = "SUPPORTED" if 100 * d[0] <= p and d[2] < 0 else "NOT SUPPORTED"
     hyp("H1 lost in the middle: arm A, no compaction, cued: middle minus mean(start, end)",
         "<= %+d pts and CI upper bound < 0; TOO EASY if mean(start, end) > %s" % (p, pct(ceil)), fmt_diff(d), res)
+    # H1n: the same rule on non-literal probes (NoLiMa: the drop shows mainly when the question shares no words with the fact)
+    f1n = base("A", "nocompact", "nonliteral")
+    if any(f1n(r) for r in cells.rows):
+        vm, vs, ve = (cells.vec(lambda r, p=p: f1n(r) and r.get("position") == p) for p in (POS[1], POS[0], POS[2]))
+        dn = mean_ends_diff(boot, vm, vs, ve)
+        rs, re_ = (sum(v[0]) / sum(v[1]) if sum(v[1]) else None for v in (vs, ve))
+        em = None if rs is None or re_ is None else (rs + re_) / 2
+        if dn[0] is None:
+            resn = "NO DATA"
+        elif em > ceil:
+            resn = "TOO EASY: no claim (start/end accuracy %s is above %s)" % (pct(em), pct(ceil))
+        else:
+            resn = "SUPPORTED" if 100 * dn[0] <= p and dn[2] < 0 else "NOT SUPPORTED"
+        hyp("H1n lost in the middle, non-literal probes: arm A, no compaction: middle minus mean(start, end)",
+            "<= %+d pts and CI upper bound < 0; TOO EASY if mean(start, end) > %s" % (p, pct(ceil)), fmt_diff(dn), resn)
     # H2: compaction loses facts that long context keeps
     fcm, fnc = base("A", "compact", "cued"), base("A", "nocompact", "cued")
     d = boot.diff(*cells.vec(fcm), *cells.vec(fnc))
@@ -232,6 +288,16 @@ def section(rows, sessions, th, draws, helpers=None):
         meas = "cued %s (%d/%d), neutral %s (%d/%d)" % (pct(cf[0] / cf[1]), cf[0], cf[1], pct(nf[0] / nf[1]), nf[0], nf[1])
     hyp("H5 (%s) the hook fires on cued probes and not on neutral probes" % lt.get("h5_label", "plumbing check"),
         "cued >= %s and neutral <= %s" % (pct(cmin), pct(nmax)), meas, res)
+    # H6 and H7: do the recall levers (arm K) make the model search, and does it help? No compaction, neutral probes, K against B.
+    vk = cells.vec(lambda r: base("K", "nocompact", "neutral")(r), val=lambda r: bool(r.get("used_lookup")))
+    vb = cells.vec(lambda r: base("B", "nocompact", "neutral")(r), val=lambda r: bool(r.get("used_lookup")))
+    d6 = boot.diff(*vk, *vb)
+    hyp("H6 search rate: K minus B, no compaction, neutral probes", "> 0 pts and CI lower bound > 0 (%s)" % lt.get("h6_note", "stop rule: if K does not search more than B in the pilot, stop and remove the levers"),
+        fmt_diff(d6), "NO DATA" if d6[0] is None else ("SUPPORTED" if d6[0] > 0 and d6[1] > 0 else "NOT SUPPORTED"))
+    d7 = boot.diff(*cells.vec(lambda r: base("K", "nocompact", "neutral")(r)), *cells.vec(lambda r: base("B", "nocompact", "neutral")(r)))
+    p7 = lt.get("h7_k_minus_b_neutral_accuracy_min_points", 5)
+    hyp("H7 accuracy: K minus B, no compaction, neutral probes", ">= %+d pts and CI lower bound > 0" % p7, fmt_diff(d7),
+        "NO DATA" if d7[0] is None else ("SUPPORTED" if 100 * d7[0] >= p7 and d7[1] > 0 else "NOT SUPPORTED"))
     md.append("\nA hypothesis that is NOT SUPPORTED or REFUTED stays in the report. The thresholds do not change after a run.\n")
 
     # ---- gate: no-compaction sessions must not compact

@@ -1,7 +1,7 @@
 {
-  "version": 3,
+  "version": 4,
   "registered": "2026-11-18",
-  "note": "Pass thresholds. They come from the verification plan. v2 adds the headroom gate for generator v4. Committed before any v4 run. Do not change after a run to make a result pass. v3 adds the litm block (lost in the middle, phrasing, auto-recall), committed before any run of probe design 2.",
+  "note": "Pass thresholds. They come from the verification plan. v2 adds the headroom gate for generator v4. Committed before any v4 run. Do not change after a run to make a result pass. v3 adds the litm block (lost in the middle, phrasing, auto-recall), committed before any run of probe design 2. v4 adds H1n, H6, H7 and the design-3 settings, committed before any run of probe design 3.",
   "amnesia_max_accuracy": 0.02,
   "oracle_min_accuracy": 0.95,
   "fresh_min_accuracy": 0.95,
@@ -54,6 +54,26 @@
       "cleared_markers_allowed": 0,
       "compactions_allowed": 0,
       "note": "A no-compaction session is valid only if the last-turn context (input + cache read tokens) is at least this share of nc_estimate_tokens, the transcript has no cleared-tool-result marker, and it has no compaction."
+    },
+    "registered_design3": "2026-11-22",
+    "h1n_note": "H1n: the H1 rule on non-literal probes (arm A, no compaction), same thresholds and same ceiling.",
+    "h6_k_minus_b_search_rate_min_points": 0,
+    "h6_note": "K minus B search rate (used_lookup) on neutral probes, no compaction: point above 0 and CI lower bound above 0. Stop rule: if the pilot shows no higher search rate for K, stop and remove the levers.",
+    "h7_k_minus_b_neutral_accuracy_min_points": 5,
+    "design3": {
+      "nc_window": 400000,
+      "nc_target_fraction": 0.75,
+      "nc_fail_fraction": 0.9,
+      "positions_per_type": "2 start, 2 middle, 2 end",
+      "types": [
+        "R",
+        "D",
+        "X",
+        "S",
+        "E"
+      ],
+      "nonliteral_content_word_overlap_with_plant": 0,
+      "filler": "pasted documents in user turns, one small task each (not graded)"
     }
   }
 }

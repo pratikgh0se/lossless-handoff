@@ -6,7 +6,7 @@ import hashlib, json, os, shutil, sys, tempfile, unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
-import cost, gen, grade, litm, report, runner
+import cost, gates, gen, grade, litm, report, runner
 
 FIX = os.path.join(HERE, "fixtures")
 SEEDS = list(range(1000, 1020))
@@ -411,7 +411,7 @@ class RoundTwoFixes(unittest.TestCase):
     def test_missing_log_line_stops_a_cued_probe(self):
         src = open(os.path.join(HERE, "runner.py"), encoding="utf-8").read()
         self.assertIn('phrasing == "cued" and cfg.get("probe_design", 1) >= 2 and fsid and not fired', src)
-        self.assertIn("raise Fatal(\"arm R: a cued probe left no line", src)
+        self.assertIn("raise Fatal(\"arm %s: a cued probe left no line", src)
 
     # -- 4. L0 columns
     def test_l0_has_hits_and_timeout_rates_and_the_cap(self):
@@ -496,6 +496,596 @@ class CostEstimate(unittest.TestCase):
         self.assertAlmostEqual(2 * (cost.BASE + cost.PER_COMPACTION * 30), cost.WAVE2_PER_SEED_AB_N30)
         old, _, _ = cost.estimate(1, ["A", "B"], [1, 3, 10], ["compact"], ["cued"])
         self.assertAlmostEqual(old, 2 * cost.UNIT_N10)
+
+
+class Design3(unittest.TestCase):
+    """Probe design 3: real long context (A), non-literal probes (B), balanced positions (C), arm K and search rate (D), framing (E), cost (F)."""
+
+    def setUp(self):
+        self.th = json.load(open(os.path.join(HERE, "thresholds.json")))
+
+    # ---- A. real long context, all user turns
+    def test_plan_is_user_turns_only_with_75_turns_in_equal_thirds(self):
+        for seed in SEEDS[:5]:
+            s = gen.build_litm3(seed)
+            plan = s["plan"]
+            self.assertEqual(len(plan), 75)
+            self.assertEqual([x["turn"] for x in plan], list(range(75)))
+            self.assertEqual({x["kind"] for x in plan}, {"bridge", "fact", "x2", "fill"})
+            self.assertEqual(s["events"], [])                       # no plant event with files: nothing is a tool result
+            self.assertTrue(all("files" not in x for x in plan))
+            self.assertEqual(sum(1 for x in plan if x["kind"] == "fill"), 36)
+            for th in range(3):
+                self.assertEqual([x["third"] for x in plan[25 * th:25 * th + 25]], [th] * 25)
+
+    def test_plan_hits_300k_tokens_in_a_400k_window(self):
+        self.assertEqual(runner.NC3_WINDOW, 400000)
+        lines, est = runner.nc3_plan(400000)
+        self.assertTrue(0.70 * 400000 <= est <= 0.80 * 400000, est)
+        self.assertGreaterEqual(lines, 300)
+        with self.assertRaises(SystemExit):
+            runner.nc3_plan(60000)
+
+    def test_filler_is_a_pasted_document_with_a_small_task(self):
+        s = gen.build_litm3(1000)
+        lines, _ = runner.nc3_plan(400000)
+        prompt, expect = gen.filler_doc_prompt(s, 3, lines)
+        self.assertIn("<<<DOC", prompt)
+        doc = prompt.split("<<<DOC\n")[1].split("DOC>>>")[0]
+        self.assertEqual(len(doc.splitlines()), lines)                 # the document is in the prompt, line for line
+        self.assertIn("Task: reply with only the number at the start of the last line", prompt)
+        self.assertTrue(expect and expect in prompt)
+        self.assertFalse(any(v in prompt for v in s["secrets"]))
+        self.assertFalse(gen.has_cue(prompt))
+
+    def test_plan_turns_hold_no_cue_so_the_hook_fires_only_on_probes(self):
+        for seed in SEEDS:
+            for st in gen.build_litm3(seed)["plan"]:
+                if "prompt" in st:
+                    self.assertFalse(gen.has_cue(st["prompt"]), (seed, st["kind"]))
+
+    def test_design_3_uses_its_own_script_only_in_the_no_compaction_condition(self):
+        cfg = dict(FakeCtx().cfg, probe_design=3)
+        ctx = FakeCtx()
+        ctx.cfg = cfg
+        ctx.script3 = lambda seed: gen.build_litm3(seed)
+        nc = runner.Session(ctx, "s1-A-nc", 1000, "A", {}, "nocompact")
+        cm = runner.Session(ctx, "s1-A", 1000, "A", {}, "compact")
+        z = runner.Session(ctx, "s1-Z", 1000, "Z", {}, "compact")
+        self.assertTrue(nc.d3)
+        self.assertFalse(cm.d3)
+        self.assertFalse(z.d3)
+        self.assertEqual(nc.overrides["DISABLE_AUTO_COMPACT"], "1")
+        cfg2 = dict(FakeCtx().cfg)          # design 2: unchanged
+        ctx2 = FakeCtx()
+        self.assertFalse(runner.Session(ctx2, "s1-A-nc", 1000, "A", {}, "nocompact").d3)
+
+    def test_validity_rule_is_kept_for_design_3(self):
+        src = open(os.path.join(HERE, "runner.py"), encoding="utf-8").read()
+        body = src[src.index("def run_nc3_session"):src.index("def run_nc_session")]
+        self.assertIn("nc_validity(", body)
+        self.assertIn("count_cleared(", body)
+        self.assertIn("nc_estimate_tokens", body)
+
+    # ---- B. non-literal probes
+    def test_nonliteral_probe_shares_no_content_word_with_its_plant(self):
+        for seed in range(1000, 1060):
+            s = gen.build_litm3(seed)
+            for t, lst in s["items"].items():
+                for it in lst:
+                    q = gen.nonliteral_question(t, it)
+                    plant = " ".join(gen.plant_sentences(t, it))
+                    drop = [it.get(k) for k in ("answer", "old", "new", "ecode")]
+                    self.assertEqual(gen.content_words(q, drop) & gen.content_words(plant, drop), set(), (seed, t, q, plant))
+
+    def test_nonliteral_probe_holds_no_cue_and_no_answer(self):
+        for seed in SEEDS:
+            s = gen.build_litm3(seed)
+            for t in gen.L3_TYPES:
+                p = gen.probe_prompt(t, s, "PROBE-%d-R-0-%sn" % (seed, t), 0, items=s["items"][t], phrasing="nonliteral")
+                self.assertFalse(gen.has_cue(p), (seed, t))
+                self.assertEqual([v for v in s["secrets"] if v in p], [])
+                for it in s["items"][t]:
+                    self.assertNotIn(it["topic"], p)                    # the probe names the alias only
+                    self.assertIn(it["alias"], p)
+
+    def test_the_overlap_test_can_fail(self):
+        self.assertEqual(gen.content_words("write the queue", []) & gen.content_words("Decision: the queue is x", []), {"queue"})
+        self.assertEqual(gen.content_words("TAG-AAAA-1111-BBBB tag", ["TAG-AAAA-1111-BBBB"]), set())
+
+    def test_bridge_is_in_the_same_third_as_the_fact_and_before_it(self):
+        for seed in SEEDS[:5]:
+            s = gen.build_litm3(seed)
+            for t, lst in s["items"].items():
+                for it in lst:
+                    bridge = [x for x in s["plan"] if x["kind"] == "bridge" and x["third"] == it["third"]][0]
+                    self.assertIn(it["alias"], bridge["prompt"])
+                    self.assertIn("`%s`" % it["topic"], bridge["prompt"])
+                    self.assertLess(bridge["turn"], it["turn"])
+                    self.assertEqual(it["turn"] // 25, bridge["turn"] // 25)
+                    self.assertNotIn(it["alias"], [x for x in s["plan"] if x["kind"] == "fact" and x["turn"] == it["turn"]][0]["prompt"])
+
+    def test_nonliteral_grades_with_the_same_grader(self):
+        s = gen.build_litm3(1005)
+        make = {"R": lambda x: {"id": x["id"], "answer": x["answer"]}, "D": lambda x: {"id": x["id"], "answer": x["answer"]},
+                "S": lambda x: {"id": x["id"], "answer": x["answer"]}, "X": lambda x: {"id": x["id"], "current": x["new"], "replaced": [x["old"]]},
+                "E": lambda x: {"id": x["id"], "proceed": False, "reason_code": x["ecode"]}}
+        for t in gen.L3_TYPES:
+            items = gen.select(s, t, None)
+            self.assertEqual(len(items), 6)
+            raw = json.dumps({"answers": [make[t](x) for x in items]})
+            self.assertTrue(all(g["correct"] for g in grade.grade(t, items, raw)))
+
+    def test_nonliteral_only_for_r_d_x_s_e_and_only_in_design_3(self):
+        s = gen.build_litm3(1000)
+        for t in ("C", "M"):
+            with self.assertRaises(ValueError):
+                gen.nonliteral_question(t, s["items"]["R"][0])
+        ph = {"phrasings": ["cued", "neutral", "nonliteral"]}
+        self.assertEqual(runner.probe_plan(ph, "R"), ["cued", "neutral"])                 # compaction condition: no bridge, so no non-literal probe
+        self.assertEqual(runner.probe_plan(ph, "R", d3=True), ["cued", "neutral", "nonliteral"])
+        self.assertEqual(runner.probe_plan(ph, "C", d3=True), ["cued"])
+
+    # ---- C. balanced positions
+    def test_two_facts_of_each_type_in_each_third(self):
+        for seed in SEEDS[:8]:
+            s = gen.build_litm3(seed)
+            for t in gen.L3_TYPES:
+                self.assertEqual([it["position"] for it in s["items"][t]], ["start", "start", "middle", "middle", "end", "end"])
+
+    def test_position_is_the_real_turn_order(self):
+        for seed in SEEDS[:8]:
+            s = gen.build_litm3(seed)
+            for t, lst in s["items"].items():
+                for it in lst:
+                    self.assertEqual(gen.position_of_turn(it["turn"], len(s["plan"])), it["position"])
+                    step = s["plan"][it["turn"]]
+                    self.assertEqual((step["kind"], step["type"], step["id"]), ("fact", t, it["id"]))
+
+    def test_power_figure(self):
+        p3, mde3, _ = cost.h1_power(20, 10, 10, 10)
+        p2, mde2, _ = cost.h1_power(20, 6, 12, 6)
+        self.assertGreater(p3, p2)
+        self.assertLess(mde3, mde2)
+        self.assertTrue(0.45 < p3 < 0.70, p3)
+        self.assertGreater(cost.h1_power(60, 10, 10, 10)[0], 0.8)
+        self.assertTrue(any("design 3" in x and "power to find a -10 point effect" in x for x in cost.power_lines(20)))
+
+    def test_script_of_design_2_is_not_changed_by_design_3(self):
+        a = json.dumps(gen.build(1000), sort_keys=True)
+        gen.build_litm3(1000)
+        self.assertEqual(json.dumps(gen.build(1000), sort_keys=True), a)
+        self.assertEqual(sha(a), "aadb496509d85d28")
+
+    # ---- D. arm K and search rate
+    def test_arm_k_settings(self):
+        k = runner.lh_settings("/x/hooks", auto_recall=True, reanchor=True)["hooks"]
+        self.assertEqual(k["UserPromptSubmit"][0]["hooks"][0]["command"], "python3 /x/hooks/auto-recall.py")
+        post = k["PostToolUse"]
+        self.assertEqual([h["hooks"][0]["command"] for h in post], ["python3 /x/hooks/handoff-nudge.py", "python3 /x/hooks/reanchor.py"])
+        self.assertEqual((post[1]["matcher"], post[1]["hooks"][0]["timeout"]), ("*", 5))
+        b = runner.lh_settings("/x/hooks")["hooks"]
+        self.assertEqual(len(b["PostToolUse"]), 1)                                         # arm B is as before
+        self.assertNotIn("UserPromptSubmit", b)
+
+    def test_arm_k_hooks_copy_marker_and_mcp(self):
+        d = tempfile.mkdtemp()
+        try:
+            lh = os.path.join(d, "lh")
+            os.makedirs(os.path.join(lh, "hooks"))
+            for f in runner.K_FILES + ("recall.py",):
+                open(os.path.join(lh, "hooks", f), "w").write("# x\n")
+            ctx = FakeCtx()
+            ctx.cfg.update(lh_path=lh, work_base=d)
+            k = runner.Session(ctx, "s1-K", 1000, "K", {}, "compact")
+            b = runner.Session(ctx, "s1-B", 1000, "B", {}, "compact")
+            kd = k.hooks_dir()
+            self.assertTrue(os.path.isfile(os.path.join(kd, ".recall-rules")))             # F68 marker, in K's own copy
+            self.assertTrue(os.path.isfile(os.path.join(kd, "recall-mcp.py")))
+            self.assertEqual(b.hooks_dir(), os.path.join(lh, "hooks"))
+            self.assertFalse(os.path.exists(os.path.join(lh, "hooks", ".recall-rules")))   # the shared checkout is untouched
+            mcp = json.loads(k.mcp_config())["mcpServers"]["lossless-recall"]
+            self.assertEqual(mcp["args"], [os.path.join(kd, "recall-mcp.py")])
+            self.assertEqual(mcp["env"]["HANDOFF_STATE_DIR"], k.statedir)
+            self.assertEqual(json.loads(b.mcp_config()), {"mcpServers": {}})
+            self.assertIn("mcp__lossless-recall__search_earlier_chat", k.allowed_tools())
+            self.assertNotIn("mcp__", b.allowed_tools())
+            self.assertEqual(runner.work_units({"seeds": [1], "arms": ["K"], "conditions": ["compact", "nocompact"]}), [(1, "K", "compact"), (1, "K", "nocompact")])
+        finally:
+            shutil.rmtree(d)
+
+    def test_arm_k_needs_its_hook_files(self):
+        class A:
+            pass
+        a = A()
+        d = tempfile.mkdtemp()
+        try:
+            os.makedirs(os.path.join(d, "hooks"))
+            open(os.path.join(d, "hooks", "precompact-handoff.py"), "w").close()
+            open(os.path.join(d, "hooks", "auto-recall.py"), "w").close()
+            for k_, v in dict(model=None, window=None, n=None, arms="A,K", types=None, seeds=1, seed_file=None, lh_path=d, files_per_turn=None,
+                              o_window=None, oracle_turns=None, o_files_per_turn=None, work_base=None, call_cap_usd=None, turn_timeout_s=None,
+                              jobs=None, budget_usd=None, conditions=None, phrasings=None, nc_window=None, dry_run=True).items():
+                setattr(a, k_, v)
+            with self.assertRaises(SystemExit) as cm:
+                runner.build_cfg("litm3-smoke", a)
+            self.assertIn("recall-mcp.py", str(cm.exception))
+        finally:
+            shutil.rmtree(d)
+
+    def test_search_used_from_fixture_records(self):
+        mark = "PROBE-1-K-0-Rn"
+        user = {"type": "user", "message": {"role": "user", "content": mark + " question"}}
+        bash = {"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "Bash", "input": {"command": "python3 ~/.claude/hooks/recall.py search x"}}]}}
+        mcp = {"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "mcp__lossless-recall__search_earlier_chat", "input": {"query": "x"}}]}}
+        inj = {"type": "attachment", "attachment": {"content": "Lossless Handoff auto-recall: earlier messages that match your words."}}
+        old_inj = {"type": "attachment", "attachment": {"content": "Lossless Handoff auto-recall: from the main chat"}}
+        plain = {"type": "assistant", "message": {"content": [{"type": "text", "text": "hi"}]}}
+        self.assertEqual(grade.search_used([old_inj, user, plain], mark), (False, []))      # a copy of the parent history does not count
+        self.assertEqual(grade.search_used([user, bash], mark), (True, ["bash"]))
+        self.assertEqual(grade.search_used([user, mcp], mark), (True, ["mcp"]))
+        self.assertEqual(grade.search_used([user, inj, plain], mark), (True, ["injection"]))
+        used, kinds = grade.search_used([user, inj, bash, mcp], mark)
+        self.assertEqual((used, sorted(kinds)), (True, ["bash", "injection", "mcp"]))
+        self.assertEqual(grade.search_used([plain], mark), (False, []))
+
+    def test_every_probe_row_records_used_lookup_in_design_3(self):
+        src = open(os.path.join(HERE, "runner.py"), encoding="utf-8").read()
+        self.assertIn("grade.search_used(frecs, marker)", src)
+        self.assertIn('"used_lookup": used, "search_kinds": kinds', src)
+
+    def test_h6_h7_are_registered_and_reported(self):
+        lt = self.th["litm"]
+        self.assertEqual(lt["h7_k_minus_b_neutral_accuracy_min_points"], 5)
+        self.assertEqual(lt["h6_k_minus_b_search_rate_min_points"], 0)
+        self.assertIn("stop and remove the levers", lt["h6_note"])
+        rows = d3_rows(k_search=0.9, b_search=0.1)
+        md, out = litm.section(rows, [], self.th, 100)
+        text = "\n".join(md)
+        res = {h["name"][:2]: h["result"] for h in out["hypotheses"]}
+        self.assertEqual(res["H6"], "SUPPORTED")
+        self.assertEqual(res["H7"], "SUPPORTED")
+        self.assertIn("H1n", " ".join(h["name"] for h in out["hypotheses"]))
+        self.assertIn("Table L5", text)
+        self.assertIn("search rate by arm, phrasing and position", text)
+        self.assertIn("Table L2b", text)
+        lo = d3_rows(k_search=0.0, b_search=0.5)
+        res2 = {h["name"][:2]: h["result"] for h in litm.section(lo, [], self.th, 100)[1]["hypotheses"]}
+        self.assertEqual(res2["H6"], "NOT SUPPORTED")
+
+    # ---- E. framing
+    def test_framing_null_control(self):
+        md, out = litm.section(d3_rows(0.9, 0.1), [], self.th, 100)
+        text = "\n".join(md)
+        self.assertIn("NULL CONTROL", text)
+        self.assertIn("core handoff", text)
+        self.assertIn("Only arms R and K add anything", text)
+        self.assertEqual(len(out["tables"]["null_control"]), 4)
+        readme = open(os.path.join(HERE, "README.md"), encoding="utf-8").read()
+        self.assertIn("B minus A there is a null control", readme)
+        self.assertIn("Do not credit the core handoff", readme)
+        self.assertIn("Why the filler differs between conditions", readme)
+
+    # ---- F. cost
+    def test_cost_of_the_three_runs(self):
+        smoke, _, _ = cost.estimate3(1, ["A", "B", "R", "K"], [1, 3], ["compact", "nocompact"])
+        nc_smoke, _, _ = cost.estimate3(1, ["A", "R"], [1, 3, 10], ["nocompact"])
+        self.assertTrue(12 < nc_smoke < 22, nc_smoke)
+        pilot, _, _ = cost.estimate3(2, ["A", "B", "R", "K"], [1, 3, 10], ["compact", "nocompact"])
+        full, _, _ = cost.estimate3(20, ["A", "B", "R", "K", "Z", "O"], [1, 3, 10], ["compact", "nocompact"])
+        self.assertTrue(50 < smoke < 90, smoke)
+        self.assertTrue(180 < pilot < 300, pilot)
+        self.assertTrue(1900 < full < 3000, full)
+        self.assertGreater(cost.d3_nc_unit(), cost.NC_UNIT)        # a 300k session costs more than the short one of design 2
+        self.assertGreater(cost.ARM_FACTOR["K"], cost.ARM_FACTOR["R"])
+        txt = "\n".join(cost.ASSUMPTIONS3)
+        for w in ("prices", "75 turns", "probe forks", "slack", "cache has expired", "power"):
+            self.assertIn(w, txt)
+
+    def test_dry_run_of_design_3_prints_the_estimate_and_assumptions(self):
+        import subprocess
+        out = subprocess.run([sys.executable, os.path.join(HERE, "runner.py"), "run", "litm3-smoke", "--arms", "A", "--dry-run"], capture_output=True, text=True).stdout
+        self.assertIn("probe design 3", out)
+        self.assertIn("Assumptions of the design-3 estimate", out)
+        out2 = subprocess.run([sys.executable, os.path.join(HERE, "cost.py")], capture_output=True, text=True).stdout
+        for w in ("SMOKE (litm3-smoke)", "PILOT (litm3-pilot)", "FULL (litm3-full)", "H1 power at 20 seeds"):
+            self.assertIn(w, out2)
+
+    def test_presets(self):
+        for name, arms, conds in (("litm3-smoke", "A,B,R,K", "compact,nocompact"), ("litm3-nc-smoke", "A,R", "nocompact"), ("litm3-pilot", "A,B,R,K", "compact,nocompact"), ("litm3-full", "A,B,R,K,Z,O", "compact,nocompact")):
+            k = runner.KINDS[name]
+            self.assertEqual((k["arms"], k["conditions"], k["probe_design"]), (arms, conds, 3))
+            self.assertEqual(k["phrasings"], "cued,neutral,nonliteral")
+        self.assertEqual((runner.KINDS["litm3-pilot"]["seeds"], runner.KINDS["litm3-full"]["seeds"]), (2, 20))
+        self.assertIn("litm3-smoke", open(os.path.join(HERE, "run.sh")).read())
+
+
+def d3_rows(k_search, b_search):
+    """Synthetic design-3 rows: arms A, B, R, K, no compaction, three phrasings, balanced positions, a used_lookup flag."""
+    import random
+    rng = random.Random(11)
+    acc = {"A": .6, "B": .6, "R": .7, "K": .85}
+    srch = {"A": 0.0, "B": b_search, "R": 0.3, "K": k_search}
+    rows = []
+    for seed in (1000, 1001, 1002, 1003):
+        sc = gen.build_litm3(seed)
+        for arm in ("A", "B", "R", "K"):
+            for t in gen.L3_TYPES:
+                for ph in ("cued", "neutral", "nonliteral"):
+                    for it in sc["items"][t]:
+                        pa = acc[arm] if ph != "nonliteral" else acc[arm] - 0.1
+                        rows.append({"seed": seed, "arm": arm, "n_target": 0, "n_actual": 0, "type": t, "item": it["id"],
+                                     "fork_sid": "f%d%s%s%s" % (seed, arm, t, ph), "correct": rng.random() < pa, "parse_ok": True, "abstained": False,
+                                     "condition": "nocompact", "phrasing": ph, "position": it["position"], "used_lookup": rng.random() < srch[arm],
+                                     "auto_recall_fired": (ph == "cued") if arm in ("R", "K") else None, "auto_recall_hits": 1, "auto_recall_timed_out": False})
+    return rows
+
+
+def make_pf_run(root, **flaws):
+    """A fixture preflight run (arms B, R, K; one compaction session and one no-compaction session each) that passes every line.
+    flaws switch one thing off or wrong. Returns (run folder, projects folder)."""
+    run_id, work, projects = "pf", os.path.join(root, "work"), os.path.join(root, "projects")
+    rd = os.path.join(root, "res", run_id)
+    for d in (rd, work, projects):
+        os.makedirs(d, exist_ok=True)
+    cfg = {"run_id": run_id, "work_base": work, "nc_estimate_tokens": 72000, "kind": "preflight", "arms": ["B", "R", "K"], "seeds": [1]}
+    json.dump(cfg, open(os.path.join(rd, "config.json"), "w"))
+    st = {"spent": 9.0 if flaws.get("cost_high") else 1.8, "status": "done", "sessions": {}}
+    sess_rows, rows, calls = [], [], []
+    for arm in ("B", "R", "K"):
+        for cond in ("compact", "nocompact"):
+            name = "s1-%s%s" % (arm, "-nc" if cond == "nocompact" else "")
+            sid = "sid-%s-%s" % (arm, cond)
+            st["sessions"][name] = {"status": "done", "sid": sid, "cost": 0.1}
+            stem = "lhbench-pf-s1-%s%s" % (arm, "-nc" if cond == "nocompact" else "")
+            statedir = os.path.join(work, stem + "-state")
+            os.makedirs(statedir, exist_ok=True)
+            proj = os.path.realpath(os.path.join(work, stem))
+            tdir = os.path.join(projects, runner.slug(proj))
+            os.makedirs(tdir, exist_ok=True)
+            lines = [{"type": "user", "message": {"content": "hello"}}]
+            bounds = 0
+            cost_u = cost.preflight_unit(arm, cond) * 1.0
+            if cond == "compact":
+                bounds = 0 if flaws.get("no_compaction") else 1
+                head = "Handoff part one: goal alpha beta gamma delta"
+                text = "" if flaws.get("no_inject") else head + " "
+                text += "" if flaws.get("no_decisions") else "If recall and the decisions list disagree, the decisions list wins. "
+                text += "- recall rule: before you state an earlier number, path, name, command or decision, search for it. " if (arm == "K" and not flaws.get("k_no_rule")) else ""
+                lines += [{"subtype": "compact_boundary"}, {"type": "user", "message": {"content": text or "nothing"}}] if bounds else [{"type": "user", "message": {"content": "no boundary"}}]
+                if not flaws.get("no_receipt"):
+                    open(os.path.join(statedir, "receipts.jsonl"), "w").write(json.dumps({"kind": "main", "part1_head": head}) + "\n")
+            else:
+                lines.append({"type": "user", "message": {"content": [{"type": "tool_result", "content": "[Old tool result content cleared]" if flaws.get("nc_cleared") else "data"}]}})
+                calls.append({"name": name, "kind": "turn", "in": 5, "cache_read": 30000 if flaws.get("nc_small") else 80000})
+                if arm == "K" and not flaws.get("k_no_reanchor"):
+                    open(os.path.join(statedir, "health.jsonl"), "w").write(json.dumps({"event": "reanchor", "tokens": 60000}) + "\n")
+            with open(os.path.join(tdir, sid + ".jsonl"), "w") as f:
+                for ln in lines:
+                    f.write(json.dumps(ln) + "\n")
+            sess_rows.append({"name": name, "seed": 1, "arm": arm, "condition": cond, "status": "done", "boundaries": bounds, "cost_usd": cost_u})
+            for t in ("R", "X"):
+                for ph in ("cued", "neutral"):
+                    fsid = "fork-%s-%s-%s-%s" % (arm, cond, t, ph)
+                    fired = None
+                    if arm in ("R", "K"):
+                        fired = (ph == "cued") and not (flaws.get("r_missing_fire") and arm == "R" and cond == "compact")
+                        if arm == "R" and flaws.get("r_neutral_fire") and ph == "neutral":
+                            fired = True
+                        if fired:
+                            open(os.path.join(statedir, "auto-recall.jsonl"), "a").write(json.dumps({"session_id": fsid, "fired": True, "hits": 1}) + "\n")
+                    rows.append({"seed": 1, "arm": arm, "condition": cond, "type": t, "phrasing": ph, "fork_sid": fsid, "parse_ok": not flaws.get("bad_parse"),
+                                 "correct": True, "used_lookup": None if flaws.get("no_used_lookup") else False, "auto_recall_fired": fired,
+                                 "search_kinds": ["mcp"] if (arm == "K" and ph == "cued") else []})
+    with open(os.path.join(rd, "results.jsonl"), "w") as f:
+        for r in rows:
+            f.write(json.dumps(r) + "\n")
+    with open(os.path.join(rd, "sessions.jsonl"), "w") as f:
+        for r in sess_rows:
+            f.write(json.dumps(r) + "\n")
+    with open(os.path.join(rd, "calls.jsonl"), "w") as f:
+        for r in calls:
+            f.write(json.dumps(r) + "\n")
+    json.dump(st, open(os.path.join(rd, "state.json"), "w"))
+    return rd, projects
+
+
+def fake_mcp_server(path, tools=("search_earlier_chat", "open_message")):
+    open(path, "w").write(
+        "import json, sys\n"
+        "for ln in sys.stdin:\n"
+        "    m = json.loads(ln)\n"
+        "    if m.get('id') == 1:\n"
+        "        print(json.dumps({'jsonrpc': '2.0', 'id': 1, 'result': {'serverInfo': {'name': 'lossless-recall'}}}), flush=True)\n"
+        "    if m.get('id') == 2:\n"
+        "        print(json.dumps({'jsonrpc': '2.0', 'id': 2, 'result': {'tools': [{'name': n} for n in %r]}}), flush=True)\n" % (list(tools),))
+
+
+class Preflight(unittest.TestCase):
+    def run_check(self, **flaws):
+        import preflight
+        d = tempfile.mkdtemp()
+        try:
+            rd, projects = make_pf_run(d, **flaws)
+            return preflight.check(rd, projects, mcp=False)
+        finally:
+            shutil.rmtree(d)
+
+    def status(self, res, word):
+        got = [st for label, st, _ in res if word in label]
+        self.assertEqual(len(got), 1, (word, got))
+        return got[0]
+
+    def test_clean_run_passes_every_line(self):
+        res = self.run_check()
+        self.assertEqual([x for x in res if x[1] == "FAIL"], [])
+        self.assertGreaterEqual(len(res), 13)
+
+    def test_each_line_fails_when_its_fact_is_wrong(self):
+        cases = [("no_compaction", "a compaction happened"), ("no_receipt", "receipt was written"), ("no_inject", "was injected after"),
+                 ("no_decisions", "decisions list or the rules"), ("nc_cleared", "no-compaction sessions"), ("nc_small", "no-compaction sessions"),
+                 ("r_missing_fire", "arm R:"), ("r_neutral_fire", "arm R:"), ("k_no_reanchor", "reanchor health row"), ("k_no_rule", "recall-rule line"),
+                 ("no_used_lookup", "used_lookup is set"), ("bad_parse", "parsed and graded"), ("cost_high", "total cost under"), ("cost_high", "against the cost.py estimate")]
+        for flaw, word in cases:
+            if flaw == "cost_high" and "estimate" in word:
+                # the ratio line uses the cost of the sessions, so make the sessions expensive
+                import preflight
+                d = tempfile.mkdtemp()
+                try:
+                    rd, projects = make_pf_run(d)
+                    rows = [json.loads(x) for x in open(os.path.join(rd, "sessions.jsonl"))]
+                    with open(os.path.join(rd, "sessions.jsonl"), "w") as f:
+                        for r in rows:
+                            r["cost_usd"] *= 2
+                            f.write(json.dumps(r) + "\n")
+                    res = preflight.check(rd, projects, mcp=False)
+                finally:
+                    shutil.rmtree(d)
+            else:
+                res = self.run_check(**{flaw: True})
+            self.assertEqual(self.status(res, word), "FAIL", (flaw, word))
+
+    def test_cost_ratio_is_printed(self):
+        res = self.run_check()
+        line = [x for x in res if "against the cost.py estimate" in x[0]][0]
+        self.assertIn("ratio 1.00", line[2])
+
+    def test_mcp_probe_with_a_fake_server(self):
+        import preflight
+        d = tempfile.mkdtemp()
+        try:
+            good, bad = os.path.join(d, "good.py"), os.path.join(d, "bad.py")
+            fake_mcp_server(good)
+            fake_mcp_server(bad, tools=("search_earlier_chat",))
+            self.assertTrue(preflight.mcp_probe(good, d, d)[0])
+            self.assertFalse(preflight.mcp_probe(bad, d, d)[0])
+            self.assertFalse(preflight.mcp_probe(os.path.join(d, "none.py"), d, d)[0])
+        finally:
+            shutil.rmtree(d)
+
+    def test_exit_code_and_output(self):
+        import preflight, io, contextlib
+        d = tempfile.mkdtemp()
+        try:
+            rd, projects = make_pf_run(d)
+            old = runner.PROJECTS
+            runner.PROJECTS = projects
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                rc = preflight.main([rd, "--no-mcp"])
+            self.assertEqual(rc, 0)
+            self.assertIn("RESULT: PASS", buf.getvalue())
+            rd2, projects2 = make_pf_run(os.path.join(d, "two"), bad_parse=True)
+            runner.PROJECTS = projects2
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                rc = preflight.main([rd2, "--no-mcp"])
+            self.assertEqual(rc, 1)
+            self.assertIn("FAIL", buf.getvalue())
+        finally:
+            runner.PROJECTS = old
+            shutil.rmtree(d)
+
+    def test_preflight_preset_and_cost(self):
+        k = runner.KINDS["preflight"]
+        self.assertEqual((k["model"], k["window"], k["seeds"], k["arms"], k["types"], k["n"]), ("haiku", 30000, 1, "B,R,K", "R,X", [1]))
+        self.assertEqual((k["conditions"], k["phrasings"]), ("compact,nocompact", "cued,neutral"))
+        total, lines = cost.estimate_preflight()
+        self.assertEqual(len(lines), 6)
+        self.assertLess(total, 3.0)
+        self.assertGreater(total, 1.0)
+        self.assertIn("preflight", open(os.path.join(HERE, "run.sh")).read())
+
+
+class AbortGates(unittest.TestCase):
+    def ok_inputs(self):
+        sess = [{"name": "s1-B", "seed": 1, "status": "done"}, {"name": "s1-R", "seed": 1, "status": "done"}]
+        rows = [{"seed": 1, "arm": "R", "phrasing": "cued", "auto_recall_fired": True, "parse_ok": True, "type": "R", "fork_sid": "f"}] * 10
+        return sess, rows
+
+    def test_no_gate_when_all_is_well(self):
+        sess, rows = self.ok_inputs()
+        self.assertEqual(gates.abort_reasons(sess, rows, 10.0, [1], {"s1-B": 5.0, "s1-R": 5.0}), [])
+        self.assertEqual(gates.abort_reasons(sess, rows, 10.0, [], {}), [])
+
+    def test_invalid_session_rate_above_10_percent(self):
+        sess, rows = self.ok_inputs()
+        sess += [{"name": "s1-A", "seed": 1, "status": "invalid"}] + [{"name": "s1-x%d" % i, "seed": 1, "status": "done"} for i in range(7)]
+        self.assertEqual(gates.abort_reasons(sess, rows, None, [1]), [])        # 1 of 10 = 10%, not above
+        sess.append({"name": "s1-nc", "seed": 1, "status": "done", "nc_valid": False})
+        why = gates.abort_reasons(sess, rows, None, [1])
+        self.assertTrue(any("invalid-session rate" in w for w in why), why)
+
+    def test_cost_above_1_3_times_the_estimate_so_far(self):
+        sess, rows = self.ok_inputs()
+        self.assertEqual(gates.abort_reasons(sess, rows, 10.0, [1], {"a": 13.0}), [])
+        why = gates.abort_reasons(sess, rows, 10.0, [1], {"a": 13.5})
+        self.assertTrue(any("1.3 x the estimate" in w for w in why), why)
+        self.assertEqual(gates.abort_reasons(sess, rows, None, [1], {"a": 999.0}), [])    # no estimate (slice): no cost gate
+        self.assertEqual(gates.abort_reasons(sess, rows, 10.0, [1, 2], {"a": 25.0}), [])  # the estimate grows with the finished seeds
+
+    def test_arm_r_cued_probe_without_a_fire(self):
+        sess, rows = self.ok_inputs()
+        rows.append({"seed": 1, "arm": "K", "phrasing": "cued", "auto_recall_fired": False, "parse_ok": True, "type": "X", "fork_sid": "g"})
+        self.assertTrue(any("no auto-recall fire" in w for w in gates.abort_reasons(sess, rows, None, [1])))
+        rows[-1] = {"seed": 1, "arm": "R", "phrasing": "neutral", "auto_recall_fired": False, "parse_ok": True, "type": "X", "fork_sid": "g"}
+        self.assertEqual(gates.abort_reasons(sess, rows, None, [1]), [])          # a neutral probe is not supposed to fire
+
+    def test_parse_error_rate_above_2_percent(self):
+        sess, rows = self.ok_inputs()
+        rows = [dict(rows[0]) for _ in range(100)]
+        rows[0]["parse_ok"] = rows[1]["parse_ok"] = False                          # 2 of 100: not above
+        self.assertEqual(gates.abort_reasons(sess, rows, None, [1]), [])
+        rows[2]["parse_ok"] = False
+        self.assertTrue(any("parse error rate" in w for w in gates.abort_reasons(sess, rows, None, [1])))
+        z = [{"seed": 1, "arm": "Z", "parse_ok": False}] * 50
+        self.assertEqual(gates.abort_reasons(sess, [dict(rows[5]) for _ in range(100)] + z, None, [1]), [])      # arm Z may answer in prose
+
+    def test_runner_stops_after_a_seed_and_resumes(self):
+        d = tempfile.mkdtemp()
+        try:
+            cfg = {"run_id": "g", "kind": "full", "arms": ["B"], "seeds": [1, 2], "n": [1, 3], "conditions": ["compact"], "phrasings": ["cued"], "gates": True}
+            ctx = runner.Ctx(d, cfg)
+            for n_ in ("s1-B", "s2-B"):
+                ctx.sess(n_)
+            with open(os.path.join(d, "results.jsonl"), "w") as f:
+                for i in range(50):
+                    f.write(json.dumps({"seed": 1, "arm": "B", "phrasing": "cued", "parse_ok": i > 10, "type": "R", "fork_sid": "x"}) + "\n")
+            with open(os.path.join(d, "sessions.jsonl"), "w") as f:
+                f.write(json.dumps({"name": "s1-B", "seed": 1, "status": "done"}) + "\n")
+            calls = []
+
+            def stub(ctx_, seed, arm, cond):
+                calls.append(seed)
+                ctx_.state["sessions"]["s%d-%s" % (seed, arm)]["status"] = "done"
+            old = runner.run_unit
+            runner.run_unit = stub
+            try:
+                runner.run_unit_gated(ctx, 1, "B", "compact")
+            finally:
+                runner.run_unit = old
+            self.assertTrue(ctx.stop.is_set())
+            self.assertTrue(any("parse error rate" in w for w in ctx.state["gate_abort"]))
+            self.assertEqual(runner.finished_seeds(ctx), [1])                        # seed 1 is finished: resume starts at seed 2
+            # resume: the finished session is not run again, the gate is cleared, --ignore-gates switches the gates off
+            ctx2 = runner.Ctx(d, cfg)
+            self.assertEqual(ctx2.state["sessions"]["s1-B"]["status"], "done")
+            self.assertEqual([u for u in runner.work_units(cfg) if u[0] == 2], [(2, "B", "compact")])
+        finally:
+            shutil.rmtree(d)
+
+    def test_every_preset_has_gates_on_and_the_estimate_rule(self):
+        for name, k in runner.KINDS.items():
+            cfg = {"kind": name, "arms": k["arms"].split(","), "n": k["n"], "conditions": k.get("conditions", "compact").split(","),
+                   "phrasings": k.get("phrasings", "cued").split(","), "probe_design": k.get("probe_design", 1)}
+            est = cost.estimate_per_seed(cfg)
+            if name == "slice":
+                self.assertIsNone(est)
+            else:
+                self.assertGreater(est, 0, name)
+        src = open(os.path.join(HERE, "runner.py"), encoding="utf-8").read()
+        self.assertIn("ex.submit(run_unit_gated", src)
+        self.assertIn("--ignore-gates", src)
 
 
 if __name__ == "__main__":

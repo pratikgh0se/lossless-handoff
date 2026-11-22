@@ -18,7 +18,7 @@ import sys, tempfile, threading, time, uuid
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
-import cost, gen, grade  # noqa: E402
+import cost, gates, gen, grade  # noqa: E402
 
 REPO = os.path.realpath(os.path.join(HERE, "..", ".."))
 RESULTS = os.path.join(HERE, "results")
@@ -26,8 +26,10 @@ HOME = os.path.expanduser("~")
 PROJECTS = os.path.join(HOME, ".claude", "projects")
 PREFIX = "lhbench-"
 ALL_TYPES = gen.TYPES + ["F"]
-ALL_ARMS = ("A", "B", "Z", "O", "R")
-LH_ARMS = ("B", "R")        # arms with Lossless Handoff hooks: B default install, R default install plus --auto-recall
+ALL_ARMS = ("A", "B", "Z", "O", "R", "K")
+LH_ARMS = ("B", "R", "K")   # arms with Lossless Handoff hooks: B default install, R plus --auto-recall, K plus auto-recall, recall rules, recall MCP and reanchor
+MCP_TOOLS = "mcp__lossless-recall__search_earlier_chat mcp__lossless-recall__open_message"
+K_FILES = ("auto-recall.py", "recall-mcp.py", "reanchor.py")
 ALLOWED_TOOLS = "Read Grep Task Agent Bash(grep:*) Bash(cat:*) Bash(ls:*) Bash(head:*) Bash(tail:*) Bash(python3:*)"
 MAX_NO_BOUNDARY = 10        # filler turns in a row with no new compaction: the session is invalid
 KINDS = {
@@ -39,6 +41,18 @@ KINDS = {
     # One seed, arms A and R, no compaction only: the cheapest live check of DISABLE_AUTO_COMPACT, the validity rule and the hook log.
     "litm-smoke": {"model": "sonnet", "window": 400000, "n": [1, 3, 10], "arms": "A,R", "seeds": 1, "seed_file": "seeds-dev.txt",
                    "conditions": "nocompact", "phrasings": "cued,neutral", "probe_design": 2},
+    # Probe design 3: real long context (about 300k of a 400k window), balanced positions, non-literal probes, arm K.
+    "litm3-smoke": {"model": "sonnet", "window": 400000, "n": [1, 3], "arms": "A,B,R,K", "seeds": 1, "seed_file": "seeds-dev.txt",
+                    "conditions": "compact,nocompact", "phrasings": "cued,neutral,nonliteral", "probe_design": 3},
+    "litm3-nc-smoke": {"model": "sonnet", "window": 400000, "n": [1, 3, 10], "arms": "A,R", "seeds": 1, "seed_file": "seeds-dev.txt",
+                       "conditions": "nocompact", "phrasings": "cued,neutral,nonliteral", "probe_design": 3},
+    # Preflight: the cheapest check of every part of the run. Haiku, small window, short no-compaction session. The checklist is preflight.py.
+    "preflight": {"model": "haiku", "window": 30000, "n": [1], "arms": "B,R,K", "seeds": 1, "seed_file": "seeds-dev.txt", "types": "R,X",
+                  "conditions": "compact,nocompact", "phrasings": "cued,neutral", "probe_design": 2, "nc_window": 120000, "search_used": True},
+    "litm3-pilot": {"model": "sonnet", "window": 400000, "n": [1, 3, 10], "arms": "A,B,R,K", "seeds": 2, "seed_file": "seeds-dev.txt",
+                    "conditions": "compact,nocompact", "phrasings": "cued,neutral,nonliteral", "probe_design": 3},
+    "litm3-full": {"model": "sonnet", "window": 400000, "n": [1, 3, 10], "arms": "A,B,R,K,Z,O", "seeds": 20, "seed_file": "seeds-report.txt",
+                   "conditions": "compact,nocompact", "phrasings": "cued,neutral,nonliteral", "probe_design": 3},
     "litm-full": {"model": "sonnet", "window": 400000, "n": [1, 3, 10], "arms": "A,B,R,Z,O", "seeds": 20, "seed_file": "seeds-report.txt",
                   "conditions": "compact,nocompact", "phrasings": "cued,neutral", "probe_design": 2},
 }
@@ -212,6 +226,16 @@ class Ctx:
             self.stop.set()
             raise Pause()
 
+    def script3(self, seed):
+        key = ("litm3", seed)
+        with self.lock:
+            if key not in self.scripts:
+                s = gen.build_litm3(seed)
+                self.scripts[key] = s
+                os.makedirs(os.path.join(self.dir, "scripts"), exist_ok=True)
+                write_json(os.path.join(self.dir, "scripts", "%d-litm3.json" % seed), s)
+            return self.scripts[key]
+
     def script(self, seed):
         with self.lock:
             if seed not in self.scripts:
@@ -223,7 +247,7 @@ class Ctx:
 
 
 # ------------------------------------------------------------------ one claude call
-def lh_settings(hooks_dir, auto_recall=False):
+def lh_settings(hooks_dir, auto_recall=False, reanchor=False):
     """Project settings of arm B: the hooks of the default install (install.sh, no --canary).
     Arm R (auto_recall=True) adds the UserPromptSubmit hook that `install.sh --auto-recall` registers (contract F67.a)."""
     pi = "python3 %s/postcompact-inject.py" % hooks_dir
@@ -238,6 +262,8 @@ def lh_settings(hooks_dir, auto_recall=False):
         "SessionEnd": [{"hooks": [{"type": "command", "command": "python3 %s/recall.py session-end" % hooks_dir, "timeout": 5}]}],
         "PostToolUse": [{"matcher": "*", "hooks": [{"type": "command", "command": "python3 %s/handoff-nudge.py" % hooks_dir, "timeout": 5}]}],
     }
+    if reanchor:        # F70: PostToolUse, matcher *, timeout 5
+        hooks["PostToolUse"].append({"matcher": "*", "hooks": [{"type": "command", "command": "python3 %s/reanchor.py" % hooks_dir, "timeout": 5}]})
     if auto_recall:
         hooks["UserPromptSubmit"] = [{"hooks": [{"type": "command", "command": "python3 %s/auto-recall.py" % hooks_dir, "timeout": 5}]}]
     return {"hooks": hooks}
@@ -264,7 +290,8 @@ class Session:
         self.proj = os.path.join(base, stem)
         self.statedir = os.path.join(base, stem + "-state")
         self.window = cfg["o_window"] if arm == "O" else (cfg.get("nc_window", NC_SESSION_WINDOW) if cond == "nocompact" else cfg["window"])
-        self.script = ctx.script(seed)
+        self.script = ctx.script3(seed) if (cond == "nocompact" and cfg.get("probe_design", 1) >= 3 and arm in ("A", "B", "R", "K")) else ctx.script(seed)
+        self.d3 = self.script.get("design") == 3
         ov = {"CLAUDE_CODE_AUTO_COMPACT_WINDOW": str(self.window), "RECALL_EMBED_URL": "http://127.0.0.1:9"}
         if cond == "nocompact":
             ov["DISABLE_AUTO_COMPACT"] = "1"      # same session length as the compaction run, compaction off
@@ -273,12 +300,34 @@ class Session:
             ov["HANDOFF_SUMMARY_MODEL"] = cfg["model"]
         self.overrides = ov
 
+    def hooks_dir(self):
+        """Hooks folder of the arm. Arm K gets its own copy, with the F68 marker .recall-rules, so that arms B and R (same checkout) stay as they are."""
+        src = os.path.join(self.ctx.cfg["lh_path"], "hooks")
+        if self.arm != "K":
+            return src
+        dst = os.path.join(self.statedir, "hooks")
+        if not os.path.isdir(dst):
+            os.makedirs(self.statedir, exist_ok=True)
+            shutil.copytree(src, dst, ignore=shutil.ignore_patterns("__pycache__"))
+            open(os.path.join(dst, ".recall-rules"), "w").close()
+        return dst
+
+    def mcp_config(self):
+        """--mcp-config text. Arm K gets the recall MCP server (F69), from its own hooks copy. Every other arm gets none."""
+        if self.arm != "K":
+            return '{"mcpServers":{}}'
+        return json.dumps({"mcpServers": {"lossless-recall": {"command": "python3", "args": [os.path.join(self.hooks_dir(), "recall-mcp.py")],
+                                                               "env": {"HANDOFF_STATE_DIR": self.statedir, "RECALL_EMBED_URL": "http://127.0.0.1:9"}}}})
+
+    def allowed_tools(self):
+        return ALLOWED_TOOLS + (" " + MCP_TOOLS if self.arm == "K" else "")
+
     # -- folders
     def prepare(self):
         if not os.path.isdir(self.proj):
             os.makedirs(os.path.join(self.proj, ".claude"))
             os.makedirs(self.statedir, exist_ok=True)
-            settings = lh_settings(os.path.join(self.ctx.cfg["lh_path"], "hooks"), auto_recall=(self.arm == "R")) if self.arm in LH_ARMS else {}
+            settings = lh_settings(self.hooks_dir(), auto_recall=(self.arm in ("R", "K")), reanchor=(self.arm == "K")) if self.arm in LH_ARMS else {}
             settings["permissions"] = {"deny": deny_rules(work_base(self.ctx.cfg["work_base"]))}
             write_json(os.path.join(self.proj, ".claude", "settings.json"), settings)
             # make the folder its own git root, so that recall.py cannot search outside it
@@ -321,9 +370,9 @@ class Session:
                 cmd += ["--session-id" if first else "--resume", sid]
             cmd += ["--model", cfg["model"], "--setting-sources", "project",
                     "--settings", json.dumps({"env": self.overrides}),
-                    "--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}', "--disable-slash-commands",
+                    "--strict-mcp-config", "--mcp-config", self.mcp_config(), "--disable-slash-commands",
                     "--output-format", "json", "--permission-mode", "acceptEdits",
-                    "--allowedTools", ALLOWED_TOOLS, "--max-budget-usd", "%.2f" % cfg["call_cap_usd"], prompt]
+                    "--allowedTools", self.allowed_tools(), "--max-budget-usd", "%.2f" % cfg["call_cap_usd"], prompt]
             t0 = time.time()
             p = subprocess.Popen(cmd, cwd=self.proj, env=self.env(), stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                                  stderr=subprocess.PIPE, text=True, start_new_session=True)
@@ -395,7 +444,7 @@ class Session:
         is set, and logs the session id of its hook input, which is the id of the fork. This arm sets HANDOFF_STATE_DIR to its own
         folder, so we read only that file. We never read or write the real ~/.local/state/claude-handoffs.
         Returns (fired, hits, timed_out); (None, None, None) for arms other than R."""
-        if self.arm != "R" or not fsid:
+        if self.arm not in ("R", "K") or not fsid:
             return None, None, None
         return recall_log_fired(read_jsonl(os.path.join(self.statedir, AUTO_RECALL_LOG)), fsid)
 
@@ -421,6 +470,9 @@ class Session:
         epochs = {x["id"]: x.get("epoch") for x in items}
         frecs = read_jsonl(self.transcript(fsid)) if fsid else []
         used = grade.lookup_used(frecs, marker) if fsid else False
+        kinds = []
+        if (cfg.get("probe_design", 1) >= 3 or cfg.get("search_used")) and fsid:      # design 3 and preflight: a search by recall.py, by the MCP tool, or by auto-recall counts for every arm
+            used, kinds = grade.search_used(frecs, marker)
         calls_after = grade.lookup_calls(frecs, marker) if fsid else []   # kept: the fork transcript is deleted below
         if fsid:    # a later recall must not find this answer: delete the probe transcript
             ft = self.transcript(fsid)
@@ -430,10 +482,10 @@ class Session:
                 elif os.path.isdir(pth) and not os.path.islink(pth):
                     shutil.rmtree(pth)
         fired, hits, timed_out = self.auto_recall_fired(fsid)
-        if self.arm == "R" and phrasing == "cued" and cfg.get("probe_design", 1) >= 2 and fsid and not fired:
-            raise Fatal("arm R: a cued probe left no line in %s for session %s. The hook did not run, or it logs elsewhere. "
-                        "Stop. Check hooks/auto-recall.py in --lh-path." % (os.path.join(self.statedir, AUTO_RECALL_LOG), fsid))
-        posmap = {x["id"]: gen.position_of(script, ptype, x) for x in items}
+        if self.arm in ("R", "K") and phrasing == "cued" and cfg.get("probe_design", 1) >= 2 and fsid and not fired:
+            raise Fatal("arm %s: a cued probe left no line in %s for session %s. The hook did not run, or it logs elsewhere. "
+                        "Stop. Check hooks/auto-recall.py in --lh-path." % (self.arm, os.path.join(self.statedir, AUTO_RECALL_LOG), fsid))
+        posmap = {x["id"]: (x.get("position") or gen.position_of(script, ptype, x)) for x in items}
         u = o.get("usage") if isinstance(o.get("usage"), dict) else {}
         n_actual, pre = (st["boundaries"], st.get("precomputed", 0)) if self.arm != "Z" else (0, 0)
         for g in graded:
@@ -443,7 +495,7 @@ class Session:
                 "epoch": epochs.get(g["id"]), "age": (ckpt - epochs[g["id"]] if self.arm in ("A", "B") and epochs.get(g["id"]) is not None else None),
                 "fork_sid": fsid, "raw": raw, "parsed": g["parsed"], "parse_ok": g["parse_ok"], "correct": g["correct"],
                 "abstained": g["abstained"],
-                "used_lookup": used, "lookup_calls": calls_after, "tokens": {"in": u.get("input_tokens"), "out": u.get("output_tokens")},
+                "used_lookup": used, "search_kinds": kinds, "lookup_calls": calls_after, "tokens": {"in": u.get("input_tokens"), "out": u.get("output_tokens")},
                 "fork_cost_usd": round(o["_delta"], 6), "claude_version": cfg["claude_version"], "model": cfg["model"],
                 "window": self.window, "commit": cfg["lh_commit"], "turn_index": st["turns"],
                 "condition": self.cond, "phrasing": phrasing, "position": posmap.get(g["id"]),
@@ -457,9 +509,9 @@ def fork_key(ckpt, ptype, phrasing="cued"):
     return "%d:%s" % (ckpt, ptype) + (":neutral" if phrasing == "neutral" else "")
 
 
-def probe_plan(cfg, ptype):
+def probe_plan(cfg, ptype, d3=False):
     """Phrasings to ask for a probe type. Neutral exists for R D X S E only. Old runs have cued only."""
-    ph = [p for p in cfg.get("phrasings", ["cued"]) if p == "cued" or ptype in gen.NEUTRAL_TYPES]
+    ph = [p for p in cfg.get("phrasings", ["cued"]) if p == "cued" or (ptype in gen.NEUTRAL_TYPES and (p == "neutral" or d3))]
     return ph or ["cued"]
 
 
@@ -609,6 +661,40 @@ def nc_plan_steps(script):
     return steps
 
 
+def run_nc3_session(ctx, ss):
+    """Design 3 no-compaction session: every turn is a user turn (plant turns, and filler turns with a pasted document and one small task).
+    No file reads, so the binary has no old tool result to clear. The same validity rule as before applies."""
+    cfg, st, script = ctx.cfg, ss.st, ss.script
+    steps = script["plan"]
+    while st.get("nc_done", 0) < len(steps):
+        ctx.check_budget()
+        step = steps[st["nc_done"]]
+        if step["kind"] == "fill":
+            prompt, expect = gen.filler_doc_prompt(script, step["k"], cfg["nc_lines"])
+            o = ss.turn(prompt)
+            st["filler_task_total"] = st.get("filler_task_total", 0) + 1
+            st["filler_task_ok"] = st.get("filler_task_ok", 0) + (1 if expect in str(o.get("result") or "") else 0)    # information only, not graded
+            st["fill_done"] = step["k"] + 1
+        else:
+            ss.turn(step["prompt"])
+            st["events_done"] = st.get("events_done", 0) + 1
+        st["nc_done"] += 1
+        st["next_turn"] += 1
+        ctx.save()
+    st["boundaries_at_plant_end"] = st["boundaries"]
+    ok, why = nc_validity(st["boundaries"], count_cleared(ss.transcript(st["sid"])),
+                          last_turn_context(read_jsonl(os.path.join(ctx.dir, "calls.jsonl")), ss.name), cfg.get("nc_estimate_tokens"))
+    st["nc_valid"], st["nc_reasons"] = ok, why
+    if not ok:
+        st["status"], st["reason"] = "invalid", "no-compaction session is not valid: " + "; ".join(why)
+        return
+    for t in gen.L3_TYPES:
+        for ph in probe_plan(cfg, t, d3=True):
+            if fork_key(0, t, ph) in st["done_forks"]:
+                continue
+            ss.probe(t, 0, fork_of=st["sid"], phrasing=ph)
+
+
 def run_nc_session(ctx, ss):
     """No-compaction condition: the same plant turns and the same number of filler turns as the nominal timeline.
     Filler files are small (cfg nc_lines lines), so the whole session fits in the window. Compaction is off (DISABLE_AUTO_COMPACT)."""
@@ -719,6 +805,47 @@ def write_retention(ctx, ss):
     ctx.append("retention.jsonl", ret)
 
 
+def run_unit_gated(ctx, seed, arm, cond):
+    """run_unit, then the abort gates after the last unit of a seed (see gates.py)."""
+    run_unit(ctx, seed, arm, cond)
+    if not ctx.cfg.get("gates", True):
+        return
+    name = "s%d-%s%s" % (seed, arm, "-nc" if cond == "nocompact" else "")
+    with ctx.lock:
+        if ctx.state["sessions"].get(name, {}).get("status") not in ("done", "invalid"):
+            return
+        done = [n for n, st in ctx.state["sessions"].items() if st.get("status") in ("done", "invalid")]
+        left = [u for u in work_units(ctx.cfg) if u[0] == seed and ("s%d-%s%s" % (u[0], u[1], "-nc" if u[2] == "nocompact" else "")) not in done]
+        if left or ctx.state.get("gate_abort"):
+            return
+        why = check_gates(ctx)
+        if why:
+            ctx.state["gate_abort"] = why
+            ctx.save()
+            print("ABORT GATE after seed %d: %s" % (seed, " | ".join(why)), file=sys.stderr)
+            ctx.stop.set()
+
+
+def finished_seeds(ctx):
+    done = {n for n, st in ctx.state["sessions"].items() if st.get("status") in ("done", "invalid")}
+    out = []
+    for sd in ctx.cfg["seeds"]:
+        units = [("s%d-%s%s" % (u[0], u[1], "-nc" if u[2] == "nocompact" else "")) for u in work_units(ctx.cfg) if u[0] == sd]
+        if units and all(u in done for u in units):
+            out.append(sd)
+    return out
+
+
+def check_gates(ctx):
+    """Reasons to stop after a finished seed. Empty list: go on."""
+    fin = finished_seeds(ctx)
+    last = {}
+    for s in read_jsonl(os.path.join(ctx.dir, "sessions.jsonl")):
+        last[s["name"]] = s
+    costs = {n: st.get("cost", 0.0) for n, st in ctx.state["sessions"].items() if int(n[1:].split("-")[0]) in fin}
+    return gates.abort_reasons(list(last.values()), read_jsonl(os.path.join(ctx.dir, "results.jsonl")), cost.estimate_per_seed(ctx.cfg), fin, costs)
+
+
 def run_unit(ctx, seed, arm, cond="compact"):
     name = "s%d-%s%s" % (seed, arm, "-nc" if cond == "nocompact" else "")
     st = ctx.sess(name)
@@ -732,7 +859,7 @@ def run_unit(ctx, seed, arm, cond="compact"):
         if arm == "Z":
             run_z(ctx, ss)
         elif cond == "nocompact":
-            run_nc_session(ctx, ss)
+            (run_nc3_session if ss.d3 else run_nc_session)(ctx, ss)
         else:
             run_main_session(ctx, ss)
         if st["status"] == "running":
@@ -826,6 +953,25 @@ def o_plan(o_window, planted, files_per_turn, turns):
 
 
 NC_TURNS = None     # filler turns of the no-compaction session: 5 epochs x gen.FILL_PER_EPOCH
+NC3_WINDOW = 400000             # design 3: the owner's real window
+NC3_TARGET_FRACTION = 0.75      # design 3 aims at about 300k tokens in a 400k window
+NC3_FAIL_FRACTION = 0.90
+
+
+def nc3_plan(window):
+    """Design 3: lines of each pasted filler document, so that the whole session holds about 75% of the window. Fails above 90%.
+    Planted text is measured from a real script. Returns (lines, estimated tokens)."""
+    sc = gen.build_litm3(1)
+    planted = int(sum(len(st.get("prompt", "")) for st in sc["plan"] if st["kind"] != "fill") / CHARS_PER_TOKEN)
+    n_fill = sum(1 for st in sc["plan"] if st["kind"] == "fill")
+    room = NC3_TARGET_FRACTION * window - O_OVERHEAD_TOKENS - planted - O_PROBE_TOKENS
+    lines = int(room / n_fill / (TOKENS_PER_FILE / 330.0))
+    if lines < 20:
+        raise SystemExit("design 3 no-compaction session too large for --nc-window %d: only %d lines per filler document." % (window, lines))
+    est = int(O_OVERHEAD_TOKENS + planted + O_PROBE_TOKENS + n_fill * lines * TOKENS_PER_FILE / 330.0)
+    if est > NC3_FAIL_FRACTION * window:
+        raise SystemExit("design 3 no-compaction session estimate %d tokens is above %d%% of --nc-window %d" % (est, int(NC3_FAIL_FRACTION * 100), window))
+    return lines, est
 
 
 def nc_plan(window, planted, turns=None):
@@ -844,7 +990,7 @@ def build_cfg(kind, a):
     k = KINDS[kind]
     window = a.window or k["window"]
     seeds = seed_list(kind, a.seeds or k["seeds"], a.seed_file)
-    types = [t for t in (a.types.split(",") if a.types else ALL_TYPES)]
+    types = [t for t in ((a.types or k.get("types") or "").split(",") if (a.types or k.get("types")) else ALL_TYPES)]
     bad = [t for t in types if t not in ALL_TYPES]
     arms = (a.arms or k["arms"]).split(",")
     bad += [x for x in arms if x not in ALL_ARMS]
@@ -856,10 +1002,17 @@ def build_cfg(kind, a):
     lh = os.path.realpath(a.lh_path or REPO)
     if any(x in arms for x in LH_ARMS) and not os.path.isfile(os.path.join(lh, "hooks", "precompact-handoff.py")):
         raise SystemExit("arm B or R: no hooks in %s/hooks" % lh)
+    for f_ in K_FILES:
+        if "K" in arms and not os.path.isfile(os.path.join(lh, "hooks", f_)):
+            raise SystemExit("arm K: no hooks/%s in %s. Arm K needs auto-recall.py, recall-mcp.py and reanchor.py. Use --lh-path with a checkout that has them." % (f_, lh))
     if "R" in arms and not os.path.isfile(os.path.join(lh, "hooks", "auto-recall.py")):
         raise SystemExit("arm R: no hooks/auto-recall.py in %s. Use --lh-path with a checkout that has install.sh --auto-recall." % lh)
-    nc_window = a.nc_window or NC_SESSION_WINDOW
-    nc_lines, nc_est = nc_plan(nc_window, o_planted_tokens(seeds)) if "nocompact" in conds and any(x in arms for x in ("A", "B", "R")) else (None, None)
+    design = k.get("probe_design", 1)
+    nc_window = a.nc_window or k.get("nc_window") or (NC3_WINDOW if design >= 3 else NC_SESSION_WINDOW)
+    if "nocompact" in conds and any(x in arms for x in ("A", "B", "R", "K")):
+        nc_lines, nc_est = nc3_plan(nc_window) if design >= 3 else nc_plan(nc_window, o_planted_tokens(seeds))
+    else:
+        nc_lines, nc_est = None, None
     dirty = bool(sh(["git", "status", "--porcelain", "--", "hooks"], cwd=lh))
     o_window = a.o_window or 200000
     o_fpt, o_turns, o_est = o_plan(o_window, o_planted_tokens(seeds), a.o_files_per_turn, a.oracle_turns) if "O" in arms else (None, None, None)
@@ -872,7 +1025,7 @@ def build_cfg(kind, a):
         "files_per_turn": a.files_per_turn or max(1, min(12, round(window * 0.4 / 6000))),
         "o_window": o_window, "oracle_turns": o_turns or a.oracle_turns or 3, "o_files_per_turn": o_fpt,
         "o_estimate_tokens": o_est,
-        "conditions": conds, "phrasings": phr, "probe_design": k.get("probe_design", 1),
+        "conditions": conds, "phrasings": phr, "probe_design": k.get("probe_design", 1), "search_used": bool(k.get("search_used")), "gates": True,
         "nc_window": nc_window, "nc_lines": nc_lines, "nc_estimate_tokens": nc_est,
         "work_base": work_base(a.work_base), "call_cap_usd": a.call_cap_usd or 1.50,
         "turn_timeout_s": a.turn_timeout_s or (420 if "haiku" in (a.model or k["model"]) else 900),
@@ -886,7 +1039,7 @@ def work_units(cfg):
     """(seed, arm, condition). Arms A, B and R run each condition. Z and O are controls with no condition: one unit each."""
     conds = cfg.get("conditions", ["compact"])
     return [(s, arm, c) for s in cfg["seeds"] for arm in cfg["arms"]
-            for c in (conds if arm in ("A", "B", "R") else ["compact"])]
+            for c in (conds if arm in ("A", "B", "R", "K") else ["compact"])]
 
 
 def execute(ctx):
@@ -898,7 +1051,7 @@ def execute(ctx):
     ctx.save()
     try:
         with concurrent.futures.ThreadPoolExecutor(max_workers=cfg["jobs"]) as ex:
-            futs = [ex.submit(run_unit, ctx, s, arm, cond) for s, arm, cond in units]
+            futs = [ex.submit(run_unit_gated, ctx, s, arm, cond) for s, arm, cond in units]
             for f in futs:
                 try:
                     f.result()
@@ -920,11 +1073,17 @@ def execute(ctx):
         code = code or 1
     else:
         ctx.state["status"] = "done"
+    if ctx.state.get("gate_abort"):
+        ctx.state["status"] = "aborted"
+        code = 4
+        print("run aborted by a gate: %s" % " | ".join(ctx.state["gate_abort"]), file=sys.stderr)
     ctx.state["ended"] = now_iso()
     ctx.state["settings_hash_changed"] = sha256_file(os.path.join(HOME, ".claude", "settings.json")) != snap0
     ctx.save()
     unfinished = [n for n, s in ctx.state["sessions"].items() if s["status"] != "done"]
     print("run %s: %s, spent $%.4f, sessions not finished: %s" % (cfg["run_id"], ctx.state["status"], ctx.state["spent"], unfinished or "none"))
+    if code == 4:
+        print("Fix the cause, then continue from the last finished seed with: run.sh resume %s [--ignore-gates]" % cfg["run_id"])
     if code == 3:
         print("paused. Continue with: run.sh resume %s [--budget-usd X]" % cfg["run_id"])
     if ctx.state["settings_hash_changed"]:
@@ -944,8 +1103,14 @@ def cmd_run(a):
         print("dry run: no model call. run %s, kind %s, model %s, window %s, nc window %s (%s lines per filler file)" % (
             cfg["run_id"], cfg["kind"], cfg["model"], cfg["window"], cfg["nc_window"], cfg["nc_lines"]))
         print("units (seed, arm, condition):", len(units), "; conditions", cfg["conditions"], "; phrasings", cfg["phrasings"], "; probe design", cfg["probe_design"])
-        print(cost.render("ESTIMATE FOR THIS RUN", {"seeds": len(cfg["seeds"]), "arms": cfg["arms"], "n": cfg["n"],
-                                                     "conditions": cfg["conditions"], "phrasings": cfg["phrasings"]})[1])
+        c_ = {"seeds": len(cfg["seeds"]), "arms": cfg["arms"], "n": cfg["n"], "conditions": cfg["conditions"], "phrasings": cfg["phrasings"]}
+        if cfg["kind"] == "preflight":
+            tot, ln = cost.estimate_preflight(cfg["arms"], cfg["conditions"])
+            print("ESTIMATE FOR THIS RUN (Haiku, assumptions in cost.py):\n" + "\n".join("  " + x for x in ln) + "\n  total about $%.2f (target: under $3)" % tot)
+            return 0
+        print((cost.render3 if cfg["probe_design"] >= 3 else cost.render)("ESTIMATE FOR THIS RUN", c_)[1])
+        if cfg["probe_design"] >= 3:
+            print("\n".join(cost.ASSUMPTIONS3))
         return 0
     run_dir = os.path.join(RESULTS, cfg["run_id"])
     os.makedirs(run_dir)
@@ -965,8 +1130,11 @@ def cmd_resume(a):
         cfg["budget_usd"] = a.budget_usd
     if a.jobs:
         cfg["jobs"] = a.jobs
+    if getattr(a, "ignore_gates", False):
+        cfg["gates"] = False
     write_json(os.path.join(run_dir, "config.json"), cfg)
     ctx = Ctx(run_dir, cfg)
+    ctx.state.pop("gate_abort", None)
     for s in ctx.state["sessions"].values():
         if s["status"] in ("paused", "running", "failed"):
             s["status"] = "new"        # unfinished: continue from the saved turn
@@ -1069,6 +1237,7 @@ def main():
     rs.add_argument("run_id")
     rs.add_argument("--budget-usd", type=float, default=None)
     rs.add_argument("--jobs", type=int, default=None)
+    rs.add_argument("--ignore-gates", action="store_true", help="continue after a gate stopped the run (fix the cause first)")
     sp.add_parser("estimate")
     sc = sp.add_parser("selfcheck")
     sc.add_argument("--model", default="haiku")
