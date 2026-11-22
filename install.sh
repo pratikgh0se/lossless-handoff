@@ -16,7 +16,7 @@ The default does NOT set CLAUDE_CODE_AUTO_COMPACT_WINDOW, pull a model, or insta
 Add them with the opt-in flags below. A rerun never removes, turns off or changes a part that is already installed
 (window value, meaning search, nightly jobs): a --no-* flag only skips adding it. Use ./uninstall.sh to remove parts.
 
-Usage: ./install.sh [--dry-run] [--force] [--window N] [--nightly] [--semantic [--yes]] [--auto-recall] [--recall-rules] [--recall-mcp] [--save-defaults] [--no-nudge] [--canary] [--managed-hooks] [--keep-transcripts[=DAYS]] [--version] [-h|--help]
+Usage: ./install.sh [--dry-run] [--force] [--window N] [--nightly] [--semantic [--yes]] [--auto-recall] [--recall-rules] [--recall-mcp] [--reanchor] [--claim-guard] [--save-defaults] [--no-nudge] [--canary] [--managed-hooks] [--keep-transcripts[=DAYS]] [--version] [-h|--help]
 
   --dry-run     list exactly what the chosen options install (and which come from saved defaults), change nothing
   --window N    opt-in: set CLAUDE_CODE_AUTO_COMPACT_WINDOW to N tokens (for example 400000);
@@ -38,18 +38,28 @@ Usage: ./install.sh [--dry-run] [--force] [--window N] [--nightly] [--semantic [
   --recall-mcp  opt-in (F69): install hooks/recall-mcp.py, a local MCP server (stdio) with the tools search_earlier_chat and
                 open_message, and register it with: claude mcp add --scope user lossless-recall -- python3 <hooks dir>/recall-mcp.py
                 If the claude command is not on PATH, the command is printed and the file is still installed. Off by default
+  --reanchor    opt-in (F70): install the PostToolUse hook reanchor.py. Each time the context grows by 50,000
+                tokens, it repeats the project's active rules (the same text as the subagent rules) near the
+                end of the context. It prints nothing when the project has no active rule. Set HANDOFF_REANCHOR=0
+                to switch it off at run time, HANDOFF_REANCHOR_TOKENS (10000-500000) to change the interval.
+                Off by default
+  --claim-guard opt-in (F71): install the Stop hook claim-guard.py. When a reply states an earlier fact
+                ("as we decided", "you said") and the turn has no recall search, it writes one line to
+                ~/.local/state/claude-handoffs/claim-guard.jsonl (no text) and changes nothing else (shadow mode).
+                Set HANDOFF_CLAIM_GUARD=block to make it ask for a search once per turn, 0 to switch it off.
+                Off by default
   --yes         with --semantic: answer yes to the model pull without asking
   --llm-map, --no-llm-map
                 no longer used. llm-map is now a separate project (https://github.com/pratikgh0se/llm-map).
                 The flags are accepted and print one line; they change nothing else
   --save-defaults
-                save the opt-in flags given in this run (--semantic, --nightly, --auto-recall, --recall-rules, --recall-mcp, --window N) to
+                save the opt-in flags given in this run (--semantic, --nightly, --auto-recall, --recall-rules, --recall-mcp, --reanchor, --claim-guard, --window N) to
                 ~/.config/lossless-handoff/install-defaults (key=value lines: semantic=1, nightly=1,
-                auto_recall=1, recall_rules=1, recall_mcp=1, window=N). Every later ./install.sh run reads that file and applies those
+                auto_recall=1, recall_rules=1, recall_mcp=1, reanchor=1, claim_guard=1, window=N). Every later ./install.sh run reads that file and applies those
                 options as if you gave them. A flag on the command line wins over the file.
                 With --save-defaults, a --no-* flag removes that saved default. Delete the file, or run
                 ./uninstall.sh --purge, to drop all saved defaults
-  --no-semantic, --no-nightly, --no-auto-recall, --no-recall-rules, --no-recall-mcp, --no-window
+  --no-semantic, --no-nightly, --no-auto-recall, --no-recall-rules, --no-recall-mcp, --no-reanchor, --no-claim-guard, --no-window
                 turn one opt-in off for this run, also when a saved default turns it on. They only skip
                 adding the part; they never uninstall one that is there
   --no-nudge    do not install the context nudge (handoff-nudge.py). Use it if another tool already
@@ -77,7 +87,7 @@ search still works (https://ollama.com/download). Ollama itself is never install
 EOF
 }
 
-DRY=0; FORCE=0; WINDOW=400000; SETWINDOW=0; YES=0; NIGHTLY=0; SEMANTIC=0; NOTE_LM=0; OLDFLAG=0; SAVE=0; C_WIN=""; C_NIGHT=""; C_SEM=""; C_AR=""; C_RR=""; C_RM=""; AUTORECALL=0; RECALLRULES=0; RECALLMCP=0; MANAGED=0; CANARY=0; NONUDGE=0; KEEP=""
+DRY=0; FORCE=0; WINDOW=400000; SETWINDOW=0; YES=0; NIGHTLY=0; SEMANTIC=0; NOTE_LM=0; OLDFLAG=0; SAVE=0; C_WIN=""; C_NIGHT=""; C_SEM=""; C_AR=""; C_RR=""; C_RM=""; AUTORECALL=0; RECALLRULES=0; RECALLMCP=0; C_RA=""; REANCHOR=0; C_CG=""; CLAIMGUARD=0; MANAGED=0; CANARY=0; NONUDGE=0; KEEP=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --dry-run) DRY=1 ;;
@@ -97,6 +107,10 @@ while [ $# -gt 0 ]; do
     --no-recall-rules) C_RR=0 ;;
     --recall-mcp) C_RM=1 ;;
     --no-recall-mcp) C_RM=0 ;;
+    --reanchor) C_RA=1 ;;
+    --no-reanchor) C_RA=0 ;;
+    --claim-guard) C_CG=1 ;;
+    --no-claim-guard) C_CG=0 ;;
     --llm-map|--no-llm-map) NOTE_LM=1 ;;
     --save-defaults) SAVE=1 ;;
     --no-nudge) NONUDGE=1 ;;
@@ -117,7 +131,7 @@ command -v python3 >/dev/null || { echo "python3 is required" >&2; exit 1; }
 say() { if [ "$DRY" = 1 ]; then echo "[dry-run] $*"; else echo "$*"; fi; }
 # saved defaults: read key=value lines (never sourced); a command-line flag wins over the file
 DEFAULTS_FILE="$HOME/.config/lossless-handoff/install-defaults"
-D_WIN=""; D_NIGHT=""; D_SEM=""; D_AR=""; D_RR=""; D_RM=""
+D_WIN=""; D_NIGHT=""; D_SEM=""; D_AR=""; D_RR=""; D_RM=""; D_RA=""; D_CG=""
 if [ -f "$DEFAULTS_FILE" ]; then
   while IFS= read -r line || [ -n "$line" ]; do
     case "$line" in
@@ -126,6 +140,8 @@ if [ -f "$DEFAULTS_FILE" ]; then
       auto_recall=1) D_AR=1 ;;
       recall_rules=1) D_RR=1 ;;
       recall_mcp=1) D_RM=1 ;;
+      reanchor=1) D_RA=1 ;;
+      claim_guard=1) D_CG=1 ;;
       llm_map=1) NOTE_LM=1 ;;
       window=*) v="${line#window=}"; case "$v" in ''|*[!0-9]*) ;; *) if [ "${#v}" -le 12 ] && [ "$((10#$v))" -gt 0 ]; then D_WIN="$v"; fi ;; esac ;;
     esac
@@ -141,11 +157,13 @@ pick semantic "$C_SEM" "$D_SEM"; [ "$P" = 1 ] && SEMANTIC=1 || SEMANTIC=0
 pick auto_recall "$C_AR" "$D_AR"; [ "$P" = 1 ] && AUTORECALL=1 || AUTORECALL=0
 pick recall_rules "$C_RR" "$D_RR"; [ "$P" = 1 ] && RECALLRULES=1 || RECALLRULES=0
 pick recall_mcp "$C_RM" "$D_RM"; [ "$P" = 1 ] && RECALLMCP=1 || RECALLMCP=0
+pick reanchor "$C_RA" "$D_RA"; [ "$P" = 1 ] && REANCHOR=1 || REANCHOR=0
+pick claim_guard "$C_CG" "$D_CG"; [ "$P" = 1 ] && CLAIMGUARD=1 || CLAIMGUARD=0
 if [ "$NOTE_LM" = 1 ]; then echo "llm-map is now a separate project: https://github.com/pratikgh0se/llm-map"; fi
 if [ -n "$FROM_SAVED" ]; then say "options from saved defaults ($DEFAULTS_FILE):$FROM_SAVED"; fi
 if [ "$SAVE" = 1 ]; then
   if [ "$DRY" = 1 ]; then say "would save the opt-in flags of this run to $DEFAULTS_FILE"; else
-    HC_DF="$DEFAULTS_FILE" HC_CWIN="$C_WIN" HC_CN="$C_NIGHT" HC_CS="$C_SEM" HC_CA="$C_AR" HC_CRR="$C_RR" HC_CRM="$C_RM" python3 - <<'PY'
+    HC_DF="$DEFAULTS_FILE" HC_CWIN="$C_WIN" HC_CN="$C_NIGHT" HC_CS="$C_SEM" HC_CA="$C_AR" HC_CRR="$C_RR" HC_CRM="$C_RM" HC_CRA="$C_RA" HC_CCG="$C_CG" python3 - <<'PY'
 import os
 p = os.environ["HC_DF"]
 cur = {}
@@ -168,6 +186,8 @@ setk("nightly", os.environ["HC_CN"], "1")
 setk("auto_recall", os.environ["HC_CA"], "1")
 setk("recall_rules", os.environ["HC_CRR"], "1")
 setk("recall_mcp", os.environ["HC_CRM"], "1")
+setk("reanchor", os.environ["HC_CRA"], "1")
+setk("claim_guard", os.environ["HC_CCG"], "1")
 cur.pop("llm_map", None)
 w = os.environ["HC_CWIN"]
 if w == "off":
@@ -207,6 +227,11 @@ if [ "$AUTORECALL" = 1 ] || [ "$AR_THERE" = 1 ]; then FILES="$FILES auto-recall.
 RM_THERE=0; [ -e "$HOOKS_DIR/recall-mcp.py" ] && RM_THERE=1
 if [ "$RECALLMCP" = 1 ] || [ "$RM_THERE" = 1 ]; then FILES="$FILES recall-mcp.py"; fi
 RR_THERE=0; [ -e "$HOOKS_DIR/.recall-rules" ] && RR_THERE=1
+# F70, F71: reanchor.py and claim-guard.py are opt-in in the same way.
+RA_THERE=0; [ -e "$HOOKS_DIR/reanchor.py" ] && RA_THERE=1
+if [ "$REANCHOR" = 1 ] || [ "$RA_THERE" = 1 ]; then FILES="$FILES reanchor.py"; fi
+CG_THERE=0; [ -e "$HOOKS_DIR/claim-guard.py" ] && CG_THERE=1
+if [ "$CLAIMGUARD" = 1 ] || [ "$CG_THERE" = 1 ]; then FILES="$FILES claim-guard.py"; fi
 # The PreCompact hook keeps its code in the folder hooks/lossless_handoff/. It is part of the install and of the manifest.
 PKG_FILES="$(cd "$SRC/hooks" 2>/dev/null && ls lossless_handoff/*.py 2>/dev/null | tr '\n' ' ')"
 if [ -z "$PKG_FILES" ]; then echo "error: hooks/lossless_handoff/ is missing from this copy; get a full copy of the repo" >&2; exit 1; fi
@@ -343,7 +368,7 @@ fi
 if [ "$CLEANUP_WARN" = 1 ]; then printf "warning: $CLEANUP_LINE_FMT\n" "$EFF_DAYS"; fi
 
 # 3. settings merge
-HC_AR="$AUTORECALL" HC_KEEP="$KEEP" HC_NONUDGE="$NONUDGE" HC_DRY="$DRY" HC_FORCE="$FORCE" HC_WINDOW="$WINDOW" HC_SETWINDOW="$SETWINDOW" HC_SETTINGS="$SETTINGS" \
+HC_AR="$AUTORECALL" HC_RA="$REANCHOR" HC_CG="$CLAIMGUARD" HC_KEEP="$KEEP" HC_NONUDGE="$NONUDGE" HC_DRY="$DRY" HC_FORCE="$FORCE" HC_WINDOW="$WINDOW" HC_SETWINDOW="$SETWINDOW" HC_SETTINGS="$SETTINGS" \
 HC_HOOKS="$HOOKS_DIR" HC_TS="$TS" python3 - <<'PY'
 import json, os, shutil, sys
 dry = os.environ["HC_DRY"] == "1"
@@ -353,6 +378,8 @@ ts = os.environ["HC_TS"]
 pre = "python3 %s/precompact-handoff.py" % hooks_dir
 nudge = "python3 %s/handoff-nudge.py" % hooks_dir
 auto_recall = "python3 %s/auto-recall.py" % hooks_dir  # F67
+reanchor_cmd = "python3 %s/reanchor.py" % hooks_dir  # F70
+claim_cmd = "python3 %s/claim-guard.py" % hooks_dir  # F71
 post = ["python3 %s/postcompact-inject.py --part %d" % (hooks_dir, n) for n in (1, 2, 3)]
 post_led = ["python3 %s/postcompact-inject.py --ledger --part %d" % (hooks_dir, n) for n in (1, 2, 3)]
 start_led = "python3 %s/postcompact-inject.py --ledger" % hooks_dir  # pre-0.5.0 startup/resume form, migrated away
@@ -384,8 +411,8 @@ if not isinstance(hooks, dict):
     sys.exit("settings.json: hooks is not an object")
 
 # conflict check: the same hook scripts registered from a different path would run twice
-own_cmds = set([pre, nudge, auto_recall, start_led, check_cmd, subagent_cmd] + post + post_led)
-names = ("precompact-handoff.py", "postcompact-inject.py", "handoff-nudge.py", "auto-recall.py")
+own_cmds = set([pre, nudge, auto_recall, reanchor_cmd, claim_cmd, start_led, check_cmd, subagent_cmd] + post + post_led)
+names = ("precompact-handoff.py", "postcompact-inject.py", "handoff-nudge.py", "auto-recall.py", "reanchor.py", "claim-guard.py")
 conflicts = []
 for ev, groups_ in hooks.items():
     if not isinstance(groups_, list):
@@ -456,6 +483,22 @@ if os.environ["HC_AR"] == "1":
     else:
         ups.append({"hooks": [{"type": "command", "command": auto_recall, "timeout": 5}]})
         changes.append("add UserPromptSubmit auto-recall hook (timeout 5)")
+
+# F70: the opt-in PostToolUse re-anchor hook. F71: the opt-in Stop claim guard. Never removed here.
+if os.environ["HC_RA"] == "1":
+    ptu = hooks.setdefault("PostToolUse", [])
+    if has_cmd(ptu, reanchor_cmd):
+        changes.append("PostToolUse reanchor hook already present")
+    else:
+        ptu.append({"matcher": "*", "hooks": [{"type": "command", "command": reanchor_cmd, "timeout": 5}]})
+        changes.append("add PostToolUse reanchor hook (matcher *, timeout 5)")
+if os.environ["HC_CG"] == "1":
+    stp = hooks.setdefault("Stop", [])
+    if has_cmd(stp, claim_cmd):
+        changes.append("Stop claim-guard hook already present")
+    else:
+        stp.append({"hooks": [{"type": "command", "command": claim_cmd, "timeout": 5}]})
+        changes.append("add Stop claim-guard hook (timeout 5)")
 
 groups = hooks.setdefault("SessionStart", [])
 grp = next((g for g in groups if isinstance(g, dict) and g.get("matcher") == "compact"
@@ -688,6 +731,14 @@ if [ "$RECALLMCP" = 1 ]; then
   fi
 elif [ "$RM_THERE" = 1 ]; then
   say "recall-mcp: already installed, kept"
+fi
+
+# F70, F71: opt-in hooks are never removed by a rerun.
+if [ "$REANCHOR" = 0 ] && [ "$RA_THERE" = 1 ]; then
+  say "reanchor: already installed, kept"
+fi
+if [ "$CLAIMGUARD" = 0 ] && [ "$CG_THERE" = 1 ]; then
+  say "claim-guard: already installed, kept"
 fi
 
 # --no-nudge: remove a nudge file left by an earlier install

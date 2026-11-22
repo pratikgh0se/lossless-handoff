@@ -37,6 +37,8 @@ You need `python3` and `bash` on macOS or Linux, and Claude Code. Windows is not
 | `--auto-recall` | A `UserPromptSubmit` hook. When your prompt refers to the past ("what did we decide earlier"), it searches the earlier chats of the project and adds the top 3 exact quotes to the context. It runs for at most 2 seconds. |
 | `--recall-rules` | Adds one strict rule line after the recall line in every session start and subagent start: search before you state an earlier number, path, name, command or decision. It does not force a search. |
 | `--recall-mcp` | Installs a local MCP server with the tools `search_earlier_chat` and `open_message` and registers it with `claude mcp add --scope user`. It does not force a search. |
+| `--reanchor` | A `PostToolUse` hook. Each time the context grows by 50,000 tokens, it repeats the active rules of the project near the end of the context. It prints nothing when there is no rule. |
+| `--claim-guard` | A `Stop` hook. When a reply states an earlier fact ("as we decided", "you said") and the turn has no recall search, it writes one log line. It does not change the reply, unless you set `HANDOFF_CLAIM_GUARD=block`. |
 | `--save-defaults` | Saves the opt-in flags of that run to `~/.config/lossless-handoff/install-defaults`. Every later `./install.sh` run applies them. |
 
 Run `./install.sh --window 400000 --nightly --semantic` to get everything. All flags, the saved defaults file and the upgrade from 0.12.x are in [docs/install.md](docs/install.md). `llm_map` (label each item of a big list with a small model) is now a separate project: [pratikgh0se/llm-map](https://github.com/pratikgh0se/llm-map). See [docs/llm-map.md](docs/llm-map.md).
@@ -67,6 +69,7 @@ To check the install without a model call, run `python3 ~/.claude/hooks/postcomp
 - **Decisions list.** One plain-text list for each project. It holds what you decided or approved, and why. It survives all compactions. See [docs/decisions-list.md](docs/decisions-list.md).
 - **Recall.** `recall.py` finds the exact words of earlier chats with word search and meaning search merged. See [docs/recall.md](docs/recall.md).
 - **No silent misses.** A hook cannot force Claude Code to run it. So the hooks write a handoff early, rebuild it after the fact if it is still missing, and, with `--nightly`, count the misses every night. See [docs/hooks-in-detail.md](docs/hooks-in-detail.md#when-a-compaction-is-missed).
+- **Re-anchor** (opt-in, `--reanchor`) and **claim guard** (opt-in, `--claim-guard`, shadow mode by default). See [docs/recall.md](docs/recall.md#re-anchor-and-claim-guard).
 - **Auto-recall** (opt-in, `--auto-recall`). When your prompt refers to the past, a hook runs the recall search for the model and adds the top 3 exact quotes. See [docs/recall.md](docs/recall.md#auto-recall).
 - **Strict recall rule and recall tool** (opt-in, `--recall-rules` and `--recall-mcp`). One rule line tells the model to search before it states an earlier fact. An MCP tool lets the model search in one call. Neither forces a search. See [docs/recall.md](docs/recall.md#strict-recall-rule-and-the-recall-tool).
 - **Subagents** get their own handoff and, at start, the rules of the project.
