@@ -919,8 +919,8 @@ def make_pf_run(root, **flaws):
                     fired = True
                 if fired:
                     open(os.path.join(statedir, "auto-recall.jsonl"), "a").write(json.dumps({"session_id": fsid, "fired": True, "hits": 1}) + "\n")
-            row = {"seed": 1, "arm": arm, "condition": cond, "type": t, "phrasing": ph, "n_target": n_t, "fork_sid": fsid, "parse_ok": not flaws.get("bad_parse") and not (flaws.get("deviation") and arm == "O"), "parsed": {"id": 1} if flaws.get("deviation") else None,
-                   "correct": not (flaws.get("o_nl_low") and arm == "O" and ph == "nonliteral" and cond == "nocompact" and t == "D"), "used_lookup": None if flaws.get("no_used_lookup") else False, "auto_recall_fired": fired,
+            row = {"seed": 1, "arm": arm, "condition": cond, "type": t, "phrasing": ph, "n_target": n_t, "fork_sid": fsid, "parse_ok": not flaws.get("bad_parse") and not (flaws.get("deviation") and arm == "O") and not (flaws.get("z_unread") and arm == "Z") and not (flaws.get("one_unread") and (arm, cond, t, ph) == ("A", "compact", "R", "cued")), "parsed": {"id": 1} if flaws.get("deviation") else None,
+                   "correct": None if (flaws.get("not_graded") and arm == "A") else not (flaws.get("o_nl_low") and arm == "O" and ph == "nonliteral" and cond == "nocompact" and t == "D"), "used_lookup": None if flaws.get("no_used_lookup") else False, "auto_recall_fired": fired,
                    "search_kinds": ["mcp"] if (arm == "K" and ph == "cued") else []}
             if view:
                 row.update(fork_injected=True, fork_rule_line=not (flaws.get("k_no_rule_fork") and arm == "K"),
@@ -975,7 +975,7 @@ class Preflight(unittest.TestCase):
                  ("no_decisions", "decisions list or the rules"), ("nc_cleared", "no-compaction sessions"), ("nc_small", "no-compaction sessions"),
                  ("r_missing_fire", "arm R:"), ("r_neutral_fire", "arm R:"), ("k_no_reanchor", "reanchor health row"), ("k_no_rule", "recall-rule line is in the injected text"),
                  ("k_no_mcp_call", "MCP check turn"), ("no_used_lookup", "used_lookup is set"),
-                 ("bad_parse", "parsed and graded"), ("o_nl_low", "nonliteral oracle"), ("no_nonliteral", "row count"), ("no_arm_Z", "arms A, Z and O produced rows"), ("hook_changed", "hooks of each arm"),
+                 ("bad_parse", "parsed and graded"), ("not_graded", "parsed and graded"), ("o_nl_low", "nonliteral oracle"), ("no_nonliteral", "row count"), ("no_arm_Z", "arms A, Z and O produced rows"), ("hook_changed", "hooks of each arm"),
                  ("foreign", "no instructions record"), ("memory", "auto-memory"), ("env_leak", "environment of"), ("selfcheck_fail", "deny-rule selfcheck"),
                  ("no_big", "300k-token paste"), ("big_small", "300k-token paste"), ("big_over_cap", "300k-token paste"),
                  ("cost_high", "total cost under"), ("cost_high", "against the cost.py estimate")]
@@ -1812,8 +1812,8 @@ class Round6(unittest.TestCase):
         res = p.run_check(deviation=True)
         line = [x for x in res if "parsed and graded" in x[0]][0]
         self.assertEqual(line[1], "PASS")
-        self.assertIn("model format deviations (entry read, field rejected): ", line[2])
-        self.assertIn("unreadable or not graded: 0", line[2])
+        self.assertIn("format deviations: ", line[2])
+        self.assertIn("unreadable (no entry): 0", line[2])
         self.assertEqual(p.status(p.run_check(bad_parse=True), "parsed and graded"), "FAIL")
 
     # item 4: the big paste
@@ -1906,6 +1906,42 @@ class Round7(unittest.TestCase):
             self.assertIn("`%s` means" % word, gen.L3_WORD_LIST)
             self.assertIn(word, gen.nonliteral_question("S", {"alias": "the a b", "kind": kind}))
         self.assertIn("holding line", gen.nonliteral_question("D", {"alias": "the a b"}))
+
+
+class Round8(unittest.TestCase):
+    """Parse policy of the second preflight run (20261122T115558): 3 unreadable rows, all arm Z (no history), type X, cued, compaction."""
+    def test_real_z_reply_with_one_entry(self):
+        raw = '{"answers":[{"id":1,"current":"","replaced":[]}]}'
+        items = [{"id": i, "old": "OLD%d" % i, "new": "NEW%d" % i} for i in (1, 2, 3, 4)]
+        g = grade.grade("X", items, raw)
+        self.assertEqual([(x["id"], x["parse_ok"], x["correct"], isinstance(x["parsed"], dict)) for x in g],
+                         [(1, True, False, True), (2, False, False, False), (3, False, False, False), (4, False, False, False)])
+        # the unreadable rows count as wrong, never as correct
+        self.assertFalse(any(x["correct"] for x in g))
+
+    def test_one_threshold_in_gates_and_preflight(self):
+        import preflight
+        self.assertEqual(gates.PARSE_ERROR_RATE_MAX, 0.02)
+        src = open(os.path.join(HERE, "preflight.py"), encoding="utf-8").read()
+        self.assertIn("gates.PARSE_ERROR_RATE_MAX", src)
+        self.assertNotIn("0.01", src)
+
+    def test_preflight_ignores_unreadable_rows_of_arm_z_and_a_small_rate(self):
+        p = Preflight()
+        res = p.run_check(z_unread=True)
+        line = [x for x in res if "parsed and graded" in x[0]][0]
+        self.assertEqual(line[1], "PASS")
+        self.assertNotIn("of them arm Z 0", line[2])
+        res = p.run_check(one_unread=True)          # 1 unreadable row outside Z: far below 2%
+        self.assertEqual([x for x in res if "parsed and graded" in x[0]][0][1], "PASS")
+        self.assertEqual(p.status(p.run_check(bad_parse=True), "parsed and graded"), "FAIL")      # every row unreadable
+        self.assertEqual(p.status(p.run_check(not_graded=True), "parsed and graded"), "FAIL")
+
+    def test_big_session_is_done_when_the_check_ran(self):
+        src = open(os.path.join(HERE, "runner.py"), encoding="utf-8").read()
+        i = src.index("def run_big_check")
+        j = src.index("def run_nc_session")
+        self.assertIn('ss.st["status"] = "done"', src[i:j])
 
 
 if __name__ == "__main__":

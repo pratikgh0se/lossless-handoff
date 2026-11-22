@@ -177,14 +177,19 @@ def check(rd, projects=None, mcp=True):
     no_ul = [r for r in R.rows if not isinstance(r.get("used_lookup"), bool)]
     add("used_lookup is set for every probe (every arm)", bool(R.rows) and not no_ul, "%d probe row(s); without it: %d" % (len(R.rows), len(no_ul)))
     # 8. parse and grade
-    bad_p = [r for r in R.rows if not r.get("parse_ok") or not isinstance(r.get("correct"), bool)]
-    # A row with a readable entry that the grader rejects is a model format deviation (reported with arm, phrasing, type, condition).
-    # A row with no readable entry, or a correct that is not true or false, is a harness or grader error: a FAIL.
-    unread = [r for r in bad_p if not isinstance(r.get("parsed"), dict) or not isinstance(r.get("correct"), bool)]
-    dev = [r for r in bad_p if r not in unread]
-    kinds = sorted({(r["arm"], r.get("phrasing"), r.get("type"), r.get("condition")) for r in dev})
-    add("every probe answer parsed and graded (no grader error)", bool(R.rows) and not unread, "%d probe row(s); unreadable or not graded: %d; model format deviations (entry read, field rejected): %d %s" % (
-        len(R.rows), len(unread), len(dev), kinds))
+    # Parse policy (one threshold, gates.PARSE_ERROR_RATE_MAX, the same as the abort gate): a reply that cannot be read counts as wrong for every arm.
+    # Arm Z (no history) is excluded from the rate, as in the abort gate: it may answer with fewer entries or in prose (INFO only).
+    # A row whose `correct` is not true or false is a harness error: always a FAIL.
+    not_graded = [r for r in R.rows if not isinstance(r.get("correct"), bool)]
+    unread = [r for r in R.rows if not r.get("parse_ok") and not isinstance(r.get("parsed"), dict)]       # no readable entry for the item
+    dev = [r for r in R.rows if not r.get("parse_ok") and isinstance(r.get("parsed"), dict)]              # entry read, field rejected
+    scored = [r for r in R.rows if r["arm"] != "Z"]
+    unread_s = [r for r in unread if r["arm"] != "Z"]
+    rate = len(unread_s) / float(len(scored)) if scored else 1.0
+    kinds = sorted({(r["arm"], r.get("phrasing"), r.get("type"), r.get("condition")) for r in unread + dev})
+    add("every probe answer parsed and graded (no grader error)", bool(R.rows) and not not_graded and rate <= gates.PARSE_ERROR_RATE_MAX,
+        "%d probe row(s); not graded: %d; unreadable (no entry): %d, of them arm Z %d; rate outside Z %.2f%% (limit %.0f%%); format deviations: %d; classes %s" % (
+            len(R.rows), len(not_graded), len(unread), len(unread) - len(unread_s), 100 * rate, 100 * gates.PARSE_ERROR_RATE_MAX, len(dev), kinds))
     # 8b. the non-literal probes must be answerable: the short oracle (arm O, no compaction) gets at least 80% on every type
     o_nl = [r for r in R.rows if r["arm"] == "O" and r.get("phrasing") == "nonliteral" and cond_row(r) == "nocompact"]
     by_t = {}
