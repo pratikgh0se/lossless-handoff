@@ -1373,5 +1373,70 @@ class RefusedProbes(unittest.TestCase):
         self.assertEqual(d4.REFUSED_CELL_MAX, 0.05)
 
 
+class PreflightEstimates4(unittest.TestCase):
+    """The preflight4 estimates against the real Haiku figures of run 20261122T162409-preflight4 (calls.jsonl, USD, 1 seed)."""
+    ARMS = ("A", "B", "R", "K", "Z", "O")
+    CFG = {"kind": "preflight4", "arms": list(ARMS), "conditions": ["compact", "nocompact"], "probe_design": 4, "seeds": [1], "n": [1], "phrasings": ["cued", "neutral", "nonliteral"]}
+    REAL = {("A", "compact"): 0.0296, ("B", "compact"): 0.0316, ("R", "compact"): 0.0316, ("K", "compact"): 0.0334, ("Z", "compact"): 0.0044,
+            ("O", "compact"): 0.0954, ("O", "nocompact"): 0.3457, ("Z", "nocompact"): 0.0466}
+
+    def within2(self, est, real, what):
+        self.assertTrue(real / 2.0 <= est <= real * 2.0, "%s: estimate %.4f, real %.4f" % (what, est, real))
+
+    def test_every_session_estimate_is_within_a_factor_of_2_of_the_real_figure(self):
+        for (arm, cond), real in self.REAL.items():
+            self.within2(cost.preflight_unit(arm, cond, self.ARMS, 4), real, "%s %s" % (arm, cond))
+            self.within2(cost.unit_estimate(self.CFG, arm, cond), real, "unit_estimate %s %s" % (arm, cond))
+        turns, forks, scale = cost.pf4_nc_unit_parts(self.ARMS)
+        self.within2(turns, 0.0694, "A-nc turns")
+        self.within2(forks, 0.4203, "A-nc forks of arm A")
+        self.within2(cost.preflight_unit("A", "nocompact", self.ARMS, 4), 0.4897 + 0.4203 * 3.25, "A-nc unit with the forks of B, R, K")
+
+    def test_the_gate_that_stopped_the_run_passes(self):
+        # s1-O-nc cost $0.3457 against 2.0 x its estimate and the floor (gates.session_reasons)
+        e = cost.unit_estimate(self.CFG, "O", "nocompact")
+        self.assertEqual(gates.session_reasons({"s1-O-nc": "done"}, {"s1-O-nc": (0.3457, e)}), [])
+        self.assertEqual(gates.session_reasons({"s1-Z-nc": "done"}, {"s1-Z-nc": (0.0466, cost.unit_estimate(self.CFG, "Z", "nocompact"))}), [])
+        self.assertTrue(cost.unit_estimate(self.CFG, "O", "nocompact") > 0.2)         # was $0.02
+
+    def test_design_3_figures_are_unchanged_and_forks_of_b_r_k_have_no_unit(self):
+        self.assertEqual(cost.preflight_unit("O", "nocompact", self.ARMS), cost.PF_O3)
+        self.assertEqual(cost.preflight_unit("A", "nocompact", self.ARMS), cost.preflight_unit("A", "nocompact", self.ARMS, 3))
+        for arm in ("B", "R", "K"):
+            self.assertEqual(cost.preflight_unit(arm, "nocompact", self.ARMS, 4), 0.0)
+        t4, _ = cost.estimate_preflight(self.ARMS, ("compact", "nocompact"), 4)
+        self.assertEqual(cost.estimate_per_seed(self.CFG), t4)
+        self.assertTrue(3.5 < t4 < 5.0, t4)
+
+    def test_resume_takes_the_current_estimate_for_a_default_budget(self):
+        import types
+        d = tempfile.mkdtemp()
+        old = (runner.RESULTS, runner.Ctx, runner.execute)
+        try:
+            os.makedirs(os.path.join(d, "r1"))
+            json.dump(dict(self.CFG, budget_usd=4.82, budget_default=True, jobs=2, gates=True), open(os.path.join(d, "r1", "config.json"), "w"))
+            seen = {}
+
+            class C:
+                def __init__(self, run_dir, cfg):
+                    seen["cfg"] = cfg
+                    self.state = {"sessions": {}}
+
+                def save(self):
+                    pass
+            runner.RESULTS, runner.Ctx, runner.execute = d, C, lambda ctx: 0
+            runner.cmd_resume(types.SimpleNamespace(run_id="r1", budget_usd=None, jobs=None))
+            self.assertAlmostEqual(seen["cfg"]["budget_usd"], round(1.5 * cost.estimate_per_seed(self.CFG), 2))
+            self.assertNotEqual(seen["cfg"]["budget_usd"], 4.82)
+            self.assertEqual(json.load(open(os.path.join(d, "r1", "config.json")))["budget_usd"], seen["cfg"]["budget_usd"])
+            runner.cmd_resume(types.SimpleNamespace(run_id="r1", budget_usd=9.0, jobs=None))          # an explicit budget wins and stays
+            self.assertEqual(seen["cfg"]["budget_usd"], 9.0)
+            runner.cmd_resume(types.SimpleNamespace(run_id="r1", budget_usd=None, jobs=None))
+            self.assertEqual(seen["cfg"]["budget_usd"], 9.0)
+        finally:
+            runner.RESULTS, runner.Ctx, runner.execute = old
+            shutil.rmtree(d)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=1)

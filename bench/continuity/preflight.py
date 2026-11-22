@@ -321,7 +321,7 @@ def check(rd, projects=None, mcp=True):
     # 14. cost
     spent = R.state.get("spent", 0.0)
     add("total cost under $%.0f" % COST_CAP_USD, spent < COST_CAP_USD, "$%.2f" % spent)
-    est_total, _ = cost.estimate_preflight(tuple(R.cfg["arms"]), tuple(R.cfg.get("conditions", ["compact"])))
+    est_total, _ = cost.estimate_preflight(tuple(R.cfg["arms"]), tuple(R.cfg.get("conditions", ["compact"])), 4 if R.cfg.get("probe_design", 1) >= 4 else 3)
     ratio = spent / est_total if est_total else None
     parts = []
     for arm in sorted({s["arm"] for s in R.sessions}):
@@ -331,7 +331,7 @@ def check(rd, projects=None, mcp=True):
                 real = sum(s.get("cost_usd") or 0 for s in ss)
                 if arm == "A" and c == "nocompact":
                     real += sum(s.get("cost_usd") or 0 for s in views)
-                est = cost.preflight_unit(arm, c, tuple(R.cfg["arms"])) * len(ss)
+                est = cost.preflight_unit(arm, c, tuple(R.cfg["arms"]), 4 if R.cfg.get("probe_design", 1) >= 4 else 3) * len(ss)
                 parts.append("%s %s real $%.2f / estimate $%.2f = %.2f" % (arm, c, real, est, real / est if est else 0))
     add("real cost against the cost.py estimate (ratio at most %.1f; the estimate takes the high price of the big turn)" % COST_RATIO_MAX, ratio is not None and ratio <= COST_RATIO_MAX,
         "ratio %s; %s" % ("n/a" if ratio is None else "%.2f" % ratio, "; ".join(parts)))
