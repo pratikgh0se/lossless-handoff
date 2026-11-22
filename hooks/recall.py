@@ -439,8 +439,12 @@ def boundary_ok(text, s, e):
         return False
     if e < len(text):
         c = text[e]
-        if c == "." and (e + 1 >= len(text) or not _TOK_RE.match(text[e + 1])):
-            return True
+        if c == ".":
+            j = e
+            while j < len(text) and text[j] == ".":
+                j += 1  # a run of dots is not part of the token
+            if j >= len(text) or not _TOK_RE.match(text[j]):
+                return True
         if _TOK_RE.match(c):
             return False
     return True
@@ -474,9 +478,14 @@ def _is_recall_use(b):
     return name == "Bash" and isinstance(cmd, str) and "recall.py" in cmd
 
 
+_RECALL_IDS = {}  # path -> ids, one scan per transcript per process (the hook runs 3 identifiers)
+
+
 def recall_tool_ids(path):
     """Ids of the tool calls of recall itself in one transcript (F73.a)."""
-    ids = set()
+    if path in _RECALL_IDS:
+        return _RECALL_IDS[path]
+    ids = _RECALL_IDS[path] = set()
     try:
         with open(path, encoding="utf-8", errors="replace") as f:
             for line in f:
@@ -514,8 +523,8 @@ def _norm(t):
 
 
 class Clean:
-    """F73/F74 exclusions: (a) recall's own tool calls and results, (b) auto-recall injections, (c) the current prompt and
-    everything after it (`cutoff`), (d) duplicates (same uuid, then same text and timestamp)."""
+    """F73/F74 exclusions: (a) recall's own tool calls and results, (b) auto-recall injections, (c) the current prompt record
+    (`cutoff`), (d) duplicates (same uuid, then same text and timestamp)."""
 
     def __init__(self, cutoff=None):
         self.cutoff = cutoff or {}
@@ -527,7 +536,7 @@ class Clean:
         cut = self.cut.get(t.path)
         if cut is None:
             cut = self.cut[t.path] = self.cutoff.get(os.path.realpath(t.path))
-        if cut is not None and n >= cut:
+        if cut is not None and n == cut:
             return []
         if t.path not in self.ids:
             self.ids[t.path] = recall_tool_ids(t.path)
@@ -549,16 +558,22 @@ class Clean:
         return out
 
 
-def current_cutoff(ts, transcript_path=None, prompt=None):
-    """F73.c: {realpath: line} of the last user prompt of the current session. Without a path: the newest main transcript
-    in scope. With a prompt text: only when the last user message is that prompt. Else {}."""
+STALE_S = 600
+
+
+def current_cutoff(ts, transcript_path=None, prompt=None, sid=None):
+    """F73.c: {realpath: line} of the last user prompt (only that record) of the current session. The session is the
+    transcript_path, else the main transcript with session id `sid`. No path and no sid, no match, or a file last
+    written more than 600 s ago: {} (no guess). With a prompt text: only when the last user message is that prompt."""
     try:
         path = transcript_path
         if not path:
-            mains = [t for t in ts if not t.sub]
-            if not mains:
+            if not sid:
                 return {}
-            path = max(mains, key=lambda t: t.mtime).path
+            mains = [t for t in ts if not t.sub and t.sid == sid]
+            if not mains or time.time() - mains[0].mtime > STALE_S:
+                return {}
+            path = mains[0].path
         if not os.path.isfile(path):
             return {}
         last = None
@@ -576,7 +591,7 @@ def current_cutoff(ts, transcript_path=None, prompt=None):
             return {}
         if prompt is not None:
             p, x = _norm(prompt), _norm(last[1])
-            if not p or not x or not (x in p or p[:80] in x):
+            if not p or not x or not (x == p or (len(p) >= 20 and p[:80] in x)):
                 return {}
         return {os.path.realpath(path): last[0]}
     except Exception:
@@ -604,6 +619,7 @@ def history_entries(ts, ident, role="any", cutoff=None):
             for r, text in clean.segments(t, n, rec):
                 if role != "any" and r != role:
                     continue
+                text = redact(text)  # before the split: a window must not cut a secret in two
                 sents = [x for x in SENT_RE.split(text) if x.strip()]
                 idx = [i for i, x in enumerate(sents) if any(boundary_ok(x, m.start(), m.end()) for m in rx.finditer(x))]
                 wins = []
@@ -615,7 +631,8 @@ def history_entries(ts, ident, role="any", cutoff=None):
                         wins.append([a, b])
                 for a, b in wins:
                     out.append({"ts": rec.get("timestamp") or "", "path": t.path, "line": n, "label": t.label, "role": r,
-                                "text": " ".join(sents[a:b + 1])})
+                                "text": " ".join(sents[a:b + 1]),
+                                "core": " ".join(sents[i] for i in idx if a <= i <= b)})
     out.sort(key=lambda e: e["ts"])  # stable: ties keep the file order
     return out
 
@@ -624,40 +641,55 @@ def _cut(s, n):
     return s if len(s) <= n else s[:max(0, n - 1)] + "…"
 
 
+def _window(core, rx, width):
+    """`core` cut to `width` characters centred on the first whole-token match (… marks a cut side)."""
+    if len(core) <= width:
+        return core
+    pos = 0
+    for m in rx.finditer(core):
+        pos = (m.start() + m.end()) // 2
+        if boundary_ok(core, m.start(), m.end()):
+            break
+    a = max(0, min(pos - width // 2, len(core) - width))
+    return ("…" if a else "") + core[a:a + width] + ("…" if a + width < len(core) else "")
+
+
 def history_lines(ident, entries, cap=HISTORY_CAP):
-    """F73: the output lines. `cap` None: no cap. Over the cap: line 1, the 2 oldest entries, an omission line, and as
-    many of the newest entries as fit."""
+    """F73 (cap amendment): the output lines. `cap` None: no cap. Over the cap, stop at the first step that fits:
+    (1) only the matching sentence of each entry, (2) a 200-character window on the match, (3) a 120-character window,
+    (4) the middle cut: line 1, the 2 oldest entries, an omission line, as many of the newest entries as fit."""
     n = len(entries)
     if n == 0:
         return ["history of %s: no mentions" % ident]
     l1 = ("history of %s: %d mention(s), oldest first. A later mention can be a rejected proposal, a dry run or an undo; "
           "read all of them." % (ident, n))
-    rows = ["- %s:%d %s %s: %s" % (e["label"], e["line"], fmt_ts(e["ts"]), e["role"], redact(_norm_keep(e["text"])))
-            for e in entries]
-    if cap is None or len("\n".join([l1] + rows)) <= cap:
-        return [l1] + rows
-    for lim in (600, 300, 150, 80, 40):
-        rr = [_row_cut(entries[i], rows[i], lim) for i in range(n)]
-        if len("\n".join([l1] + rr)) <= cap:
-            return [l1] + rr
-        if n < 3:
-            continue
+    rx = ident_rx(ident)
+
+    def head(e):
+        return "- %s:%d %s %s: " % (e["label"], e["line"], fmt_ts(e["ts"]), e["role"])
+
+    def build(texts):
+        return [head(e) + redact(_norm_keep(t)) for e, t in zip(entries, texts)]
+    steps = [[e["text"] for e in entries], [e.get("core") or e["text"] for e in entries]]
+    for w in (200, 120):
+        steps.append([_window(_norm_keep(e.get("core") or e["text"]), rx, w) for e in entries])
+    for texts in steps:
+        rows = build(texts)
+        if cap is None or len("\n".join([l1] + rows)) <= cap:
+            return [l1] + rows
+    rr = rows  # the 120-character rows
+    if n >= 3:
         for m in range(n - 2 - 1, -1, -1):
             k = n - 2 - m
             om = "[%d mention(s) omitted in the middle; run: python3 %s history %s --all]" % (k, _recall_cmd(), ident)
             lines = [l1] + rr[:2] + [om] + (rr[n - m:] if m else [])
             if len("\n".join(lines)) <= cap:
                 return lines
-    return ["\n".join([l1] + rows)[:cap]]
+    return ["\n".join([l1] + rr)[:cap]]
 
 
 def _norm_keep(t):
     return re.sub(r"\s+", " ", t or "").strip()
-
-
-def _row_cut(e, row, lim):
-    head = row[:len(row) - len(redact(_norm_keep(e["text"])))]
-    return head + _cut(redact(_norm_keep(e["text"])), lim)
 
 
 def history_for(ts, ident, role="any", cutoff=None, cap=HISTORY_CAP):
@@ -844,6 +876,7 @@ def cmd_search(a, root):
     else:
         kw = keyword_hits(a, ts, rx, pattern, fixed)
         if not a.keyword and not off_reason:
+            kw = [h for h in kw if h.get("whole")] + [h for h in kw if not h.get("whole")]  # whole tokens survive the cut
             kw = kw[:200]
 
     if off_reason is not None:
@@ -853,9 +886,9 @@ def cmd_search(a, root):
     if node:
         merged = [h for h in merged if os.path.realpath(h["path"]) == os.path.realpath(node["transcript"])
                   and node["first_line"] <= h["line"] <= node["last_line"]]
-    if CURRENT_CUTOFF:  # F74.c: meaning hits inside the current prompt or after it
+    if CURRENT_CUTOFF:  # F74.c: meaning hits on the current prompt record
         merged = [h for h in merged if os.path.realpath(h["path"]) not in CURRENT_CUTOFF
-                  or h["line"] < CURRENT_CUTOFF[os.path.realpath(h["path"])]]
+                  or h["line"] != CURRENT_CUTOFF[os.path.realpath(h["path"])]]
     merged = [h for h in merged if h.get("whole")] + [h for h in merged if not h.get("whole")]  # F74: whole tokens first
     shown = merged[:limit]
     fill_meaning_snippets(shown, ts)
