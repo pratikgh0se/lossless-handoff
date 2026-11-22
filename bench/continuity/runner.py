@@ -1494,7 +1494,7 @@ def build_cfg(kind, a):
     if "R" in arms and not os.path.isfile(os.path.join(lh, "hooks", "auto-recall.py")):
         raise SystemExit("arm R: no hooks/auto-recall.py in %s. Use --lh-path with a checkout that has install.sh --auto-recall." % lh)
     design = k.get("probe_design", 1)
-    if design >= 3 and "nocompact" in conds and "A" not in arms:
+    if design >= 3 and "nocompact" in conds and "A" not in arms and any(a in NC3_FORK_ARMS for a in arms):
         raise SystemExit("design 3, no compaction: arm A runs the main session and arms B, R and K fork it. Add arm A to --arms.")
     levels = None
     if design >= 4:       # the levels of the update chains. L5 is the escalation: its own session (165 turns), it replaces all cells of the L1-L4 run.
