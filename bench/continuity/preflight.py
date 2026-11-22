@@ -155,9 +155,20 @@ def check(rd, projects=None, mcp=True):
         add("arm K: the MCP check turn made an mcp__lossless-recall__ call (a fork of the no-compaction session; ToolSearch is allowed)", bool(mc) and all(m.get("called") for m in mc),
             "%d check turn(s); calls: %s" % (len(mc), [bool(m.get("called")) for m in mc]))
         crossed = [s for s in k_sess if cond(s) == "compact" and (runner.last_turn_context(R.calls, s["name"]) or 0) >= REANCHOR_TOKENS]
-        r_miss = [s["name"] for s in crossed if not any(x.get("event") == "reanchor" for x in jl(os.path.join(R.statedir(s), "health.jsonl")))]
-        add("arm K: a reanchor health row exists if the session crossed the interval (%d tokens)" % REANCHOR_TOKENS, not r_miss,
-            "%d of %d K compaction session(s) crossed it; missing in: %s" % (len(crossed), len([s for s in k_sess if cond(s) == "compact"]), r_miss or "none"))
+        # The hook saves its anchor (reanchor-<sid>.json) at every decision, also when it has no rules yet (reanchor.py decide(): "also when there is no rule"),
+        # and it writes a health row only when it injects. The first crossing of the interval can come before the decisions ledger has rules, and a compaction
+        # then resets the anchor, so a session that ends 53k tokens long can have an anchor and no row. FAIL only when the hook left neither a row nor an anchor.
+        def has_row(s):
+            return any(x.get("event") == "reanchor" for x in jl(os.path.join(R.statedir(s), "health.jsonl")))
+
+        def has_anchor(s):
+            sd = R.statedir(s)
+            return os.path.isdir(sd) and any(n.startswith("reanchor-") and n.endswith(".json") for n in os.listdir(sd))
+        r_miss = [s["name"] for s in crossed if not has_row(s) and not has_anchor(s)]
+        r_anchor_only = [s["name"] for s in crossed if not has_row(s) and has_anchor(s)]
+        add("arm K: the reanchor hook ran (a health row or a saved anchor) if the session crossed the interval (%d tokens)" % REANCHOR_TOKENS, not r_miss,
+            "%d of %d K compaction session(s) crossed it; no row and no anchor in: %s; anchor but no row (no rules at the crossing, or no second interval): %s" % (
+                len(crossed), len([s for s in k_sess if cond(s) == "compact"]), r_miss or "none", r_anchor_only or "none"))
         rule_bad = []
         for s in [x for x in k_sess if cond(x) == "compact"]:
             txt = text_after_first_boundary(R.transcript(s)) if R.transcript(s) else None
@@ -218,8 +229,8 @@ def check(rd, projects=None, mcp=True):
     for a_ in sorted({r.get("arm") for r in R.rows}):
         rw_arm[a_] = gates.runaway_rate([r for r in g_rows_ if r.get("arm") == a_])
     rw_bad = {a_: v for a_, v in rw_arm.items() if v[1] and v[0] / float(v[1]) > RUNAWAY_ARM_MAX}
-    add("runaway rate at most %d%% of the probe forks of each arm (a fork that hit the output cap)" % int(100 * RUNAWAY_ARM_MAX), None if not any(v[1] and True for v in rw_arm.values()) else not rw_bad,
-        "above the limit: %s" % ({a_: "%d/%d" % v for a_, v in rw_bad.items()} or "none"))
+    add("runaway forks of each arm at L1 and L2 (INFO: Haiku limits are not what the preflight tests; the Sonnet oracle check gates runaway at %d%% per level and phrasing)" % int(100 * RUNAWAY_ARM_MAX), None,
+        "counts: %s; above %d%%: %s" % (", ".join("%s %d/%d" % ((a_,) + v) for a_, v in sorted(rw_arm.items())), int(100 * RUNAWAY_ARM_MAX), sorted(rw_bad) or "none"))
     lv_rw = {}
     for r in R.rows:
         if str(r.get("type", "")).startswith("L"):
@@ -229,8 +240,8 @@ def check(rd, projects=None, mcp=True):
     # refused forks: a safety filter refused a probe fork (class refused, an outcome), at most 10% of the forks of each arm
     rf_arm = {a_: gates.refused_rate([r for r in R.rows if r.get("arm") == a_]) for a_ in sorted({r.get("arm") for r in R.rows})}
     rf_bad = {a_: v for a_, v in rf_arm.items() if v[1] and v[0] / float(v[1]) > REFUSED_ARM_MAX}
-    add("refused rate at most %d%% of the probe forks of each arm (a fork that a safety filter refused)" % int(100 * REFUSED_ARM_MAX),
-        None if not any(v[1] for v in rf_arm.values()) else not rf_bad, "above the limit: %s" % ({a_: "%d/%d" % v for a_, v in rf_bad.items()} or "none"))
+    add("refused forks of each arm (INFO: Haiku [bio] false positives are not what the preflight tests; the Sonnet oracle check gates refused at %d%% per level and phrasing)" % int(100 * REFUSED_ARM_MAX), None,
+        "counts: %s; above %d%%: %s" % (", ".join("%s %d/%d" % ((a_,) + v) for a_, v in sorted(rf_arm.items())), int(100 * REFUSED_ARM_MAX), sorted(rf_bad) or "none"))
     lv_rf = {}
     for r in R.rows:
         if str(r.get("type", "")).startswith("L"):

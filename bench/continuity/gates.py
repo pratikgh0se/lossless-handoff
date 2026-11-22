@@ -107,7 +107,10 @@ def refused_rate(rows):
     return flag_rate(rows, "refused")
 
 
-def abort_reasons(sessions, rows, est_per_seed, finished_seeds, session_costs=None, expected=None):
+HAIKU_INFO_LEVELS = ("L3", "L4")      # the Haiku preflight cannot reason through these chains (Haiku capability; the Sonnet calibration measures them)
+
+
+def abort_reasons(sessions, rows, est_per_seed, finished_seeds, session_costs=None, expected=None, haiku_l12=False):
     """Reasons to stop after a finished seed. Empty list: go on.
     sessions: one summary dict for each finished session (keys seed, status, nc_valid, name).
     rows: result rows. est_per_seed: USD of one seed, or None (no cost gate). finished_seeds: seeds with every unit finished.
@@ -127,13 +130,15 @@ def abort_reasons(sessions, rows, est_per_seed, finished_seeds, session_costs=No
         if spent > COST_RATIO_MAX * est:
             why.append("cost $%.2f is above %.1f x the estimate so far ($%.2f for %d seed(s))" % (spent, COST_RATIO_MAX, est, len(fin)))
     sel = [r for r in rows if r.get("seed") in fin]
+    # preflight4 (Haiku): the runaway, refused and parse rates count L1 and L2 rows only. Sonnet runs keep every level.
+    sel_g = [r for r in sel if r.get("type") not in HAIKU_INFO_LEVELS] if haiku_l12 else sel
     for sd in sorted(fin):
-        bad_f, all_f = runaway_rate([r for r in sel if r.get("seed") == sd])
+        bad_f, all_f = runaway_rate([r for r in sel_g if r.get("seed") == sd])
         if all_f and bad_f / float(all_f) > RUNAWAY_SEED_MAX:
             why.append("seed %s: runaway rate %.0f%% (%d of %d probe forks hit the output cap) is above %.0f%%: a runaway fork wastes money" % (
                 sd, 100.0 * bad_f / all_f, bad_f, all_f, 100 * RUNAWAY_SEED_MAX))
     for sd in sorted(fin):
-        bad_f, all_f = refused_rate([r for r in sel if r.get("seed") == sd])
+        bad_f, all_f = refused_rate([r for r in sel_g if r.get("seed") == sd])
         if all_f and bad_f / float(all_f) > REFUSED_SEED_MAX:
             why.append("seed %s: refused rate %.0f%% (%d of %d probe forks refused by a safety filter) is above %.0f%%" % (
                 sd, 100.0 * bad_f / all_f, bad_f, all_f, 100 * REFUSED_SEED_MAX))
@@ -141,7 +146,7 @@ def abort_reasons(sessions, rows, est_per_seed, finished_seeds, session_costs=No
     if nofire:
         forks = sorted({(r["seed"], r["arm"], r["type"], r["fork_sid"]) for r in nofire})
         why.append("arm R or K: %d cued probe fork(s) had no auto-recall fire, for example seed %s arm %s type %s" % (len(forks), forks[0][0], forks[0][1], forks[0][2]))
-    graded = [r for r in sel if r.get("arm") != "Z"]
+    graded = [r for r in sel_g if r.get("arm") != "Z"]
     graded = [r for r in graded if not r.get("runaway") and not r.get("refused")]      # runaway and refused rows are counted apart
     badp = [r for r in graded if not r.get("parse_ok")]
     if graded and len(badp) / len(graded) > PARSE_ERROR_RATE_MAX:
