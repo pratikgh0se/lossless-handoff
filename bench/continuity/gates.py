@@ -68,7 +68,7 @@ def session_reasons(statuses, unit_costs, classes=None):
     if fin and len(failed) / len(fin) > FAILED_RATE_MAX:
         refused = [n for n in failed if (classes or {}).get(n) == "safety_refusal"]
         why.append("failed-session rate %.0f%% (%d of %d) is above %.0f%%: %s%s" % (100 * len(failed) / len(fin), len(failed), len(fin), 100 * FAILED_RATE_MAX, ", ".join(failed),
-                   "; safety_refusal (an API safety filter refused the content, not a crash): %s" % ", ".join(refused) if refused else ""))
+                   "; %d safety_refusal (an API safety filter refused the content, not a crash; not retried): %s" % (len(refused), ", ".join(refused)) if refused else ""))
     for n, (c, e) in sorted(unit_costs.items()):
         if e and c > max(UNIT_COST_FACTOR * e, e + UNIT_COST_FLOOR_USD):
             why.append("session %s cost $%.2f is above %.1f x its estimate $%.2f" % (n, c, UNIT_COST_FACTOR, e))

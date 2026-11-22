@@ -979,5 +979,131 @@ class NeutralLexicon(unittest.TestCase):
         self.assertIn('"failure_class": st.get("failure_class")', inspect.getsource(keep[2]))      # the real session summary carries the field
 
 
+class ProbeCapAndFailures(unittest.TestCase):
+    """Output cap of probe forks, kept evidence of failed calls, and no retry of a safety refusal."""
+    REFUSAL = "API Error: Haiku 5.5 can't help with this. Start a new session to continue. Details: `[bio]`"
+
+    def session(self, d):
+        ctx, cfg = test_litm.r4_cfg(d)
+        ss = runner.Session(ctx, "s1-A-nc", 1, "A", ctx.sess("s1-A-nc"), "nocompact")
+        ss.proj = os.path.join(d, "proj")
+        os.makedirs(os.path.join(runner.PROJECTS, runner.slug(ss.proj)), exist_ok=True)
+        return ctx, ss
+
+    def run_call(self, replies, kind="fork", fork_of="parent1"):
+        d = tempfile.mkdtemp()
+        old = (runner.PROJECTS, runner.subprocess.Popen)
+        runner.PROJECTS = os.path.join(d, "projects")
+        seen = []
+
+        class P:
+            def __init__(self, cmd, **k):
+                seen.append(k.get("env"))
+
+            def communicate(self, input=None, timeout=None):
+                n = len(seen) - 1
+                return json.dumps(replies[min(n, len(replies) - 1)]), ""
+            returncode = 0
+        runner.subprocess.Popen = P
+        try:
+            ctx, ss = self.session(d)
+            err = None
+            try:
+                ss.call("PROBE prompt", kind, sid=None, fork_of=fork_of if kind == "fork" else None, first=(kind != "fork"))
+            except runner.CallError as e:
+                err = e
+            return d, ctx, ss, seen, err
+        finally:
+            runner.PROJECTS, runner.subprocess.Popen = old
+
+    def test_cap_for_probe_forks_only(self):
+        ok = {"result": "{}", "session_id": "f1", "total_cost_usd": 0.01, "usage": {"output_tokens": 50}, "is_error": False}
+        d, ctx, ss, seen, err = self.run_call([ok], "fork")
+        try:
+            self.assertIsNone(err)
+            self.assertEqual(seen[0].get("CLAUDE_CODE_MAX_OUTPUT_TOKENS"), "8000")
+        finally:
+            shutil.rmtree(d)
+        d, ctx, ss, seen, err = self.run_call([ok], "turn")
+        try:
+            self.assertNotIn("CLAUDE_CODE_MAX_OUTPUT_TOKENS", seen[0])       # not for the turns of a main session
+        finally:
+            shutil.rmtree(d)
+        self.assertEqual(runner.PROBE_MAX_OUTPUT_TOKENS, 8000)
+        self.assertIn("CLAUDE_CODE_MAX_OUTPUT_TOKENS", runner.OVERRIDE_ENV)       # the preflight env check allows it
+        self.assertNotIn("CLAUDE_CODE_MAX_OUTPUT_TOKENS", runner.ENV_ALLOW)         # and it does not come from the user's environment
+
+    def test_safety_refusal_is_not_retried_and_the_evidence_is_kept(self):
+        key = "sk-ant-api03-" + "A" * 40
+        bad = {"result": self.REFUSAL + " " + key + " " + "x" * 9000, "session_id": "f2", "total_cost_usd": 0.1, "usage": {"output_tokens": 41000}, "is_error": True}
+        d, ctx, ss, seen, err = self.run_call([bad], "fork")
+        try:
+            self.assertIsInstance(err, runner.SafetyRefusal)
+            self.assertEqual(len(seen), 1)                                   # one call, no retry
+            self.assertEqual(ss.st["safety_refusals"], 1)
+            self.assertEqual(gates.failure_class(str(err)), "safety_refusal")
+            fd = os.path.join(ctx.dir, "failed")
+            js = [f for f in os.listdir(fd) if f.endswith(".json")]
+            self.assertEqual(len(js), 1)
+            rec = json.load(open(os.path.join(fd, js[0])))
+            self.assertEqual(rec["failure_class"], "safety_refusal")
+            self.assertEqual(rec["output_tokens"], 41000)
+            self.assertLessEqual(len(rec["reply"]), 4000)
+            self.assertEqual(rec["reply_chars"], len(bad["result"]))
+            self.assertNotIn(key, rec["reply"])                              # redacted
+            self.assertIn("can't help with this", rec["reply"])
+        finally:
+            shutil.rmtree(d)
+
+    def test_other_errors_are_retried_and_kept_once(self):
+        bad = {"result": "API Error: 529 overloaded", "session_id": "f3", "total_cost_usd": 0.0, "usage": {}, "is_error": True}
+        d, ctx, ss, seen, err = self.run_call([bad], "fork")
+        try:
+            self.assertIsInstance(err, runner.CallError)
+            self.assertNotIsInstance(err, runner.SafetyRefusal)
+            self.assertEqual(len(seen), 2)                                   # the normal retry: 2 attempts
+            self.assertEqual(len([f for f in os.listdir(os.path.join(ctx.dir, "failed")) if f.endswith(".json")]), 1)
+            self.assertEqual(ss.st.get("safety_refusals", 0), 0)
+        finally:
+            shutil.rmtree(d)
+
+    def test_failed_transcript_is_copied(self):
+        d = tempfile.mkdtemp()
+        old = runner.PROJECTS
+        runner.PROJECTS = os.path.join(d, "projects")
+        try:
+            ctx, ss = self.session(d)
+            with open(ss.transcript("fsid"), "w") as f:
+                f.write(json.dumps({"type": "user", "message": {"content": "q"}}) + "\n")
+            ss.save_failed({"result": "boom", "session_id": "fsid"}, "", "", "fork", "p", 2)
+            names = os.listdir(os.path.join(ctx.dir, "failed"))
+            self.assertEqual(sorted(x.rsplit(".", 1)[1] for x in names), ["json", "jsonl"])
+        finally:
+            runner.PROJECTS = old
+            shutil.rmtree(d)
+
+    def test_rows_have_output_tokens_and_preflight_has_the_lines(self):
+        import inspect
+        self.assertIn('"output_tokens": u.get("output_tokens")', inspect.getsource(runner.Session.probe))
+        d = tempfile.mkdtemp()
+        try:
+            import preflight
+            rd, projects = test_litm.make_pf_run(d, d4=True)
+            res = preflight.check(rd, projects, mcp=False)
+            names = [r[0] for r in res]
+            self.assertTrue(any(n.startswith("probe fork output at most 8000 tokens") for n in names), names)
+            self.assertIn("median probe output tokens", names)
+            old = runner.PROBE_MAX_OUTPUT_TOKENS
+            runner.PROBE_MAX_OUTPUT_TOKENS = 1
+            try:
+                res2 = preflight.check(rd, projects, mcp=False)
+            finally:
+                runner.PROBE_MAX_OUTPUT_TOKENS = old
+            st = [r[1] for r in res2 if r[0].startswith("probe fork output at most")][0]
+            self.assertIn(st, ("FAIL", "INFO"))        # FAIL when the fixture rows carry the output tokens
+        finally:
+            shutil.rmtree(d)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=1)

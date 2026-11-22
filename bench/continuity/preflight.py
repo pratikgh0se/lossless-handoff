@@ -176,6 +176,19 @@ def check(rd, projects=None, mcp=True):
     # 7. used_lookup on every probe
     no_ul = [r for r in R.rows if not isinstance(r.get("used_lookup"), bool)]
     add("used_lookup is set for every probe (every arm)", bool(R.rows) and not no_ul, "%d probe row(s); without it: %d" % (len(R.rows), len(no_ul)))
+    # 7b. output tokens of the probe forks (a probe answers in short JSON; a runaway reply wastes money and can set off a safety filter)
+    forks = {}
+    for r in R.rows:
+        n_out = r.get("output_tokens")
+        if n_out is None and isinstance(r.get("tokens"), dict):
+            n_out = r["tokens"].get("out")
+        if isinstance(n_out, (int, float)):
+            forks[r.get("fork_sid") or id(r)] = n_out
+    outs = sorted(forks.values())
+    over = sorted(v for v in outs if v > runner.PROBE_MAX_OUTPUT_TOKENS)
+    add("probe fork output at most %d tokens (the cap %s is set for probe forks)" % (runner.PROBE_MAX_OUTPUT_TOKENS, runner.PROBE_MAX_OUTPUT_ENV), None if not outs else not over,
+        "no output token data" if not outs else "%d fork(s), above the limit: %s" % (len(outs), over[:5] or "none"))
+    add("median probe output tokens", None, "no data" if not outs else "median %d, max %d (%d fork(s))" % (outs[len(outs) // 2], outs[-1], len(outs)))
     # 8. parse and grade
     # Parse policy (one threshold, gates.PARSE_ERROR_RATE_MAX, the same as the abort gate): a reply that cannot be read counts as wrong for every arm.
     # Arm Z (no history) is excluded from the rate, as in the abort gate: it may answer with fewer entries or in prose (INFO only).
