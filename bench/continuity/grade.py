@@ -163,6 +163,29 @@ MCP_PREFIX = "mcp__lossless-recall__"
 INJECTION_TEXT = "Lossless Handoff auto-recall:"
 
 
+def request_stats(records, marker):
+    """(requests, largest output tokens of one request) of a fork, from its transcript. Only records from the probe message on count (a fork copies
+    the parent history). A request is an assistant message id; a streamed message is written more than once, so the largest usage per id counts.
+    CLAUDE_CODE_MAX_OUTPUT_TOKENS caps ONE request, not the fork: the sum over a fork that uses tools can pass the cap with no request near it."""
+    seen, by_id = False, {}
+    for i, r in enumerate(records):
+        if not isinstance(r, dict):
+            continue
+        m = r.get("message")
+        if not seen:
+            c = m.get("content") if isinstance(m, dict) else None
+            txt = c if isinstance(c, str) else " ".join(b.get("text", "") for b in (c or []) if isinstance(b, dict) and b.get("type") == "text")
+            if marker in txt and r.get("type") == "user":
+                seen = True
+            continue
+        if r.get("type") == "assistant" and isinstance(m, dict) and isinstance(m.get("usage"), dict):
+            n = m["usage"].get("output_tokens")
+            if isinstance(n, (int, float)):
+                k = m.get("id") or ("rec%d" % i)
+                by_id[k] = max(by_id.get(k, 0), int(n))
+    return len(by_id), (max(by_id.values()) if by_id else None)
+
+
 def search_used(records, marker):
     """Probe design 3. (used, kinds): did the fork search for the fact? kinds holds "bash" (a recall.py call or a transcript read),
     "mcp" (an mcp__lossless-recall__ call) and "injection" (an auto-recall injection in the probe turn).

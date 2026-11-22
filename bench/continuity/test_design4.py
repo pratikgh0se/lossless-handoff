@@ -516,6 +516,41 @@ class ReportAndPreflight(unittest.TestCase):
         self.assertEqual([x[1] for x in res if "amnesia (arm Z)" in x[0]], ["FAIL"])
 
 
+class PreflightHaikuScope(ReportAndPreflight):
+    """The Haiku preflight gates L1 and L2 only; L3 and L4 are INFO. Stop continuation is INFO when there is no G arm."""
+
+    def test_nonliteral_oracle_low_at_l3_is_info_not_fail(self):
+        res = self.run_check(d4_o_low=True)
+        gate = [x for x in res if x[0].startswith("nonliteral oracle (arm O) accuracy at least")]
+        self.assertEqual([x[1] for x in gate], ["PASS"])
+        self.assertNotIn("L3", gate[0][2])
+        info = [x for x in res if x[0].startswith("nonliteral oracle (arm O) accuracy at L3 and L4")]
+        self.assertEqual([x[1] for x in info], ["INFO"])
+        self.assertIn("L3", info[0][2])
+
+    def test_stop_continuation_is_info_when_the_preset_has_no_g_arm(self):
+        res = self.run_check()
+        line = [x for x in res if x[0].startswith("Stop continuation")]
+        self.assertEqual([x[1] for x in line], ["INFO"])
+        self.assertIn("not run: no G arm in this preset", line[0][2])
+
+    def test_output_limit_line_counts_l1_l2_forks_only(self):
+        res = self.run_check()
+        names = [x[0] for x in res]
+        self.assertTrue(any(n.startswith("largest single request of a probe fork at most 10000 tokens") for n in names))
+        # these rows have no per-request field: the sum line is INFO and nothing compares a sum with the per-request cap
+        self.assertTrue(any(n.startswith("probe fork output: no per-request data") for n in names))
+
+    def test_gate_uses_the_largest_single_request(self):
+        import grade
+        recs = [{"type": "user", "message": {"content": "PROBE-q go"}},
+                {"type": "assistant", "message": {"id": "m1", "usage": {"output_tokens": 5000}, "content": []}},
+                {"type": "assistant", "message": {"id": "m1", "usage": {"output_tokens": 7000}, "content": []}},      # the same request, streamed twice
+                {"type": "assistant", "message": {"id": "m2", "usage": {"output_tokens": 6000}, "content": []}}]
+        self.assertEqual(grade.request_stats(recs, "PROBE-q"), (2, 7000))        # a fork sum of 13000 with no request above 7000
+        self.assertEqual(grade.request_stats([{"type": "user", "message": {"content": "x"}}], "PROBE-q"), (0, None))
+
+
 class AuditFixes(unittest.TestCase):
     """Fixes of the audit of PR #35 (findings 1 to 9). Offline, from the script generator and the code only."""
     SEEDS = range(1000, 1200)
@@ -1119,7 +1154,7 @@ class ProbeCapAndFailures(unittest.TestCase):
             rd, projects = test_litm.make_pf_run(d, d4=True)
             res = preflight.check(rd, projects, mcp=False)
             names = [r[0] for r in res]
-            self.assertTrue(any(n.startswith("probe fork output at most 10000 tokens") for n in names), names)
+            self.assertTrue(any(n.startswith("largest single request of a probe fork at most 10000 tokens") for n in names), names)
             self.assertIn("median probe output tokens", names)
             old = runner.PROBE_MAX_OUTPUT_TOKENS
             runner.PROBE_MAX_OUTPUT_TOKENS = 1
@@ -1127,8 +1162,8 @@ class ProbeCapAndFailures(unittest.TestCase):
                 res2 = preflight.check(rd, projects, mcp=False)
             finally:
                 runner.PROBE_MAX_OUTPUT_TOKENS = old
-            st = [r[1] for r in res2 if r[0].startswith("probe fork output at most")][0]
-            self.assertIn(st, ("FAIL", "INFO"))        # FAIL when the fixture rows carry the output tokens
+            st = [r[1] for r in res2 if r[0].startswith("largest single request of a probe fork")][0]
+            self.assertIn(st, ("FAIL", "INFO"))        # INFO while the rows have no max_request_output; FAIL when a request is above the limit
         finally:
             shutil.rmtree(d)
 
