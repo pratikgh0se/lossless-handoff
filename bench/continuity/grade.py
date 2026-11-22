@@ -182,6 +182,8 @@ def search_used(records, marker):
         blob = json.dumps(r, ensure_ascii=False)
         if INJECTION_TEXT in blob and "injection" not in kinds and "tool_use" not in blob:
             kinds.append("injection")
+        if "Lossless Handoff history check" in blob and "guard" not in kinds and "tool_use" not in blob:
+            kinds.append("guard")       # F77 (Stop) or F80 (tool call) added the history to the fork
         m = r.get("message")
         c = m.get("content") if isinstance(m, dict) else None
         if isinstance(c, list):

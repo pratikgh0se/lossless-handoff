@@ -27,8 +27,8 @@ HOME = os.path.expanduser("~")
 PROJECTS = os.path.join(HOME, ".claude", "projects")
 PREFIX = "lhbench-"
 ALL_TYPES = gen.TYPES + ["F"]
-ALL_ARMS = ("A", "B", "Z", "O", "R", "K")
-LH_ARMS = ("B", "R", "K")   # arms with Lossless Handoff hooks: B default install, R plus --auto-recall, K plus auto-recall, recall rules, recall MCP and reanchor
+ALL_ARMS = ("A", "B", "Z", "O", "R", "K", "G", "P")
+LH_ARMS = ("B", "R", "K", "G", "P")   # arms with Lossless Handoff hooks: B default install, R plus --auto-recall, K plus auto-recall, recall rules, recall MCP and reanchor
 MCP_TOOLS = "mcp__lossless-recall__search_earlier_chat mcp__lossless-recall__open_message"
 K_FILES = ("auto-recall.py", "recall-mcp.py", "reanchor.py")
 ALLOWED_TOOLS = "Read Grep Task Agent Bash(grep:*) Bash(cat:*) Bash(ls:*) Bash(head:*) Bash(tail:*) Bash(python3:*)"
@@ -42,7 +42,7 @@ ENV_ALLOW = ("PATH", "HOME", "USER", "LOGNAME", "SHELL", "TMPDIR", "LANG", "LC_A
 MEMORY_ENV = "CLAUDE_CODE_DISABLE_AUTO_MEMORY"
 # Every variable the runner itself sets for a call (Session overrides). The preflight env check allows exactly these plus ENV_ALLOW.
 OVERRIDE_ENV = ("CLAUDE_CODE_AUTO_COMPACT_WINDOW", "RECALL_EMBED_URL", MEMORY_ENV, "DISABLE_AUTOUPDATER", "DISABLE_AUTO_COMPACT",
-                "HANDOFF_STATE_DIR", "HANDOFF_SUMMARY_MODEL", "HANDOFF_HOOKS_HOME", "CLAUDE_CODE_MAX_OUTPUT_TOKENS")
+                "HANDOFF_STATE_DIR", "HANDOFF_SUMMARY_MODEL", "HANDOFF_HOOKS_HOME", "CLAUDE_CODE_MAX_OUTPUT_TOKENS", "HANDOFF_HISTORY_GUARD", "HANDOFF_ACTION_GUARD")
 # Output cap of a probe fork. A probe answers in short JSON; the run 20261122T142851-preflight4 had a fork that wrote about 41,600 tokens and was
 # refused by a safety filter. CLAUDE_CODE_MAX_OUTPUT_TOKENS is read by claude 2.1.326 (found in the installed binary: the value is checked
 # against the model limit, `effective`). It is set for probe forks and for the arm Z probe only, never for the turns of a main session.
@@ -62,7 +62,11 @@ BIG_TOKENS_PER_CHAR = 0.46
 BIG_TARGET_TOKENS = 300000
 BIG_CAP_USD = 2.5        # cap of this one turn (a cold-cache write of 300k tokens costs about $1.2; the measured turn of 468k tokens cost $1.80)
 K_FORK_CAP_USD = 3.0     # per-call cap of a fork in arm K. MCP tools change the tool list, so the first K fork may miss the cache and write about 300k tokens ($1.1 to $2.3), above the normal cap of $1.50
-NC3_FORK_ARMS = ("B", "R", "K")  # design 3, no compaction: these arms fork the session of arm A with their own settings
+NC3_FORK_ARMS = ("B", "R", "K", "G", "P")
+FORK_CAPABLE = ("A", "B", "R", "K", "G", "P")       # arms with a no-compaction unit or view
+AUTO_ARMS = ("R", "K", "G", "P")                     # auto-recall installed (F67)
+RECALL_ARMS = ("K", "G", "P")                        # K = R + recall rules + recall MCP + reanchor; G = K + F77 + F80; P = K + F78
+GUARD_ENV = ("HANDOFF_HISTORY_GUARD", "HANDOFF_ACTION_GUARD")  # design 3, no compaction: these arms fork the session of arm A with their own settings
 MAX_NO_BOUNDARY = 10        # filler turns in a row with no new compaction: the session is invalid
 KINDS = {
     "slice": {"model": "haiku", "window": 30000, "n": [1, 3, 10], "arms": "A,B,Z,O", "seeds": 5, "seed_file": "seeds-dev.txt"},
@@ -96,10 +100,14 @@ KINDS = {
     # Probe design 4 (update chains with interference, no-compaction condition). The compaction condition stays as in design 3.
     # Calibration: arms A, O, Z on Sonnet, no compaction only. One dev seed; `design4.py decide <run-id>` says if a second seed (seeds-dev-2.txt) is needed.
     "litm4-calibrate": {"model": "sonnet", "window": 400000, "n": [1], "arms": "A,O,Z", "seeds": 1, "seed_file": "seeds-dev.txt",
-                        "conditions": "nocompact", "phrasings": "cued,neutral,nonliteral", "probe_design": 4},
+                        "conditions": "nocompact", "phrasings": "cued,neutral,nonliteral,action", "probe_design": 4},
     # The L5 escalation (only if `decide` says add_l5): the whole calibration again with levels L1 to L5 in one session of 165 turns. It replaces all cells.
+    # F79 follow-up: the cheap check before the calibration. Arm O only (no filler, zero distance), Sonnet, 1 seed, all levels, every phrasing.
+    # `run.sh oracle-check <run-id>` applies the gate: O M1 at least 95% and runaway at most 5% for each level.
+    "litm4-oracle-check": {"model": "sonnet", "window": 400000, "n": [1], "arms": "O", "seeds": 1, "seed_file": "seeds-dev.txt",
+                           "conditions": "nocompact", "phrasings": "cued,neutral,nonliteral,action", "probe_design": 4},
     "litm4-calibrate-l5": {"model": "sonnet", "window": 400000, "n": [1], "arms": "A,O,Z", "seeds": 1, "seed_file": "seeds-dev.txt", "levels": "L1,L2,L3,L4,L5",
-                           "conditions": "nocompact", "phrasings": "cued,neutral,nonliteral", "probe_design": 4},
+                           "conditions": "nocompact", "phrasings": "cued,neutral,nonliteral,action", "probe_design": 4},
     "litm4-smoke": {"model": "sonnet", "window": 400000, "n": [1, 3], "arms": "A,B,R,K", "seeds": 1, "seed_file": "seeds-dev.txt",
                     "conditions": "compact,nocompact", "phrasings": "cued,neutral,nonliteral", "probe_design": 4},
     # The pilot seeds (3 and 4) are dev seeds that the calibration did not use (seeds 1 and 2): the pick is checked on new seeds.
@@ -303,6 +311,10 @@ class Ctx:
         with self.lock:
             if key not in self.scripts:
                 s = design4.build_litm4(seed, tuple(self.cfg.get("levels") or design4.D4_LEVELS)) if d4 else gen.build_litm3(seed)
+                if d4 and self.cfg.get("controls"):
+                    s = design4.add_controls(s, seed)          # F79 H15: facts stated one time
+                if d4 and self.cfg.get("free_form"):
+                    s = design4.free_form(s, seed)             # F79 H16: natural sentences, some in assistant text
                 self.scripts[key] = s
                 os.makedirs(os.path.join(self.dir, "scripts"), exist_ok=True)
                 write_json(os.path.join(self.dir, "scripts", "%d-%s.json" % (seed, tag)), s)
@@ -319,7 +331,7 @@ class Ctx:
 
 
 # ------------------------------------------------------------------ one claude call
-def lh_settings(hooks_dir, auto_recall=False, reanchor=False):
+def lh_settings(hooks_dir, auto_recall=False, reanchor=False, history_guard=False, action_guard=False):
     """Project settings of arm B: the hooks of the default install (install.sh, no --canary).
     Arm R (auto_recall=True) adds the UserPromptSubmit hook that `install.sh --auto-recall` registers (contract F67.a)."""
     pi = "python3 %s/postcompact-inject.py" % hooks_dir
@@ -336,6 +348,10 @@ def lh_settings(hooks_dir, auto_recall=False, reanchor=False):
     }
     if reanchor:        # F70: PostToolUse, matcher *, timeout 5
         hooks["PostToolUse"].append({"matcher": "*", "hooks": [{"type": "command", "command": "python3 %s/reanchor.py" % hooks_dir, "timeout": 5}]})
+    if history_guard:       # F77: Stop, timeout 5 (block mode is set by the env HANDOFF_HISTORY_GUARD)
+        hooks["Stop"] = [{"hooks": [{"type": "command", "command": "python3 %s/history-guard.py" % hooks_dir, "timeout": 5}]}]
+    if action_guard:        # F80: PostToolUse on the tools that write (inject mode is set by the env HANDOFF_ACTION_GUARD)
+        hooks["PostToolUse"].append({"matcher": "Edit|Write|MultiEdit|NotebookEdit|Bash", "hooks": [{"type": "command", "command": "python3 %s/action-guard.py" % hooks_dir, "timeout": 5}]})
     if auto_recall:
         hooks["UserPromptSubmit"] = [{"hooks": [{"type": "command", "command": "python3 %s/auto-recall.py" % hooks_dir, "timeout": 5}]}]
     return {"hooks": hooks}
@@ -372,6 +388,9 @@ class Session:
         if arm in LH_ARMS:
             ov["HANDOFF_STATE_DIR"] = self.statedir
             ov["HANDOFF_SUMMARY_MODEL"] = cfg["model"]
+            if arm == "G":
+                ov["HANDOFF_HISTORY_GUARD"] = "block"      # F77 (Stop) in block mode
+                ov["HANDOFF_ACTION_GUARD"] = "inject"      # F80 (tool calls) in inject mode
             ov["HANDOFF_HOOKS_HOME"] = os.path.join(self.statedir, "hooks")      # F72: the hooks read only this private copy, never ~/.claude/hooks
         self.overrides = ov
 
@@ -385,8 +404,10 @@ class Session:
         if not os.path.isdir(dst):
             os.makedirs(self.statedir, exist_ok=True)
             shutil.copytree(src, dst, ignore=shutil.ignore_patterns("__pycache__"))
-            if self.arm == "K":
+            if self.arm in RECALL_ARMS:
                 open(os.path.join(dst, ".recall-rules"), "w").close()
+            if self.arm == "P":
+                open(os.path.join(dst, ".recall-size-trigger"), "w").close()      # F78: the size trigger of auto-recall
         return dst
 
     def hook_hashes(self):
@@ -401,29 +422,39 @@ class Session:
                 out[os.path.relpath(p, d)] = sha256_file(p)
         return out
 
+    def lh_cfg(self):
+        return lh_settings(self.hooks_dir(), auto_recall=self.arm in AUTO_ARMS, reanchor=self.arm in RECALL_ARMS, history_guard=(self.arm == "G"), action_guard=(self.arm == "G"))
+
     def settings_json(self):
         """--settings text: the env overrides. A view (arm B, R or K forking the session of arm A) also gets the hooks of its arm."""
         s = {"env": self.overrides}
         if self.view_of is not None and self.arm in LH_ARMS:
-            s["hooks"] = lh_settings(self.hooks_dir(), auto_recall=(self.arm in ("R", "K")), reanchor=(self.arm == "K"))["hooks"]
+            s["hooks"] = self.lh_cfg()["hooks"]
         return json.dumps(s)
 
     def mcp_config(self):
         """--mcp-config text. Arm K gets the recall MCP server (F69), from its own hooks copy. Every other arm gets none."""
-        if self.arm != "K":
+        if self.arm not in RECALL_ARMS:
             return '{"mcpServers":{}}'
         return json.dumps({"mcpServers": {"lossless-recall": {"command": "python3", "args": [os.path.join(self.hooks_dir(), "recall-mcp.py")],
                                                                "env": {"HANDOFF_STATE_DIR": self.statedir, "RECALL_EMBED_URL": "http://127.0.0.1:9"}}}})
 
-    def allowed_tools(self):
-        return ALLOWED_TOOLS + (" " + MCP_TOOLS + " " + TOOL_SEARCH if self.arm == "K" else "")
+    # Claude Code permission docs (https://code.claude.com/docs/en/permissions, "How path patterns match"): "//path  Absolute path from filesystem
+    # root  Read(//Users/alice/secrets/**)"; "A pattern like /Users/alice/file isn't an absolute path. Use //Users/alice/file for absolute paths."
+    # Edit rules apply to every tool that edits files (Write too); a Write(path) rule does not match. So the rule is Edit(//<abs dir>/**), where
+    # action_dir is the absolute folder of the probe without its leading slash. The snapshot tamper check is the second layer.
+    def allowed_tools(self, action_dir=None):
+        """action_dir (F79): the fork may write files with Write and Edit, and the rule names the folder of the probe. No Bash(python3:*) then, so no shell can
+        write elsewhere. acceptEdits already allows edits below the project folder: probe-out of the probe is the place, and probe() checks that nothing else changed."""
+        base = ALLOWED_TOOLS if not action_dir else ALLOWED_TOOLS.replace(" Bash(python3:*)", "") + " Edit(//%s/**)" % action_dir
+        return base + (" " + MCP_TOOLS + " " + TOOL_SEARCH if self.arm in RECALL_ARMS else "")
 
     # -- folders
     def prepare(self):
         if not os.path.isdir(self.proj):
             os.makedirs(os.path.join(self.proj, ".claude"))
             os.makedirs(self.statedir, exist_ok=True)
-            settings = lh_settings(self.hooks_dir(), auto_recall=(self.arm in ("R", "K")), reanchor=(self.arm == "K")) if self.arm in LH_ARMS else {}
+            settings = self.lh_cfg() if self.arm in LH_ARMS else {}
             settings["permissions"] = {"deny": deny_rules(work_base(self.ctx.cfg["work_base"]))}
             settings["autoMemoryEnabled"] = False
             write_json(os.path.join(self.proj, ".claude", "settings.json"), settings)
@@ -489,7 +520,7 @@ class Session:
                 text = "".join(b.get("text", "") for b in c if isinstance(b, dict) and b.get("type") == "text") or text
         return seen, text
 
-    def call(self, prompt, kind, sid=None, fork_of=None, first=False, model=None, cap=None):
+    def call(self, prompt, kind, sid=None, fork_of=None, first=False, model=None, cap=None, action_dir=None):
         """One `claude -p` call. kind: turn | fork | z. Returns the parsed JSON object.
         A retry (attempt 2) is idempotent: if the transcript already holds the prompt, it is not sent again; the recorded answer comes back."""
         ctx, cfg = self.ctx, self.ctx.cfg
@@ -515,7 +546,7 @@ class Session:
                     "--settings", self.settings_json(),
                     "--strict-mcp-config", "--mcp-config", self.mcp_config(), "--disable-slash-commands",
                     "--output-format", "json", "--permission-mode", "acceptEdits",
-                    "--allowedTools", self.allowed_tools(), "--max-budget-usd", "%.2f" % (cap or (K_FORK_CAP_USD if (self.arm == "K" and fork_of) else cfg["call_cap_usd"]))] + ([] if big else [prompt])
+                    "--allowedTools", self.allowed_tools(action_dir), "--max-budget-usd", "%.2f" % (cap or (K_FORK_CAP_USD if (self.arm in RECALL_ARMS and fork_of) else cfg["call_cap_usd"]))] + ([] if big else [prompt])
             t0 = time.time()
             p = subprocess.Popen(cmd, cwd=self.proj, env=self.env(probe=bool(fork_of) or kind == "z"), stdin=subprocess.PIPE if big else subprocess.DEVNULL, stdout=subprocess.PIPE,
                                  stderr=subprocess.PIPE, text=True, start_new_session=True)
@@ -603,7 +634,7 @@ class Session:
         is set, and logs the session id of its hook input, which is the id of the fork. This arm sets HANDOFF_STATE_DIR to its own
         folder, so we read only that file. We never read or write the real ~/.local/state/claude-handoffs.
         Returns (fired, hits, timed_out); (None, None, None) for arms other than R."""
-        if self.arm not in ("R", "K") or not fsid:
+        if self.arm not in AUTO_ARMS or not fsid:
             return None, None, None
         return recall_log_fired(read_jsonl(os.path.join(self.statedir, AUTO_RECALL_LOG)), fsid)
 
@@ -618,7 +649,7 @@ class Session:
             st["done_forks"].append(fork_key(ckpt, ptype, phrasing))
             self.ctx.save()
             return
-        marker = "PROBE-%d-%s-%d-%s%s" % (self.seed, self.arm, ckpt, ptype, {"neutral": "n", "nonliteral": "l"}.get(phrasing, "")) + ("" if chunk is None else "c%d" % chunk[0])
+        marker = "PROBE-%d-%s-%d-%s%s" % (self.seed, self.arm, ckpt, ptype, {"neutral": "n", "nonliteral": "l", "action": "a"}.get(phrasing, "")) + ("" if chunk is None else "c%d" % chunk[0])
         if ptype == "F":
             items = script["fresh"][str(ckpt)]
         elif self.d4:
@@ -630,22 +661,37 @@ class Session:
             return      # nothing of this type is planted yet (M needs 3 epochs)
         if self.d3 and ptype != "F":
             items = gen.shuffle3(items, self.seed, ptype + ("" if chunk is None else "c%d" % chunk[0]), phrasing)     # question order is not position
-        if self.d4:
+        action_dir, action_before, action_text, tamper = None, None, None, []
+        if self.d4 and phrasing == design4.ACTION:
+            rel = os.path.join("probe-out", marker)
+            action_dir = os.path.realpath(os.path.join(self.proj, rel)).lstrip("/")
+            shutil.rmtree(os.path.join(self.proj, rel), ignore_errors=True)       # no old services.conf: a restart cannot grade an old file, a later fork cannot read it
+            os.makedirs(os.path.join(self.proj, rel), exist_ok=True)
+            action_before = snapshot_dir(self.proj)
+            prompt = design4.action_prompt(ptype, script, marker, items, rel)
+        elif self.d4:
             prompt = design4.probe_prompt(ptype, script, marker, phrasing, items=items)
         else:
             prompt = gen.probe_prompt(ptype, script, marker, ckpt, items=items, phrasing=phrasing, cue=cfg.get("probe_design", 1) >= 2)
         if fork_of:
-            o = self.call(prompt, "fork", fork_of=fork_of)
+            o = self.call(prompt, "fork", fork_of=fork_of, action_dir=action_dir)
         else:
-            o = self.call(prompt, "z", sid=z_sid, first=True)
+            o = self.call(prompt, "z", sid=z_sid, first=True, action_dir=action_dir)
         raw = o.get("result") if isinstance(o.get("result"), str) else ""
         fsid = o.get("session_id")
+        if action_dir:
+            try:
+                with open(os.path.join(self.proj, "probe-out", marker, "services.conf"), encoding="utf-8") as f_:
+                    action_text = f_.read()
+            except OSError:
+                action_text = None
+            tamper = diff_snapshot(action_before, snapshot_dir(self.proj))
         if self.d4 and o.get("_refused"):
             graded = design4.refused_rows(items)          # a safety filter refused the fork: an outcome, left out of the accuracy (class refused)
         elif self.d4 and o.get("_runaway"):
             graded = design4.runaway_rows(items)          # the fork hit the output cap: a probe outcome, every item is wrong (class runaway)
         else:
-            graded = design4.grade_level(items, raw, script) if self.d4 else grade.grade(ptype, items, raw)
+            graded = (design4.grade_action(items, action_text, script) if action_dir else design4.grade_level(items, raw, script)) if self.d4 else grade.grade(ptype, items, raw)
         epochs = {x["id"]: x.get("epoch") for x in items}
         frecs = read_jsonl(self.transcript(fsid)) if fsid else []
         used = grade.lookup_used(frecs, marker) if fsid else False
@@ -667,7 +713,7 @@ class Session:
                 elif os.path.isdir(pth) and not os.path.islink(pth):
                     shutil.rmtree(pth)
         fired, hits, timed_out = self.auto_recall_fired(fsid)
-        if self.arm in ("R", "K") and phrasing == "cued" and cfg.get("probe_design", 1) >= 2 and fsid and not fired:
+        if self.arm in AUTO_ARMS and phrasing == "cued" and cfg.get("probe_design", 1) >= 2 and fsid and not fired:
             raise Fatal("arm %s: a cued probe left no line in %s for session %s. The hook did not run, or it logs elsewhere. "
                         "Stop. Check hooks/auto-recall.py in --lh-path." % (self.arm, os.path.join(self.statedir, AUTO_RECALL_LOG), fsid))
         posmap = {x["id"]: (x.get("position") or (None if self.d4 else gen.position_of(script, ptype, x))) for x in items}
@@ -686,22 +732,44 @@ class Session:
                 "condition": self.cond, "phrasing": phrasing, "position": posmap.get(g["id"]), "attempt": st.get("restarts", 0), **view_fields,
                 "auto_recall_fired": fired, "auto_recall_hits": hits, "auto_recall_timed_out": timed_out,
                 **({k_: g[k_] for k_ in ("m1", "m2", "m3", "error_class", "lag", "alt_ok", "undo_last")} if self.d4 else {}),
-                **({"chunk": chunk[0], "runaway": bool(o.get("_runaway")), "refused": bool(o.get("_refused"))} if self.d4 else {})})
+                **({"chunk": chunk[0], "runaway": bool(o.get("_runaway")), "refused": bool(o.get("_refused")), "guard_fired": "guard" in kinds, "free_form": bool(cfg.get("free_form"))} if self.d4 else {}),
+                **({"action_file_found": action_text is not None, "tamper": tamper} if action_dir else {})})
         if self.view_of is not None:
             st.setdefault("first_fork_cost_usd", round(o["_delta"], 6))      # K: the cache-miss check of the preflight
         st["done_forks"].append(fork_key(ckpt, ptype, phrasing, None if chunk is None else chunk[0]))
         self.ctx.save()
 
 
+def snapshot_dir(proj):
+    """{relative path: (size, mtime_ns)} of the files of a project folder, without probe-out and .git (F79: an action fork may write only below probe-out)."""
+    out = {}
+    for root_, dirs, files in os.walk(proj):
+        dirs[:] = [d for d in dirs if d not in ("probe-out", ".git")]
+        for f in files:
+            p = os.path.join(root_, f)
+            try:
+                st_ = os.stat(p)
+                out[os.path.relpath(p, proj)] = (st_.st_size, st_.st_mtime_ns)
+            except OSError:
+                pass
+    return out
+
+
+def diff_snapshot(before, after):
+    """Paths that were added, removed or changed between two snapshots."""
+    before, after = before or {}, after or {}
+    return sorted(p for p in set(before) | set(after) if before.get(p) != after.get(p))
+
+
 def fork_key(ckpt, ptype, phrasing="cued", chunk=None):
     """Key of a finished probe fork in the state file. A cued key is the old key, so old state files still work. Design 4: a chunk key
     ends with :c<n>; the key without a chunk means that all chunks of the (type, phrasing) are done."""
-    return "%d:%s" % (ckpt, ptype) + (":" + phrasing if phrasing in ("neutral", "nonliteral") else "") + ("" if chunk is None else ":c%d" % chunk)
+    return "%d:%s" % (ckpt, ptype) + (":" + phrasing if phrasing in ("neutral", "nonliteral", "action") else "") + ("" if chunk is None else ":c%d" % chunk)
 
 
 def probe_plan(cfg, ptype, d3=False):
     """Phrasings to ask for a probe type. Neutral exists for R D X S E only. Old runs have cued only."""
-    ph = [p for p in cfg.get("phrasings", ["cued"]) if p == "cued" or ((ptype in gen.NEUTRAL_TYPES or ptype in design4.LEVELS) and (p == "neutral" or d3))]
+    ph = [p for p in cfg.get("phrasings", ["cued"]) if p == "cued" or ((ptype in gen.NEUTRAL_TYPES or ptype in design4.LEVELS or ptype == "CT") and (p == "neutral" or d3))]
     return ph or ["cued"]
 
 
@@ -858,7 +926,9 @@ def filler_prompt(script, k, lines):
 
 def nc_types(cfg):
     """Probe types of the design-3 or design-4 no-compaction condition: the five types of design 3, or the levels of design 4."""
-    return list(cfg.get("levels") or design4.D4_LEVELS) if cfg.get("probe_design", 1) >= 4 else list(gen.L3_TYPES)
+    if cfg.get("probe_design", 1) >= 4:
+        return list(cfg.get("levels") or design4.D4_LEVELS) + (["CT"] if cfg.get("controls") else [])
+    return list(gen.L3_TYPES)
 
 
 def run_nc3_session(ctx, ss):
@@ -1195,7 +1265,7 @@ def expected_forks(cfg, seeds=None):
     conds = cfg.get("conditions", ["compact"])
     exact, classes = [], []
     for arm in cfg["arms"]:
-        cs = list(conds if arm in ("A", "B", "R", "K") else ["compact"])
+        cs = list(conds if arm in FORK_CAPABLE else ["compact"])
         if d3 and arm in ("Z", "O") and "nocompact" in conds:
             cs.append("nocompact")
         for cond in cs:
@@ -1405,7 +1475,7 @@ def build_cfg(kind, a):
     bad += [x for x in arms if x not in ALL_ARMS]
     conds = (a.conditions or k.get("conditions", "compact")).split(",")
     phr = (a.phrasings or k.get("phrasings", "cued")).split(",")
-    bad += [x for x in conds if x not in ("compact", "nocompact")] + [x for x in phr if x not in gen.PHRASINGS]
+    bad += [x for x in conds if x not in ("compact", "nocompact")] + [x for x in phr if x not in gen.PHRASINGS + (design4.ACTION,)]
     if bad:
         raise SystemExit("unknown type, arm, condition or phrasing: %s" % bad)
     lh = os.path.realpath(a.lh_path or REPO)
@@ -1414,6 +1484,10 @@ def build_cfg(kind, a):
     for f_ in K_FILES:
         if "K" in arms and not os.path.isfile(os.path.join(lh, "hooks", f_)):
             raise SystemExit("arm K: no hooks/%s in %s. Arm K needs auto-recall.py, recall-mcp.py and reanchor.py. Use --lh-path with a checkout that has them." % (f_, lh))
+    for arm_, files_ in (("G", ("history-guard.py", "action-guard.py")), ("P", ("auto-recall.py",))):
+        for f_ in files_:
+            if arm_ in arms and not os.path.isfile(os.path.join(lh, "hooks", f_)):
+                raise SystemExit("arm %s: no hooks/%s in %s. Arm G needs F77 and F80 (history-guard.py, action-guard.py), arm P needs F78 (0.18.0). Use --lh-path with a checkout that has them." % (arm_, f_, lh))
     if "R" in arms and not os.path.isfile(os.path.join(lh, "hooks", "auto-recall.py")):
         raise SystemExit("arm R: no hooks/auto-recall.py in %s. Use --lh-path with a checkout that has install.sh --auto-recall." % lh)
     design = k.get("probe_design", 1)
@@ -1425,7 +1499,7 @@ def build_cfg(kind, a):
         if any(x not in design4.LEVELS for x in levels) or levels != sorted(set(levels)):
             raise SystemExit("--levels: a comma list of levels in order from %s, for example L1,L2,L3,L4,L5" % ",".join(design4.LEVELS))
     nc_window = a.nc_window or k.get("nc_window") or (NC3_WINDOW if design >= 3 else NC_SESSION_WINDOW)
-    if "nocompact" in conds and any(x in arms for x in ("A", "B", "R", "K")):
+    if "nocompact" in conds and any(x in arms for x in FORK_CAPABLE):
         nc_lines, nc_est = nc3_plan(nc_window, design, levels) if design >= 3 else nc_plan(nc_window, o_planted_tokens(seeds))
     else:
         nc_lines, nc_est = None, None
@@ -1469,7 +1543,7 @@ def work_units(cfg):
     out = []
     for s in cfg["seeds"]:
         for arm in cfg["arms"]:
-            if arm in ("A", "B", "R", "K"):
+            if arm in FORK_CAPABLE:
                 # design 3, no compaction: arms B, R and K fork the session of arm A (run_fork_view), so they have no unit of their own
                 out += [(s, arm, c) for c in conds if not (d3 and c == "nocompact" and arm != "A")]
             else:

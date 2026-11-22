@@ -68,6 +68,8 @@ CAL_NC_MAIN, CAL_NC_FORK, K_FORK_VS_A = 0.143, 0.467, 3.92
 CAL_PF_COMPACT, CAL_PF_Z_COMPACT, CAL_PF_Z_NC, CAL_PF_O_NC = 0.31, 0.15, 0.26, 0.20
 BIG_PRICE_RATIO = 1.06       # real cost / standard price of the big Sonnet turn (assumed list prices above)
 ARM_FACTOR["K"] = K_FORK_VS_A     # measured: replaces the assumed 1.2 (affects the forks of arm K in the no-compaction condition only)
+# F79 arms G (K + F77 + F80) and P (K + F78): a fork that fires costs about 2 x a plain K fork (contract 0.18); assumed share of fired forks 60% for G and 30% for P.
+ARM_FACTOR["G"], ARM_FACTOR["P"] = K_FORK_VS_A * 1.6, K_FORK_VS_A * 1.3
 # Design 3 compaction condition: the design-2 compaction unit, with the K factor above.
 
 
@@ -105,6 +107,7 @@ D4_MAIN = SMOKE_REAL["main_nc_75_turns"] * D4_TURNS / 75.0            # about $4
 D4_A_FORK_UNIT = SMOKE_REAL["forks_15"]["A"] / 15.0                    # real: $0.0447 for one fork (the smoke: 15 forks cost $0.671)
 D4_A_FORKS = D4_A_FORK_UNIT * D4_FORKS                                 # about $1.61 for 36 forks (was $0.70 for 12)
 D4_FORK_FACTOR = {a: v / SMOKE_REAL["forks_15"]["A"] for a, v in SMOKE_REAL["forks_15"].items()}    # real: B 1.00, R 1.02, K 2.09
+D4_FORK_FACTOR["G"], D4_FORK_FACTOR["P"] = D4_FORK_FACTOR["K"] * 1.6, D4_FORK_FACTOR["K"] * 1.3       # assumed (F79), not measured
 # Arm O at about $0.9 (audit of PR #35: its short session holds the 69 plant turns, 3 phrasings of 4 levels of forks); the per-session cost gate
 # (gates.session_reasons: above 2 x the estimate and above the estimate plus $0.25) then allows up to $1.80, so a $0.9 session does not trip it.
 D4_CONTROL_USD = {"Z": 0.75, "O": 1.40}      # Z and O forks are small (short context), 3 times as many: Z 0.25 x 3; O 0.9 plus 24 forks at about $0.02
@@ -116,6 +119,11 @@ def d4_scale(levels=None):
     if levels and "L5" in levels:
         return SMOKE_REAL["main_nc_75_turns"] * D4_TURNS_L5 / 75.0, D4_FORKS_L5 / float(D4_FORKS)
     return D4_MAIN, 1.0
+
+
+def ACTION_SCALE(phrasings):
+    """Design 4 estimates are for the 3 phrasings (36 forks for each arm); the action probes add a fourth phrasing: 4/3 of the forks."""
+    return 4.0 / 3.0 if "action" in (phrasings or ()) else 1.0
 
 
 def d4_nc_main():
@@ -137,13 +145,13 @@ def estimate3(seeds, arms, n, conditions, phrasings=("cued", "neutral", "nonlite
             f = ARM_FACTOR[a]
             if "compact" in conditions and (a, "compact") not in skip:
                 nn = (n_by_arm or {}).get(a, n)
-                u = (BASE + PER_COMPACTION * max(nn)) * mult * (1.2 if a == "K" else 1.0)      # compaction units: Wave numbers, not calibrated
+                u = (BASE + PER_COMPACTION * max(nn)) * mult * (1.2 if a in ("K", "G", "P") else 1.0)      # compaction units: Wave numbers, not calibrated
                 per_seed += u
                 lines.append("arm %s, with compactions (N up to %d): $%.2f per seed" % (a, max(nn), u))
             if "nocompact" in conditions and (a, "nocompact") not in skip:
                 if design >= 4:
                     main4, fk4 = d4_scale(levels)
-                    u = d4_nc_forks(a) * fk4 + (main4 if a == "A" else 0.0)
+                    u = d4_nc_forks(a) * fk4 * ACTION_SCALE(phrasings) + (main4 if a == "A" else 0.0)      # 4 phrasings (action) = 4/3 of the forks
                 else:
                     u = d3_nc_forks() * f + (d3_nc_main() if a == "A" else 0.0)
                 per_seed += u
@@ -154,7 +162,7 @@ def estimate3(seeds, arms, n, conditions, phrasings=("cued", "neutral", "nonlite
                 per_seed += Z_UNIT * mult
                 lines.append("arm Z (no history, one run): $%.2f per seed" % (Z_UNIT * mult))
             if "nocompact" in conditions:
-                zc = (D4_CONTROL_USD if design >= 4 else D3_CONTROL_USD)["Z"]
+                zc = (D4_CONTROL_USD if design >= 4 else D3_CONTROL_USD)["Z"] * (ACTION_SCALE(phrasings) if design >= 4 else 1.0)
                 per_seed += zc
                 lines.append("arm Z, design %d amnesia forks: $%.2f per seed" % (design, zc))
         elif a == "O":
@@ -162,7 +170,7 @@ def estimate3(seeds, arms, n, conditions, phrasings=("cued", "neutral", "nonlite
                 per_seed += O_UNIT * mult
                 lines.append("arm O (oracle, short session, one run): $%.2f per seed" % (O_UNIT * mult))
             if "nocompact" in conditions:
-                oc = (D4_CONTROL_USD if design >= 4 else D3_CONTROL_USD)["O"]
+                oc = (D4_CONTROL_USD if design >= 4 else D3_CONTROL_USD)["O"] * (ACTION_SCALE(phrasings) if design >= 4 else 1.0)
                 per_seed += oc
                 lines.append("arm O, design %d short oracle: $%.2f per seed" % (design, oc))
     return per_seed * seeds, lines, per_seed
@@ -239,7 +247,7 @@ def render(name, cfg):
 HAIKU_CACHE_READ, HAIKU_CACHE_WRITE, HAIKU_OUTPUT = 0.10, 1.25, 5.0
 PF_COMPACT_UNIT = 0.073 * 1.4 * CAL_PF_COMPACT      # calibrated with the first preflight run
 PF_Z_COMPACT = 0.03 * CAL_PF_Z_COMPACT
-PF_ARM_FACTOR = {"A": 1.0, "B": 1.0, "R": 1.05, "K": 1.2, "O": 1.0}
+PF_ARM_FACTOR = {"A": 1.0, "B": 1.0, "R": 1.05, "K": 1.2, "O": 1.0, "G": 1.9, "P": 1.5}      # G and P: assumed (F79), a fork that fires costs about 2 x a K fork
 PF_NC_TURNS, PF_NC_CTX0, PF_NC_CTX1, PF_FORKS, PF_SLACK = 75, 8000, 90000, 15, 1.2    # design-3 mini session: 75 turns, context 8k to 90k, 15 forks per arm
 PF_O3, PF_Z3, PF_SELFCHECK, PF_MCP = 0.12 * CAL_PF_O_NC, 0.08 * CAL_PF_Z_NC, 0.15, 0.02
 PF_BIG_TOKENS = 300000
@@ -257,7 +265,7 @@ PF4_FORKS = 36               # probe forks of one arm in a design-4 no-compactio
 
 def pf4_nc_unit_parts(arms=("A", "B", "R", "K", "Z", "O")):
     """(turns USD of the main session of arm A, USD of the forks of arm A, scale of the forks of the arms that fork it) for design 4."""
-    scale = sum(PF_ARM_FACTOR[x] for x in ("A", "B", "R", "K") if x in arms)
+    scale = sum(PF_ARM_FACTOR[x] for x in ("A", "B", "R", "K", "G", "P") if x in arms)
     return PF4_A_TURNS * PF4_SLACK, PF4_A_FORK_ALL * PF4_SLACK, scale
 
 
@@ -295,7 +303,7 @@ def preflight_unit(arm, cond, arms=("A", "B", "R", "K", "Z", "O"), design=3):
     if arm == "O":
         return PF_O3
     if arm == "A":
-        return pf_nc_main() + pf_nc_forks() * sum(PF_ARM_FACTOR[x] for x in ("A", "B", "R", "K") if x in arms) + (PF_MCP if "K" in arms else 0)
+        return pf_nc_main() + pf_nc_forks() * sum(PF_ARM_FACTOR[x] for x in ("A", "B", "R", "K", "G", "P") if x in arms) + (PF_MCP if "K" in arms else 0)
     return 0.0
 
 
@@ -304,7 +312,7 @@ def estimate_preflight(arms=("A", "B", "R", "K", "Z", "O"), conditions=("compact
     lines, total = [], 0.0
     for a in arms:
         for c in conditions:
-            if c == "nocompact" and a in ("B", "R", "K"):
+            if c == "nocompact" and a in ("B", "R", "K", "G", "P"):
                 continue            # forks inside the unit of arm A
             u = preflight_unit(a, c, arms, design)
             total += u
@@ -340,12 +348,13 @@ def unit_estimate(cfg, arm, cond):
     if cfg.get("probe_design", 1) >= 3:
         dz = cfg["probe_design"]
         if arm == "A" and cond == "nocompact":        # the unit holds the forks of arms B, R and K
-            return estimate3(1, [x for x in arms if x in ("A", "B", "R", "K")], cfg["n"], ["nocompact"], cfg.get("phrasings", ["cued"]), design=dz, levels=cfg.get("levels"))[2]
+            return estimate3(1, [x for x in arms if x in ("A", "B", "R", "K", "G", "P")], cfg["n"], ["nocompact"], cfg.get("phrasings", ["cued"]), design=dz, levels=cfg.get("levels"))[2]
         return estimate3(1, [arm], cfg["n"], [cond], cfg.get("phrasings", ["cued"]), n_by_arm=cfg.get("n_by_arm"), design=dz, levels=cfg.get("levels"))[2]
     return estimate(1, [arm], cfg["n"], [cond], cfg.get("phrasings", ["cued"]))[2]
 
 
-CALIBRATE4 = {"seeds": 2, "arms": ["A", "O", "Z"], "n": [1], "conditions": ["nocompact"], "phrasings": ["cued", "neutral", "nonliteral"], "design": 4}
+CALIBRATE4 = {"seeds": 2, "arms": ["A", "O", "Z"], "n": [1], "conditions": ["nocompact"], "phrasings": ["cued", "neutral", "nonliteral", "action"], "design": 4}      # F79: action probes for A, O and Z
+ORACLE_CHECK4 = {"seeds": 1, "arms": ["O"], "n": [1], "conditions": ["nocompact"], "phrasings": ["cued", "neutral", "nonliteral", "action"], "design": 4}      # litm4-oracle-check
 CALIBRATE4_L5 = dict(CALIBRATE4, seeds=1, levels=["L1", "L2", "L3", "L4", "L5"])
 SMOKE4 = dict(SMOKE3, design=4)
 PILOT4 = dict(PILOT3, design=4)
@@ -393,7 +402,8 @@ def main(argv=None):
         print("\nPROBE DESIGN 4 (litm4-calibrate, litm4-smoke, litm4-pilot, litm4-full-v3): no-compaction condition with update chains; compaction condition as in design 3")
         print("  real figures of the Sonnet smoke: main $%.2f for 75 turns, 15 A forks $%.2f; design 4: main $%.2f (105 turns), A forks $%.2f (%d forks), K forks x%.2f" % (
             SMOKE_REAL["main_nc_75_turns"], SMOKE_REAL["forks_15"]["A"], D4_MAIN, D4_A_FORKS, D4_FORKS, D4_FORK_FACTOR["K"]))
-        for name, cfg in (("CALIBRATION (litm4-calibrate: arms A,O,Z; the second seed only if a cell of A is at 45-90%)", CALIBRATE4), ("L5 ESCALATION (litm4-calibrate-l5, only if decide says add_l5: one seed, 165 turns, replaces all cells)", CALIBRATE4_L5),
+        for name, cfg in (("ORACLE CHECK (litm4-oracle-check: arm O only, 1 seed, all levels, 4 phrasings; run it before the calibration)", ORACLE_CHECK4),
+                          ("CALIBRATION (litm4-calibrate: arms A,O,Z; the second seed only if a cell of A is at 45-90%)", CALIBRATE4), ("L5 ESCALATION (litm4-calibrate-l5, only if decide says add_l5: one seed, 165 turns, replaces all cells)", CALIBRATE4_L5),
                           ("SMOKE (litm4-smoke)", SMOKE4), ("PILOT (litm4-pilot, dev seeds 3 and 4)", PILOT4), ("FULL V3 (litm4-full-v3)", FULL4_V3)):
             print(render3(name, cfg)[1])
         print("  calibration if the main session costs $8 (twice the figure): about $%.0f for 2 seeds (plus or minus 40%%)" % (2 * (8.0 + D4_A_FORKS + D4_CONTROL_USD["O"] + D4_CONTROL_USD["Z"])))

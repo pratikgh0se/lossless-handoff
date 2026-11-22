@@ -68,11 +68,11 @@ class Writer:
         self.records.append(r)
         self.parent = uid
 
-    def assistant(self, text, uid):
+    def assistant(self, text, uid, ctx_tokens=0):
         r = {"parentUuid": self.parent, "isSidechain": False,
              "message": {"model": "claude-haiku-5-5", "id": "msg_" + uid[:22], "type": "message", "role": "assistant", "content": [{"type": "text", "text": text}],
                          "container": None, "stop_reason": "end_turn", "stop_sequence": None, "stop_details": None,
-                         "usage": {"input_tokens": 2, "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0, "output_tokens": 6},
+                         "usage": {"input_tokens": 2, "cache_creation_input_tokens": 0, "cache_read_input_tokens": ctx_tokens, "output_tokens": 6},
                          "input_transformations": [], "diagnostics": None, "context_management": None},
              "apiBlockIndex": 0, "requestId": "req_" + uid[:22], "requestRef": str(uuid.uuid5(uuid.NAMESPACE_DNS, "r" + uid)), "requestedModel": "claude-haiku-5-5",
              "promptCacheRequested": "1h", "type": "assistant", "uuid": uid, "timestamp": self.tick(), "advisorModel": "claude-opus-5-5", "effort": "medium",
@@ -105,12 +105,12 @@ def build_session(script, home, seed):
             except Exception:
                 text = "Filler document %d. Keep it for later; no action is needed." % i
         w.user(text, str(uuid.uuid5(uuid.NAMESPACE_DNS, "u-%d-%d" % (seed, i))))
-        w.assistant("Noted.", str(uuid.uuid5(uuid.NAMESPACE_DNS, "a-%d-%d" % (seed, i))))
+        w.assistant(" ".join(turn.get("assistant_text") or []) or "Noted.", str(uuid.uuid5(uuid.NAMESPACE_DNS, "a-%d-%d" % (seed, i))))      # free-form: the echoed sentences
     write_jsonl(os.path.join(pdir, sid + ".jsonl"), w.records)
     return proj, pdir, w
 
 
-def write_fork(pdir, main, probe_text, tag):
+def write_fork(pdir, main, probe_text, tag, reply=None, ctx_tokens=150000):
     """A fork file: the parent history copied with the same uuids and message bodies (the session id is the fork's), then the probe as the current prompt."""
     fsid = str(uuid.uuid5(uuid.NAMESPACE_DNS, "fork-" + tag))
     recs = []
@@ -121,6 +121,8 @@ def write_fork(pdir, main, probe_text, tag):
     w = Writer(fsid, main.cwd, main.t)
     w.records, w.parent, w.n = recs, main.parent, main.n
     w.user(probe_text, str(uuid.uuid5(uuid.NAMESPACE_DNS, "probe-" + tag)))
+    if reply is not None:       # a reply to the probe: the last assistant message of a Stop (F77), with a context count above the guard threshold
+        w.assistant(reply, str(uuid.uuid5(uuid.NAMESPACE_DNS, "reply-" + tag)), ctx_tokens)
     path = os.path.join(pdir, fsid + ".jsonl")
     write_jsonl(path, w.records)
     return fsid, path
@@ -265,6 +267,165 @@ def run_auto_recall(hooks, env, proj, prompt, fsid, fpath):
     return out
 
 
+# ---- F77 trigger gate: the history guard (Stop hook) on synthetic transcripts with oracle replies
+REPLY_KINDS = ("correct", "stale", "lure", "sibling")
+
+
+def oracle_replies(it, items_of_level, script):
+    """{kind: value} of the oracle replies for one chain: its current value, a stale value, a lure value, and the current value of a sibling chain of its family."""
+    out = {"correct": it["current"]}
+    stale = [v for v in it["values"] if v != it["current"]]
+    if stale:
+        out["stale"] = stale[0]
+    lure = [v for v in it["lures"] if v != it["current"]]
+    if lure:
+        out["lure"] = lure[0]
+    for o in items_of_level:
+        if o is not it and o["family"] == it["family"] and o["key"] != it["key"]:
+            out["sibling"] = o["current"]
+            break
+    return out
+
+
+def reply_text(it, value, with_key, bare=False):
+    if not bare:
+        value = design4.val_text(it["attr"], value)   # the written form of the value (a tag value is written with its TAG- prefix in the history)
+    return ("Done. I set the %s of `%s` to `%s`." % (it["attr"], it["key"], value)) if with_key else ("Done. I used `%s`." % value)
+
+
+def guard_subjects(text):
+    return re.findall(r"history of (\S+?):", text or "")
+
+
+def run_history_guard(hooks, env, proj, fpath, fsid, reply):
+    """Run history-guard.py as a Stop hook. Returns the added text ('' if nothing) or None when the hook does not exist."""
+    hook = os.path.join(hooks, "history-guard.py")
+    if not os.path.isfile(hook):
+        return None
+    e = dict(env, HANDOFF_HISTORY_GUARD="block", HANDOFF_HISTORY_GUARD_TOKENS="10000")
+    d = {"session_id": fsid, "transcript_path": fpath, "cwd": proj, "hook_event_name": "Stop", "stop_hook_active": False, "last_assistant_message": reply}
+    p = subprocess.run([sys.executable, hook], input=json.dumps(d), capture_output=True, text=True, timeout=60, env=e, cwd=proj)
+    out = p.stdout.strip()
+    try:
+        j = json.loads(out)
+        out = (j.get("hookSpecificOutput") or {}).get("additionalContext") or j.get("reason") or ""
+    except Exception:
+        pass
+    return out
+
+
+def trigger_gate(seeds, level, hooks):
+    """Gate: the guard shows the correct subject for at least 95% of the stale and lure replies at the level, and 0 sibling subjects.
+    Returns (report dict, line, ok). ok None when the hooks folder has no history-guard.py."""
+    tmp = tempfile.mkdtemp(prefix="lhgate-")
+    cells = {}
+    try:
+        state = os.path.join(tmp, "state")
+        os.makedirs(state)
+        for seed in seeds:
+            home = os.path.join(tmp, "home%d" % seed)
+            script = design4.build_litm4(seed)
+            proj, pdir, main = build_session(script, home, seed)
+            env = child_env(home, state, hooks, proj)
+            items = script["items"][level]
+            for it in items:
+                for kind, value in oracle_replies(it, items, script).items():
+                    for with_key, bare in ((True, False), (False, False), (True, True), (False, True)):
+                        reply = reply_text(it, value, with_key, bare)
+                        tag = "%d-%s-%s-%s-%d-%d" % (seed, level, it["id"], kind, with_key, bare)
+                        fsid, fpath = write_fork(pdir, main, "Write the %s setting for `%s`." % (it["attr"], it["key"]) if with_key else "Continue with the task.", tag, reply=reply)
+                        out = run_history_guard(hooks, env, proj, fpath, fsid, reply)
+                        os.remove(fpath)
+                        if out is None:
+                            return {"available": False}, "TRIGGER GATE at %s: NOT AVAILABLE (this hooks folder has no history-guard.py)" % level, None
+                        subj = guard_subjects(out)
+                        c = cells.setdefault((kind, with_key, bare), {"n": 0, "fired": 0, "correct_subject": 0, "sibling_subjects": 0})
+                        c["n"] += 1
+                        c["fired"] += 1 if subj else 0
+                        c["correct_subject"] += 1 if it["key"] in subj else 0
+                        sib = {o["key"] for o in items if o is not it and o["family"] == it["family"]}
+                        c["sibling_subjects"] += sum(1 for x in subj if x in sib) if kind != "sibling" else 0
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    rep = {"available": True, "cells": {"%s/%s/%s" % (k, "key" if wk else "nokey", "bare" if b else "written"): v for (k, wk, b), v in cells.items()}}
+    sl = [cells.get((k, wk, False)) for k in ("stale", "lure") for wk in (True, False) if cells.get((k, wk, False))]
+    bl = [cells.get((k, wk, True)) for k in ("stale", "lure") for wk in (True, False) if cells.get((k, wk, True))]
+    n = sum(c["n"] for c in sl)
+    cor = sum(c["correct_subject"] for c in sl)
+    sib = sum(c["sibling_subjects"] for (k, wk, b), c in cells.items() if not b)
+    bn, bcor = sum(c["n"] for c in bl), sum(c["correct_subject"] for c in bl)
+    bare_nk = cells.get(("stale", False, True)), cells.get(("lure", False, True))
+    bnn = sum(c["n"] for c in bare_nk if c)
+    bnc = sum(c["correct_subject"] for c in bare_nk if c)
+    rep["bare_info"] = {"n": bn, "correct_subject": bcor, "n_nokey": bnn, "correct_subject_nokey": bnc}
+    share = cor / float(n) if n else 0.0
+    ok = n > 0 and share >= COVERAGE_MIN and sib == 0
+    line = "TRIGGER GATE at %s (written form, e.g. TAG-...): correct subject for %.0f%% (%d/%d) of the stale and lure replies, need at least %d%%; sibling subjects %d, need 0; GATE %s" % (
+        level, 100 * share, cor, n, int(100 * COVERAGE_MIN), sib, "PASS" if ok else "FAIL")
+    line += "\nINFO bare value at %s: correct subject for %.0f%% (%d/%d) of the stale and lure replies, %.0f%% (%d/%d) without the key in the reply (known limit: a bare value inside a longer token)" % (
+        level, 100.0 * bcor / bn if bn else 0.0, bcor, bn, 100.0 * bnc / bnn if bnn else 0.0, bnc, bnn)
+    return rep, line, ok
+
+
+# ---- F77 replay on real transcripts: counts only
+def replay(hooks, project_dir, max_stops=300):
+    """Run the guard rule over the real transcripts of a project (read-only, never printed): stops with a context count of at least 100,000 tokens
+    and how many of them the guard fires on. Returns a dict of counts, or None when the hooks folder has no history-guard.py."""
+    hook = os.path.join(hooks, "history-guard.py")
+    if not os.path.isfile(hook):
+        return None
+    real = os.path.join(os.path.expanduser("~"), ".claude", "projects", slug(os.path.realpath(project_dir)))
+    stops = []
+    for f in sorted(glob_files(real)):
+        recs = []
+        for ln in open(f, encoding="utf-8", errors="replace"):
+            try:
+                recs.append(json.loads(ln))
+            except Exception:
+                recs.append({})
+        for i, r in enumerate(recs):
+            m = r.get("message") if isinstance(r, dict) else None
+            if isinstance(m, dict) and r.get("type") == "assistant" and m.get("stop_reason") == "end_turn" and isinstance(m.get("content"), list):
+                txt = " ".join(b.get("text", "") for b in m["content"] if isinstance(b, dict) and b.get("type") == "text").strip()
+                u = m.get("usage") or {}
+                ctx = (u.get("input_tokens") or 0) + (u.get("cache_read_input_tokens") or 0) + (u.get("cache_creation_input_tokens") or 0)
+                if txt:
+                    stops.append((f, i, txt, ctx))
+    above = [s for s in stops if s[3] >= 100000]
+    step = max(1, len(above) // max_stops)
+    sample = above[::step][:max_stops]
+    tmp = tempfile.mkdtemp(prefix="lhreplay-")
+    fired = 0
+    try:
+        home = os.path.join(tmp, "home")
+        env = child_env(home, os.path.join(tmp, "state"), hooks, project_dir)
+        os.makedirs(env["HANDOFF_STATE_DIR"])
+        pd = os.path.join(home, ".claude", "projects", slug(os.path.realpath(project_dir)))
+        os.makedirs(pd)
+        cache = {}
+        for f, i, txt, _ctx in sample:
+            if f not in cache:
+                cache[f] = [ln for ln in open(f, encoding="utf-8", errors="replace")]
+            tp = os.path.join(pd, os.path.basename(f))
+            with open(tp, "w", encoding="utf-8") as o:
+                o.writelines(cache[f][:i + 1])
+            d = {"session_id": os.path.basename(f)[:-6], "transcript_path": tp, "cwd": os.path.realpath(project_dir), "hook_event_name": "Stop", "stop_hook_active": False, "last_assistant_message": txt}
+            e = dict(env, HANDOFF_HISTORY_GUARD="block")
+            p = subprocess.run([sys.executable, hook], input=json.dumps(d), capture_output=True, text=True, timeout=60, env=e, cwd=project_dir)
+            fired += 1 if p.stdout.strip() else 0
+            os.remove(tp)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    return {"stops": len(stops), "above_100k": len(above), "sampled": len(sample), "fired": fired, "fire_rate": (fired / float(len(sample))) if sample else None}
+
+
+def glob_files(d):
+    try:
+        return [os.path.join(d, x) for x in os.listdir(d) if x.endswith(".jsonl")]
+    except OSError:
+        return []
+
+
 def new_tally():
     return {"n": 0, "full": 0, "any_order": 0, "current": 0, "leak_lines": 0, "leak_chains": 0}
 
@@ -378,6 +539,9 @@ def main(argv=None):
     ap.add_argument("--seeds", default=None, help="file with seeds (default seeds-pilot.txt)")
     ap.add_argument("--hooks-dir", default=REPO_HOOKS)
     ap.add_argument("--keep", action="store_true", help="keep the temporary HOME (its path is printed)")
+    ap.add_argument("--trigger", action="store_true", help="F77 trigger gate: the history guard on the synthetic transcripts with oracle replies (correct, stale, lure, sibling)")
+    ap.add_argument("--replay", action="store_true", help="F77 replay: the guard rule over the real transcripts of --project (counts only, nothing is printed from them)")
+    ap.add_argument("--project", default=os.path.dirname(os.path.dirname(HERE)), help="project folder of the replay (default: this repo)")
     a = ap.parse_args(argv)
     hooks = os.path.abspath(a.hooks_dir)
     if not os.path.isfile(os.path.join(hooks, "recall.py")):
@@ -387,6 +551,16 @@ def main(argv=None):
     levels = [level] if a.level else list(design4.D4_LEVELS)
     if level not in levels:
         levels.append(level)
+    if a.replay:
+        res = replay(hooks, a.project)
+        print("REAL-TRANSCRIPT REPLAY (counts only): " + ("not available (no history-guard.py in %s)" % hooks if res is None else
+              "%d stops, %d with a context count of at least 100,000 tokens, %d sampled, the guard fired on %d (%s); H15 needs at most 5%%" % (
+                  res["stops"], res["above_100k"], res["sampled"], res["fired"], "no sample" if res["fire_rate"] is None else "%.1f%%" % (100 * res["fire_rate"]))))
+        return 0
+    if a.trigger:
+        _rep, line, ok = trigger_gate(read_seeds(a.seeds), level, hooks)
+        print(line)
+        return 1 if ok is False else 0
     rep = run_gate(read_seeds(a.seeds), levels, hooks, a.keep)
     text, ok = render(rep, level)
     print(text)

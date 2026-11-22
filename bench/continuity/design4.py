@@ -42,6 +42,8 @@ PLANT_TURNS_PER_THIRD = 23
 FILL_TURNS_PER_THIRD = 12
 STMTS_PER_TURN = 4
 PHRASINGS = ("cued", "neutral", "nonliteral")
+ACTION = "action"      # F79: a task with no question: the fork writes a file with a tool, the grader reads the file
+ALL_PHRASINGS = PHRASINGS + (ACTION,)
 ERROR_CLASSES = ("stale", "lure", "sibling", "other_chain", "abstain", "runaway", "refused", "novel", "unreadable")
 MAX_ITEMS_PER_PROBE = 4      # a probe fork answers at most this many chains (12 items made a fork think for 8,000 tokens, 4 times, in preflight4 runs 1 and 2)
 FORM = '{"answers":[{"id":1,"current":"...","previous":"...","replaced":["..."]}]}'
@@ -534,6 +536,129 @@ def runaway_rows(items):
              "error_class": "runaway", "lag": None, "alt_ok": False, "undo_last": bool(it.get("undo_last"))} for it in items]
 
 
+def add_controls(script, seed, n=4):
+    """F79, H15. n control chains, each stated ONE time (no update, no reject): a change-free fact has no reason for a history check. Returned as
+    script["items"]["CT"] (level CT). The statement is put in a fact turn of the middle third. The other items and the plan text stay the same."""
+    import copy
+    s = copy.deepcopy(script)
+    r = random.Random("lhbench-controls-%d" % seed)
+    turns = [t for t in s["plan"] if t["kind"] == "fact" and t["third"] == 1]
+    picks = r.sample(turns, min(n, len(turns)))
+    third_len = len(s["plan"]) // 3
+    items = []
+    used = {it["key"] for lv in s["items"].values() for it in lv}
+    for i, t in enumerate(sorted(picks, key=lambda x: x["turn"]), 1):
+        key = "ctl-%s-%02d" % (r.choice(("alpha", "bravo", "delta", "gamma", "sigma")), r.randrange(100))
+        while key in used:
+            key = "ctl-%s-%02d" % (r.choice(("alpha", "bravo", "delta", "gamma", "sigma")), r.randrange(100))
+        used.add(key)
+        v = "%s-%04d-%s" % ("".join(r.choice("ABCDEFGHJKLMNPQRSTUVWXYZ23456789") for _ in range(4)), r.randrange(10000), "".join(r.choice("ABCDEFGHJKLMNPQRSTUVWXYZ23456789") for _ in range(4)))
+        stmt = stmt_text("set", key, "queue", v)
+        assert " Reply only `ok`." in t["prompt"]
+        t["prompt"] = t["prompt"].replace(" Reply only `ok`.", " %s Reply only `ok`." % stmt, 1)
+        t["keys"] = list(t.get("keys", [])) + [key]
+        items.append({"id": i, "level": "CT", "key": key, "desc": "the control service number %d of this project" % i, "attr": "queue", "family": "CT-f%d" % i,
+                      "third": 1, "position": "middle", "ops": [{"op": "set", "value": v}], "stmts": [stmt], "current": v, "previous": None, "previous_alt": None,
+                      "lags": {}, "replaced": [], "values": [v], "lures": [], "undo_last": False, "lure_late": False, "early": False, "turn": t["turn"],
+                      "update_turn": t["turn"], "place": round((t["turn"] - third_len) / float(third_len), 4)})
+    s["items"]["CT"] = items
+    s["controls"] = True
+    s["secrets"] = sorted(set(s["secrets"]) | {it["current"] for it in items})
+    return s
+
+
+FREE_TEXT = {
+    "set": "The %(key)s %(noun)s is %(v)s now.",
+    "change": "We moved the %(key)s %(noun)s over to %(v)s.",
+    "reject": "Someone proposed %(v)s for the %(key)s %(noun)s, but we turned that down and keep the active one.",
+    "undo": "We took back the last change of the %(key)s %(noun)s, so the value before it is active again.",
+    "scoped": "Only the dry-run copy of %(key)s uses %(v)s as its %(noun)s; the main %(key)s %(noun)s stays as it is.",
+}
+
+
+def free_stmt(op, key, attr, v=None):
+    return FREE_TEXT[op] % {"key": key, "noun": "repository tag" if attr == "tag" else "queue", "v": val_text(attr, v) if v is not None else ""}
+
+
+def free_form(script, seed, assistant_share=0.30):
+    """F79, H16. The statements of the plan in natural sentences, with no backticks, and a share of them (30%) in assistant text: such a turn
+    asks the model to reply with exactly the sentence, and plan[turn]["assistant_text"] lists the sentences. Grading is not changed (values only)."""
+    import copy
+    s = copy.deepcopy(script)
+    r = random.Random("lhbench-freeform-%d" % seed)
+    all_items = [it for lv in s["items"].values() for it in lv]
+    pairs = [(it, i) for it in all_items for i in range(len(it["stmts"]))]
+    pick = set(r.sample(range(len(pairs)), int(round(assistant_share * len(pairs)))))
+    by_turn = {}
+    for n_, (it, i) in enumerate(pairs):
+        old = it["stmts"][i]
+        o = it["ops"][i]
+        new = free_stmt(o["op"], it["key"], it["attr"], o.get("value"))
+        it["stmts"][i] = new
+        for t in s["plan"]:
+            if t["kind"] == "fact" and old in t["prompt"]:
+                if n_ in pick:
+                    t["prompt"] = t["prompt"].replace(" " + old, "", 1) if (" " + old) in t["prompt"] else t["prompt"].replace(old, "", 1)
+                    by_turn.setdefault(t["turn"], []).append(new)
+                else:
+                    t["prompt"] = t["prompt"].replace(old, new, 1)
+                break
+    for t in s["plan"]:
+        if t["turn"] in by_turn:
+            t["assistant_text"] = by_turn[t["turn"]]
+            t["prompt"] = t["prompt"].replace("Reply only `ok`.", "Reply with exactly this text and nothing else: %s" % " ".join(by_turn[t["turn"]]), 1)
+    s["free_form"] = True
+    return s
+
+
+def action_prompt(level, script, marker, items, out_rel):
+    """F79. The task text of an action probe: no question, no cue and no hint about history. The services are named by key (odd numbers)
+    or by their description (even numbers). The file has one line `<number> <setting>=<value>` for each service: the value in force now."""
+    lines = []
+    for i, it in enumerate(items, 1):
+        who = "`%s`" % it["key"] if i % 2 == 1 else it["desc"]
+        lines.append("%d. %s, setting `%s`" % (i, who, it["attr"]))
+    return ("[%s] Create the file `%s/services.conf` with the Write tool. It has one line for each service below, in this order, in this form: "
+            "`<number> <setting>=<value>`. The value is the one in force now for that setting of that service. Write the value only, with no quotes. "
+            "Services:\n%s\nWhen the file is written, reply with the word done." % (marker, out_rel, "\n".join(lines)))
+
+
+# The line forms accepted: `1 queue=V`, `1. queue=V`, `1) queue=V`, `1: queue=V`, `1 <key> queue=V`, `1. <key> queue=V`. The group 1 is the number, 3 the value.
+ACTION_LINE = re.compile(r"^\s*(\d+)[.):]?\s+(?:\S+\s+)?([A-Za-z0-9_.-]+)\s*=\s*(.*?)\s*$")
+
+
+def grade_action(items, text, script):
+    """F79. Grade the file of an action probe (text of the file, or None when it was not written), not the reply. M1 only: the value of the line
+    of each service is the current value. m2 and m3 are None (not asked). A missing file or a missing line is unreadable; an empty, null or
+    unknown value is an abstain."""
+    lines = {}
+    for ln in (text or "").splitlines():
+        m = ACTION_LINE.match(ln)
+        if m and m.group(1) not in lines:
+            lines[m.group(1)] = m.group(3)
+    out = []
+    for i, it in enumerate(items, 1):
+        base = {"id": it["id"], "parse_ok": False, "parsed": None, "abstained": False, "m1": False, "m2": None, "m3": None,
+                "correct": False, "error_class": "unreadable", "lag": None, "alt_ok": False, "undo_last": bool(it.get("undo_last"))}
+        v = lines.get(str(i))
+        if v is None:
+            out.append(base)
+            continue
+        base["parsed"] = {"current": v}
+        if v.strip().strip("`'\"").lower() in ("", "null", "none", "unknown", "n/a"):
+            base.update(parse_ok=True, abstained=True, error_class="abstain")
+            out.append(base)
+            continue
+        base["parse_ok"] = True
+        cur = strip_tag(grade.norm(v))
+        if cur == it["current"]:
+            base.update(m1=True, correct=True, error_class=None)
+        else:
+            base["error_class"], base["lag"] = classify(it, cur, script)
+        out.append(base)
+    return out
+
+
 def strip_tag(a):
     return a[4:] if isinstance(a, str) and a.startswith("TAG-") else a
 
@@ -861,8 +986,49 @@ def describe_decision(d):
     return "\n".join(lines)
 
 
+ORACLE_CHECK_M1_MIN, ORACLE_CHECK_RUNAWAY_MAX, ORACLE_CHECK_REFUSED_MAX = 0.95, 0.05, 0.05
+
+
+def oracle_check(rows, levels=D4_LEVELS, phrasings=ALL_PHRASINGS):
+    """Gate of the preset litm4-oracle-check. For each level AND each phrasing (cued, neutral, nonliteral, action): O M1 at least 95% of the graded
+    rows, runaway forks at most 5%, refused forks at most 5% (gates.refused_rate). A cell with no O rows FAILs. Any row with `tamper` (a file of the
+    project folder changed outside probe-out) FAILs the whole check. Returns (ok, lines)."""
+    from gates import runaway_rate, refused_rate
+    ok, lines = True, []
+    for lv in levels:
+        for ph in phrasings:
+            o = [r for r in rows if r.get("arm") == "O" and r.get("type") == lv and r.get("phrasing") == ph]
+            if not o:
+                ok = False
+                lines.append("%s %s: NO DATA -> FAIL" % (lv, ph))
+                continue
+            graded = [r for r in o if not r.get("runaway") and not r.get("refused")]
+            m1 = (sum(1 for r in graded if r.get("m1") is True) / float(len(graded))) if graded else 0.0
+            rw, nf = runaway_rate(o)
+            rf, nf2 = refused_rate(o)
+            good = (m1 >= ORACLE_CHECK_M1_MIN and (rw / float(nf) if nf else 1.0) <= ORACLE_CHECK_RUNAWAY_MAX
+                    and (rf / float(nf2) if nf2 else 0.0) <= ORACLE_CHECK_REFUSED_MAX)
+            ok = ok and good
+            lines.append("%s %s: O M1 %.0f%% (need %d%%), runaway %d/%d (max %d%%), refused %d/%d (max %d%%) -> %s" % (
+                lv, ph, 100 * m1, int(100 * ORACLE_CHECK_M1_MIN), rw, nf, int(100 * ORACLE_CHECK_RUNAWAY_MAX), rf, nf2,
+                int(100 * ORACLE_CHECK_REFUSED_MAX), "PASS" if good else "FAIL"))
+    tam = [r for r in rows if r.get("tamper")]
+    if tam:
+        ok = False
+        lines.append("TAMPER: %d row(s) show a changed file outside probe-out -> FAIL" % len(tam))
+    return ok, lines
+
+
 def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
+    if len(argv) >= 2 and argv[0] == "oracle-check":
+        rd = argv[1] if os.path.isdir(argv[1]) else os.path.join(HERE, "results", argv[1])
+        with open(os.path.join(rd, "results.jsonl"), encoding="utf-8") as f:
+            rows = [json.loads(ln) for ln in f if ln.strip()]
+        ok, lines = oracle_check([r for r in gen_dedupe(rows) if str(r.get("type", "")).startswith("L")])
+        print("\n".join(lines))
+        print("ORACLE CHECK: " + ("PASS" if ok else "FAIL"))
+        return 0 if ok else 1
     if len(argv) >= 2 and argv[0] == "decide":
         rd = argv[1] if os.path.isdir(argv[1]) else os.path.join(HERE, "results", argv[1])
         rows = []
