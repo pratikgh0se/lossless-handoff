@@ -705,6 +705,7 @@ class Session:
         if (cfg.get("probe_design", 1) >= 3 or cfg.get("search_used")) and fsid:      # design 3 and preflight: a search by recall.py, by the MCP tool, or by auto-recall counts for every arm
             used, kinds = grade.search_used(frecs, marker)
         calls_after = grade.lookup_calls(frecs, marker) if fsid else []   # kept: the fork transcript is deleted below
+        n_req, max_req = grade.request_stats(frecs, marker) if fsid else (None, None)       # per request: the cap is per request, not per fork
         if fsid:    # a later recall must not find this answer: delete the probe transcript
             ft = self.transcript(fsid)
             for pth in (ft, ft[:-6]):
@@ -732,7 +733,8 @@ class Session:
                 "condition": self.cond, "phrasing": phrasing, "position": posmap.get(g["id"]), "attempt": st.get("restarts", 0), **view_fields,
                 "auto_recall_fired": fired, "auto_recall_hits": hits, "auto_recall_timed_out": timed_out,
                 **({k_: g[k_] for k_ in ("m1", "m2", "m3", "error_class", "lag", "alt_ok", "undo_last")} if self.d4 else {}),
-                **({"chunk": chunk[0], "runaway": bool(o.get("_runaway")), "refused": bool(o.get("_refused")), "guard_fired": "guard" in kinds, "free_form": bool(cfg.get("free_form"))} if self.d4 else {}),
+                **({"chunk": chunk[0], "runaway": bool(o.get("_runaway")), "refused": bool(o.get("_refused")), "guard_fired": "guard" in kinds, "free_form": bool(cfg.get("free_form")),
+                                                          "requests": n_req, "max_request_output": max_req} if self.d4 else {}),
                 **({"action_file_found": action_text is not None, "tamper": tamper} if action_dir else {})})
         if self.view_of is not None:
             st.setdefault("first_fork_cost_usd", round(o["_delta"], 6))      # K: the cache-miss check of the preflight

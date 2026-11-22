@@ -537,7 +537,18 @@ class PreflightHaikuScope(ReportAndPreflight):
     def test_output_limit_line_counts_l1_l2_forks_only(self):
         res = self.run_check()
         names = [x[0] for x in res]
-        self.assertTrue(any(n.startswith("probe fork output at most 10000 tokens") for n in names))
+        self.assertTrue(any(n.startswith("largest single request of a probe fork at most 10000 tokens") for n in names))
+        # these rows have no per-request field: the sum line is INFO and nothing compares a sum with the per-request cap
+        self.assertTrue(any(n.startswith("probe fork output: no per-request data") for n in names))
+
+    def test_gate_uses_the_largest_single_request(self):
+        import grade
+        recs = [{"type": "user", "message": {"content": "PROBE-q go"}},
+                {"type": "assistant", "message": {"id": "m1", "usage": {"output_tokens": 5000}, "content": []}},
+                {"type": "assistant", "message": {"id": "m1", "usage": {"output_tokens": 7000}, "content": []}},      # the same request, streamed twice
+                {"type": "assistant", "message": {"id": "m2", "usage": {"output_tokens": 6000}, "content": []}}]
+        self.assertEqual(grade.request_stats(recs, "PROBE-q"), (2, 7000))        # a fork sum of 13000 with no request above 7000
+        self.assertEqual(grade.request_stats([{"type": "user", "message": {"content": "x"}}], "PROBE-q"), (0, None))
 
 
 class AuditFixes(unittest.TestCase):
@@ -1143,7 +1154,7 @@ class ProbeCapAndFailures(unittest.TestCase):
             rd, projects = test_litm.make_pf_run(d, d4=True)
             res = preflight.check(rd, projects, mcp=False)
             names = [r[0] for r in res]
-            self.assertTrue(any(n.startswith("probe fork output at most 10000 tokens") for n in names), names)
+            self.assertTrue(any(n.startswith("largest single request of a probe fork at most 10000 tokens") for n in names), names)
             self.assertIn("median probe output tokens", names)
             old = runner.PROBE_MAX_OUTPUT_TOKENS
             runner.PROBE_MAX_OUTPUT_TOKENS = 1
@@ -1151,8 +1162,8 @@ class ProbeCapAndFailures(unittest.TestCase):
                 res2 = preflight.check(rd, projects, mcp=False)
             finally:
                 runner.PROBE_MAX_OUTPUT_TOKENS = old
-            st = [r[1] for r in res2 if r[0].startswith("probe fork output at most")][0]
-            self.assertIn(st, ("FAIL", "INFO"))        # FAIL when the fixture rows carry the output tokens
+            st = [r[1] for r in res2 if r[0].startswith("largest single request of a probe fork")][0]
+            self.assertIn(st, ("FAIL", "INFO"))        # INFO while the rows have no max_request_output; FAIL when a request is above the limit
         finally:
             shutil.rmtree(d)
 

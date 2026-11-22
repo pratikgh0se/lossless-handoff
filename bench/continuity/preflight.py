@@ -190,12 +190,26 @@ def check(rd, projects=None, mcp=True):
         if isinstance(n_out, (int, float)):
             forks[r.get("fork_sid") or id(r)] = (n_out, r.get("type"))
     info_forks = {k: v[0] for k, v in forks.items() if v[1] in D4_INFO_LEVELS}          # L3 and L4: Haiku capability, INFO only
-    outs = sorted(v[0] for k, v in forks.items() if k not in info_forks)
     out_lim = int(OUT_LIMIT_FACTOR * runner.PROBE_MAX_OUTPUT_TOKENS)
+    # The cap CLAUDE_CODE_MAX_OUTPUT_TOKENS is per REQUEST. The row field output_tokens is the SUM over the requests of a fork, so a fork that uses tools can pass
+    # the cap with no request near it. The line gates the largest single request (max_request_output) when the rows have it; older rows have no such field.
+    max_req = {}
+    for r in R.rows:
+        if isinstance(r.get("max_request_output"), (int, float)):
+            max_req[r.get("fork_sid") or id(r)] = (r["max_request_output"], r.get("type"))
+    if max_req:
+        outs = sorted(v[0] for k, v in max_req.items() if v[1] not in D4_INFO_LEVELS)
+        info_forks = {k: v[0] for k, v in max_req.items() if v[1] in D4_INFO_LEVELS}
+    else:
+        outs, info_forks = [], {}
     over = sorted(v for v in outs if v > out_lim)
     over_info = sorted(v for v in info_forks.values() if v > out_lim)
-    add("probe fork output at most %d tokens (%s x the cap %s of probe forks; a fork above the cap is counted as runaway)" % (out_lim, OUT_LIMIT_FACTOR, runner.PROBE_MAX_OUTPUT_ENV), None if not outs else not over,
-        "no output token data" if not outs else "%d fork(s), above the limit: %s" % (len(outs), over[:5] or "none"))
+    if not max_req:
+        sums = sorted(v[0] for v in forks.values())
+        add("probe fork output: no per-request data in these rows (INFO: the old field output_tokens is a sum over the requests of a fork and is not compared with the per-request cap)",
+            None, "%d fork(s)%s; later runs record max_request_output and requests" % (len(sums), (", largest sum %d" % sums[-1]) if sums else ""))
+    add("largest single request of a probe fork at most %d tokens (%s x the per-request cap %s)" % (out_lim, OUT_LIMIT_FACTOR, runner.PROBE_MAX_OUTPUT_ENV), None if not outs else not over,
+        "no per-request data" if not outs else "%d fork(s), above the limit: %s" % (len(outs), over[:5] or "none"))
     if info_forks:
         add("probe fork output above %d tokens at L3 and L4 (INFO: %s)" % (out_lim, D4_INFO_NOTE), None, "%d fork(s) at L3 or L4, above the limit: %s" % (len(info_forks), over_info[:8] or "none"))
     # runaway forks: a probe that hit the output cap is an outcome (class runaway), at most 5% of the forks of each arm
