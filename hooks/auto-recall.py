@@ -51,7 +51,8 @@ STOP = {"previous", "replaced", "rejected", "proposal", "remember", "current", "
         "answers", "setting", "settings", "before", "which", "there", "their", "about", "would", "could", "should"}
 HIST_HEADER = ("Lossless Handoff auto-recall: the history of the identifiers in your prompt, oldest first. A later mention "
                "can be rejected, a dry run or undone. This can be partial; search for the rest.")
-MAX_IDENTS, PER_IDENT_CAP, TOTAL_CAP = 3, 1500, 4000
+MAX_IDENTS, PER_IDENT_CAP, TOTAL_CAP = 3, 2000, 4000
+HYPHEN_WORD_RE = re.compile(r"[a-z]+(?:-[a-z]+)+")
 URL_RE = re.compile(r"(?:https?://|www\.)\S+", re.I)
 IDENT_TOKEN_RE = re.compile(r"`([^`\s]+)`|([A-Za-z0-9_./-]+)")
 IDENT_FULL_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_./-]*[_./-][A-Za-z0-9_./-]*[A-Za-z0-9]")
@@ -61,32 +62,34 @@ BUDGET_IDENT_S = 1.2  # no new identifier after this many seconds
 
 
 def identifiers(prompt):
-    """F75 (amended): first the tokens of the regex form (they hold -, _, . or / inside and a letter), in prompt order,
-    then the backticked tokens that do not match it. A URL, a cue word, a stop word or a plain word of 8 or fewer
-    lowercase letters in backticks is not an identifier. No duplicates."""
+    """F75 (amendment 2). Order: (1) backticked regex-form tokens; (2) other regex-form tokens that are not plain
+    lowercase hyphen compounds; (3) plain lowercase hyphen compounds such as dry-run; (4) other backticked tokens.
+    Prompt order inside a group. A regex-form token holds a letter. Not identifiers: a URL, a cue word, a stop word,
+    `e.g`, `i.e`, `and/or`, and a backticked plain lowercase word of 8 or fewer letters with no digit."""
     rest = URL_RE.sub(" ", prompt)
-    seen, regex_form, ticked = set(), [], []
+    seen, groups = set(), ([], [], [], [])
     for m in IDENT_TOKEN_RE.finditer(rest):
         if m.group(1) is not None:
-            tok = m.group(1).strip()
-            ticks = True
+            tok, ticks = m.group(1).strip(), True
         else:
-            tok = m.group(2).strip("._/-")
-            ticks = False
+            tok, ticks = m.group(2).strip("._/-"), False
             if not IDENT_FULL_RE.fullmatch(tok):
                 continue
         k = tok.lower()
         if len(tok) < 1 or k in seen or k in NOT_IDENT or k in CUES:
             continue
         form = bool(IDENT_FULL_RE.fullmatch(tok)) and any(c.isalpha() for c in tok)
-        if not form:
-            if not ticks or k in STOP or (PLAIN_WORD_RE.fullmatch(tok) and not any(c.isdigit() for c in tok)):
-                continue
-            if not ticks:
-                continue
+        if form and ticks:
+            g = 0
+        elif form:
+            g = 2 if HYPHEN_WORD_RE.fullmatch(tok) else 1
+        elif ticks and k not in STOP and not (PLAIN_WORD_RE.fullmatch(tok) and not any(c.isdigit() for c in tok)):
+            g = 3
+        else:
+            continue
         seen.add(k)
-        (regex_form if form else ticked).append(tok)
-    return regex_form + ticked
+        groups[g].append(tok)
+    return [t for grp in groups for t in grp]
 
 
 def quoted_phrases(prompt):

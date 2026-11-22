@@ -656,8 +656,8 @@ def _window(core, rx, width):
 
 def history_lines(ident, entries, cap=HISTORY_CAP):
     """F73 (cap amendment): the output lines. `cap` None: no cap. Over the cap, stop at the first step that fits:
-    (1) only the matching sentence of each entry, (2) a 200-character window on the match, (3) a 120-character window,
-    (4) the middle cut: line 1, the 2 oldest entries, an omission line, as many of the newest entries as fit."""
+    (1) only the matching sentence of each entry, (2) a 200-character window on the match, (3) a 120-character window, (4) an 80-character window,
+    (5) the middle cut: line 1, the 2 oldest entries, an omission line, as many of the newest entries as fit."""
     n = len(entries)
     if n == 0:
         return ["history of %s: no mentions" % ident]
@@ -671,13 +671,13 @@ def history_lines(ident, entries, cap=HISTORY_CAP):
     def build(texts):
         return [head(e) + redact(_norm_keep(t)) for e, t in zip(entries, texts)]
     steps = [[e["text"] for e in entries], [e.get("core") or e["text"] for e in entries]]
-    for w in (200, 120):
+    for w in (200, 120, 80):
         steps.append([_window(_norm_keep(e.get("core") or e["text"]), rx, w) for e in entries])
     for texts in steps:
         rows = build(texts)
         if cap is None or len("\n".join([l1] + rows)) <= cap:
             return [l1] + rows
-    rr = rows  # the 120-character rows
+    rr = rows  # the 80-character rows
     if n >= 3:
         for m in range(n - 2 - 1, -1, -1):
             k = n - 2 - m

@@ -2737,6 +2737,16 @@ x = "\n".join(lines)
 assert n == 14 and len(x) <= 1500, (n, len(x))
 assert sum(1 for l in lines if l.startswith("- ")) == 14 and "omitted" not in x and "DECIDEDVAL" in x and "LURE13" in x, x
 PY
+  # 6. auto-recall amendment 2: the `dry-run` order, and a 14-mention chain under 2,000 characters keeps every mention
+  python3 - "$ROOT/hooks" <<'PY'
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location("ar", sys.argv[1] + "/auto-recall.py"); m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+got = m.identifiers("keep dry-run and key_alpha-1 and `Zed` and `real-key` and a/b.c")
+assert got == ["real-key", "key_alpha-1", "a/b.c", "dry-run", "Zed"], got
+assert (m.PER_IDENT_CAP, m.TOTAL_CAP) == (2000, 4000)
+PY
+  o="$(ar 'what did we decide earlier about dry-run and chain-key-q')"
+  [ "$(grep -c '^- .*chain-key-q' <<<"$o")" = 14 ] && grep -q DECIDEDVAL <<<"$o" && ! grep -q omitted <<<"$o" || fail "F75: 14-mention chain not whole in auto-recall: $o"
   ok "F73-F75 amendments: real keys get the slots, current session by id, PEM redaction, whole-token ranking before the cut"
 )
 
