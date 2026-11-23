@@ -1303,6 +1303,11 @@ class SmallProbes(unittest.TestCase):
         self.assertEqual(gates.failure_class("exceeded the 32000 output token maximum"), "runaway")
         self.assertEqual(gates.failure_class("is_error: API Error: Haiku 5.5 can't help with this."), "safety_refusal")
         self.assertEqual(gates.failure_class("timeout"), "other")
+        self.assertEqual(gates.failure_class("is_error: API Error: Sonnet 5.5's safeguards flagged this message (https://www.anthropic.com/legal/aup). This sometimes happens with safe, normal conversations. Claude Code can't respond to this message with Sonnet 5.5. Details: `[reasoning_extraction]`"), "safety_refusal")
+        for model in ("Opus 5.5", "Fable 5.2"):
+            self.assertEqual(gates.failure_class("is_error: API Error: %s's safeguards flagged this message (https://www.anthropic.com/legal/aup)." % model), "safety_refusal")
+        self.assertEqual(gates.failure_class("is_error: API Error: a new wording we have not seen. Learn more: https://www.anthropic.com/legal/aup"), "safety_refusal")
+        self.assertEqual(gates.failure_class("is_error: API Error: Overloaded"), "other")
         self.assertIn("runaway", d4.ERROR_CLASSES)
 
     def rows(self, seed, n, bad, arm="A"):

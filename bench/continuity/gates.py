@@ -51,7 +51,8 @@ def describe_missing(miss, limit=4):
     return "%d probe fork(s) have no row, for example: %s" % (len(miss), "; ".join(one(k) for k in miss[:limit]))
 
 
-SAFETY_REFUSAL_RE = re.compile(r"API Error:.{0,80}can't help with this", re.I | re.S)
+# Any model name (Haiku, Sonnet, Opus, Fable): the wording is matched, not the model. The AUP link is in every refusal text seen so far.
+SAFETY_REFUSAL_RE = re.compile(r"API Error:(.{0,120}(can't help with this|safeguards flagged this message|can't respond to this message)|.{0,600}anthropic\.com/legal/aup)", re.I | re.S)
 
 
 RUNAWAY_RE = re.compile(r"exceeded the \d+ output token maximum", re.I)
