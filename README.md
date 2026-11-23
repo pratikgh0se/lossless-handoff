@@ -6,7 +6,7 @@
 
 This documentation uses ASD-STE100 Simplified Technical English.
 
-Current versions: product 0.18.0 (`install.sh`), hooks 1.20.0 (`HOOK_VERSION` in `hooks/precompact-handoff.py`, `hooks/postcompact-inject.py`, `hooks/auto-recall.py`, `hooks/recall-mcp.py`, `hooks/reanchor.py`, `hooks/claim-guard.py`, `hooks/history-guard.py` and `hooks/action-guard.py`).
+Current versions: product 0.19.0 (`install.sh`), hooks 1.21.0 (`HOOK_VERSION` in `hooks/precompact-handoff.py`, `hooks/postcompact-inject.py`, `hooks/auto-recall.py`, `hooks/recall-mcp.py`, `hooks/reanchor.py`, `hooks/claim-guard.py`, `hooks/history-guard.py` and `hooks/action-guard.py`).
 
 [![CI](https://github.com/pratikgh0se/lossless-handoff/actions/workflows/ci.yml/badge.svg)](https://github.com/pratikgh0se/lossless-handoff/actions/workflows/ci.yml) [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE) [![Release](https://img.shields.io/github/v/release/pratikgh0se/lossless-handoff)](https://github.com/pratikgh0se/lossless-handoff/releases/latest)
 
@@ -27,7 +27,7 @@ cd lossless-handoff
 ./install.sh
 ```
 
-You need `python3` and `bash` on macOS or Linux, and Claude Code. Windows is not supported. Then restart open Claude Code sessions. Hooks load when a session starts. The default install is small. It installs the core only. Each option below is opt-in:
+You need `python3` and `bash` on macOS or Linux, and Claude Code. Windows is not supported. Then restart open Claude Code sessions. Hooks load when a session starts. The default install is small. It installs the core and the recall rule line (on by default since 0.19.0). Each other option below is opt-in. To turn the recall rule off, run `./install.sh --no-recall-rules --save-defaults`, or set `HANDOFF_RECALL_RULES=0`:
 
 | Flag | What it adds |
 |---|---|
@@ -35,7 +35,7 @@ You need `python3` and `bash` on macOS or Linux, and Claude Code. Windows is not
 | `--nightly` | Two nightly jobs: the index (03:30) and the reconcile-and-prove run (04:15). They are macOS LaunchAgents. On Linux the installer prints the cron lines. |
 | `--semantic` | Meaning search on your machine only. If `ollama` is on your PATH, the installer offers `ollama pull bge-m3` (`--yes` pulls without a question). |
 | `--auto-recall` | A `UserPromptSubmit` hook. When your prompt refers to the past ("what did we decide earlier"), it searches the earlier chats of the project and adds the top 3 exact quotes to the context. It runs for at most 2 seconds. |
-| `--recall-rules` | Adds one strict rule line after the recall line in every session start and subagent start: search before you state an earlier number, path, name, command or decision. It does not force a search. |
+| `--recall-rules` | On by default (0.19.0), so this flag changes nothing. The line goes after the recall line in every session start and subagent start: search before you state an earlier number, path, name, command or decision, also when a file no longer holds it. It does not force a search. `--no-recall-rules` skips it; add `--save-defaults` to remove it. |
 | `--recall-mcp` | Installs a local MCP server with the tools `search_earlier_chat` and `open_message` and registers it with `claude mcp add --scope user`. It does not force a search. |
 | `--reanchor` | A `PostToolUse` hook. Each time the context grows by 50,000 tokens, it repeats the active rules of the project near the end of the context. It prints nothing when there is no rule. |
 | `--claim-guard` | A `Stop` hook. When a reply states an earlier fact ("as we decided", "you said") and the turn has no recall search, it writes one log line. It does not change the reply, unless you set `HANDOFF_CLAIM_GUARD=block`. |
@@ -76,7 +76,7 @@ To check the install without a model call, run `python3 ~/.claude/hooks/postcomp
 - **Auto-recall** (opt-in, `--auto-recall`). When your prompt refers to the past, a hook runs the recall search for the model and adds the top 3 exact quotes. See [docs/recall.md](docs/recall.md#auto-recall).
 - **History guard, action guard and size trigger** (0.18.0, opt-in: `--history-guard`, `--action-guard`, `--recall-size-trigger`). In a long chat they show the full history of a key that changed before the model uses it, in a reply or in a tool call. See [docs/recall.md](docs/recall.md#history-guard-action-guard-and-size-trigger).
 - **Key history** (0.17.0). `recall.py history <identifier>` and the MCP tool `key_history` list every mention of one key, oldest first. Auto-recall uses it when the prompt names an identifier. See [docs/recall.md](docs/recall.md#key-history).
-- **Strict recall rule and recall tool** (opt-in, `--recall-rules` and `--recall-mcp`). One rule line tells the model to search before it states an earlier fact. An MCP tool lets the model search in one call. Neither forces a search. See [docs/recall.md](docs/recall.md#strict-recall-rule-and-the-recall-tool).
+- **Strict recall rule and recall tool** (the rule is on by default since 0.19.0; the tool is opt-in, `--recall-mcp`). One rule line tells the model to search before it states an earlier fact. An MCP tool lets the model search in one call. Neither forces a search. See [docs/recall.md](docs/recall.md#strict-recall-rule-and-the-recall-tool).
 - **Subagents** get their own handoff and, at start, the rules of the project.
 - **The hook always exits 0** and never blocks compaction. If anything fails, it still writes a minimal handoff.
 

@@ -15,7 +15,7 @@ The shared rules are in guard_common.py (beside this file).
 """
 import json, os, sys, threading, time
 
-HOOK_VERSION = "1.20.0"
+HOOK_VERSION = "1.21.0"
 HEADER = ("Lossless Handoff history check: your reply uses values that changed in this chat. The full history is below, "
           "oldest first. A later mention can be a rejected proposal, a dry run or an undo. Read every mention in order. "
           "If your reply is correct, send the same reply again. If it is not, send the corrected reply. Do not mention "

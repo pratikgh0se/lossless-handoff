@@ -37,7 +37,7 @@ The default install does not do these things. Each one is an opt-in flag:
 | `--nightly` | Two nightly jobs: the index (03:30) and the reconcile-and-prove run (04:15). They are macOS LaunchAgents. On Linux the installer prints the cron lines. |
 | `--semantic` | Meaning search on your machine only. If `ollama` is on your PATH, the installer offers `ollama pull bge-m3` (`--yes` pulls without a question). If `ollama` is missing, it says how to get it and recall stays keyword-only. |
 | `--auto-recall` | A `UserPromptSubmit` hook. When your prompt refers to the past ("what did we decide earlier"), it searches the earlier chats of the project and adds the top 3 exact quotes to the context. It runs for at most 2 seconds. |
-| `--recall-rules` | Adds one strict rule line after the recall line in every session start and subagent start: search before you state an earlier number, path, name, command or decision. It does not force a search. |
+| `--recall-rules` | On by default (0.19.0), so this flag changes nothing. The installer writes the marker file `~/.claude/hooks/.recall-rules`. The rule line goes after the recall line in every session start and subagent start. `--no-recall-rules` skips it for one run. `--no-recall-rules --save-defaults` saves `recall_rules=0` and removes an installed marker (it prints `recall-rules: removed`). It does not force a search. |
 | `--recall-mcp` | Installs a local MCP server with the tools `search_earlier_chat` and `open_message` and registers it with `claude mcp add --scope user`. It does not force a search. |
 | `--reanchor` | A `PostToolUse` hook. Each time the context grows by 50,000 tokens, it repeats the active rules of the project near the end of the context. It prints nothing when there is no rule. |
 | `--claim-guard` | A `Stop` hook. When a reply states an earlier fact ("as we decided", "you said") and the turn has no recall search, it writes one log line. It does not change the reply, unless you set `HANDOFF_CLAIM_GUARD=block`. |
@@ -67,7 +67,7 @@ Other options: `--no-nudge` (skip the context nudge, and remove one from an earl
   - a `SessionEnd` hook that runs `recall.py session-end` (timeout 5);
   - a `SubagentStart` hook that runs `postcompact-inject.py --subagent-start` (timeout 10);
   - only with `--auto-recall`: a `UserPromptSubmit` hook that runs `auto-recall.py` (timeout 5);
-  - only with `--recall-rules`: the empty marker file `~/.claude/hooks/.recall-rules` (no `settings.json` entry);
+  - unless `--no-recall-rules` is used: the empty marker file `~/.claude/hooks/.recall-rules` (no `settings.json` entry);
   - only with `--recall-mcp`: the file `recall-mcp.py`, and the command `claude mcp add --scope user lossless-recall -- python3 ~/.claude/hooks/recall-mcp.py` (the installer never edits `~/.claude.json` itself). If the `claude` command is not on the PATH, the installer prints `recall-mcp: claude CLI not found; register it later with: ...`, still installs the file and exits 0. `./uninstall.sh` runs `claude mcp remove lossless-recall --scope user` and ignores a failure;
   - only with `--reanchor`: a `PostToolUse` hook (matcher `*`) that runs `reanchor.py` (timeout 5);
   - only with `--claim-guard`: a `Stop` hook that runs `claim-guard.py` (timeout 5);

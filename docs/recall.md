@@ -78,10 +78,10 @@ The history leaves out the tool calls and results of recall itself, auto-recall 
 
 Two more opt-in parts help the model search. Neither one forces a search: the model still decides.
 
-**Strict recall rule (`./install.sh --recall-rules`).** The installer writes the empty marker file `~/.claude/hooks/.recall-rules`. While the marker exists, every place that injects the recall line (session start after a compaction, at startup and at resume, and a new subagent) adds this line directly after the recall line:
+**Strict recall rule (on by default since 0.19.0).** To turn it off, run `./install.sh --no-recall-rules --save-defaults`. The installer writes the empty marker file `~/.claude/hooks/.recall-rules`. While the marker exists, every place that injects the recall line (session start after a compaction, at startup and at resume, and a new subagent) adds this line directly after the recall line:
 
 ```
-- recall rule: before you state an earlier number, path, name, command or decision, search for it. Do not answer from memory. If the search finds nothing, say so.
+- recall rule: before you state an earlier number, path, name, command or decision, search for it. Do not answer from memory. If a value is not in your context, or a file no longer holds it, search before you answer "unknown". If the search finds nothing, say so.
 ```
 
 Set `HANDOFF_RECALL_RULES=0` to switch it off at run time. The output is then the same as without the marker. Each inject row in `receipts.jsonl` has `"recall_rules": true` or `false`.

@@ -9,7 +9,7 @@ Health: one row per tool call in recall-mcp.jsonl (ts, tool, hits, ms; no query 
 """
 import contextlib, json, os, sys, time
 
-HOOK_VERSION = "1.20.0"
+HOOK_VERSION = "1.21.0"
 SERVER_NAME = "lossless-recall"
 HOME = os.path.expanduser("~")
 
@@ -32,7 +32,8 @@ SUPPORTED = ("2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05")
 DEFAULT_PROTOCOL = "2025-11-25"
 
 RULE = ("- recall rule: before you state an earlier number, path, name, command or decision, search for it. "
-        "Do not answer from memory. If the search finds nothing, say so.")
+        "Do not answer from memory. If a value is not in your context, or a file no longer holds it, "
+        "search before you answer \"unknown\". If the search finds nothing, say so.")  # same text as RECALL_RULE_LINE in postcompact-inject.py (F81.b)
 INSTRUCTIONS = (RULE + "\n"
                 "Use search_earlier_chat to find exact earlier messages of this project (word for word, secrets masked). "
                 "Use open_message with a hit id to read the full message.\n"
