@@ -2030,6 +2030,15 @@ PY
   "$ROOT/install.sh" --recall-rules >/dev/null; [ -e "$F/.recall-rules" ] || fail "F81: --recall-rules beats recall_rules=0"
   grep -q -- "--recall-rules" <<<"$("$ROOT/install.sh" --help)" && grep -q "on by default" <<<"$("$ROOT/install.sh" --help)" || fail "F81: --help"
   "$ROOT/uninstall.sh" >/dev/null
+  # F81.b: the MCP instructions hold the same rule line as the inject hook
+  python3 - "$ROOT/hooks" <<'PY'
+import importlib.util, sys
+def load(n, f):
+    sp = importlib.util.spec_from_file_location(n, sys.argv[1] + "/" + f); m = importlib.util.module_from_spec(sp); sp.loader.exec_module(m); return m
+a = load("pci", "postcompact-inject.py").RECALL_RULE_LINE
+m = load("rmcp", "recall-mcp.py")
+assert m.RULE == a and m.INSTRUCTIONS.startswith(a) and len(m.INSTRUCTIONS) < 4096, (m.RULE, a)
+PY
   ok "F68: marker, rule line after the recall line (start, ledger, subagent), off switch, receipt flag, install, saved defaults, uninstall"
 )
 
@@ -2164,7 +2173,7 @@ assert [o.get("id") for o in out].count(2) == 1 and 99 not in by
 init = by[1]["result"]
 assert init["protocolVersion"] == "2025-06-18" and init["serverInfo"] == {"name": "lossless-recall", "version": "1.21.0"}, init
 ins = init["instructions"]
-assert len(ins) < 4096 and "recall rule: before you state an earlier number, path, name, command or decision, search for it. Do not answer from memory. If the search finds nothing, say so." in ins, ins
+assert len(ins) < 4096 and "recall rule: before you state an earlier number, path, name, command or decision, search for it. Do not answer from memory. If a value is not in your context, or a file no longer holds it, search before you answer \"unknown\". If the search finds nothing, say so." in ins, ins
 assert by[2]["result"] == {}
 tools = {t["name"]: t for t in by[3]["result"]["tools"]}
 assert set(tools) == {"search_earlier_chat", "key_history", "open_message"}
