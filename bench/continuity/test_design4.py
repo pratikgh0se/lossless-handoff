@@ -777,9 +777,37 @@ class RecallCommandAllowed(unittest.TestCase):
         for x in ("Bash(*.claude/projects*)", "Bash(*.claude*projects*)"):
             self.assertIn(x, b)
 
+    def test_nocompact_view_runs_with_the_rules_of_its_own_arm(self):
+        import json as _j
+        base = tempfile.mkdtemp()
+        cfg = {"run_id": "r", "model": "m", "window": 1, "work_base": base, "call_cap_usd": 1, "turn_timeout_s": 1, "lh_path": runner.REPO,
+               "budget_usd": None, "gen_version": runner.gen.GEN_VERSION, "o_window": 1, "claude_version": ""}
+        ctx = runner.Ctx(tempfile.mkdtemp(), cfg)
+        main = runner.Session(ctx, "a", 1, "A", ctx.sess("a"), "nocompact")
+        sa = _j.loads(main.settings_json())
+        self.assertIn("Bash(*-state*)", sa["permissions"]["deny"])        # arm A keeps the broad rule, through --settings
+        for arm in ("B", "R", "K", "G", "P"):
+            v = runner.Session(ctx, "v" + arm, 1, arm, ctx.sess("v" + arm), "nocompact")
+            v.view_of = main
+            sv = _j.loads(v.settings_json())
+            deny = sv["permissions"]["deny"]
+            self.assertNotIn("Bash(*-state*)", deny)
+            self.assertNotIn("Bash(*lhbench*)", deny)
+            self.assertFalse(runner.bash_denied("python3 %s/hooks/recall.py search x" % self.STATE, deny))
+            self.assertTrue(runner.bash_denied("cat %s/nodes.jsonl" % self.STATE, deny))
+            self.assertEqual(sv["env"]["HANDOFF_HOOKS_HOME"], os.path.join(v.statedir, "hooks"))
+        # the project settings of arm A without compaction hold only the rules for every arm
+        shared = runner.deny_rules(base, "A", shared=True)
+        self.assertNotIn("Bash(*-state*)", shared)
+        self.assertIn("Bash(*.claude/projects*)", shared)
+        self.assertTrue([x for x in shared if x.startswith("Read(")])
+        self.assertEqual(main.allowed_tools(), runner.Session(ctx, "v", 1, "B", ctx.sess("v"), "nocompact").allowed_tools())
+        import inspect
+        self.assertIn('"chk-nc-B"', inspect.getsource(runner.selfcheck_core))
+
     def test_prepare_passes_the_arm_and_the_selfcheck_runs_the_printed_command_in_a_fork(self):
         import inspect
-        self.assertIn("deny_rules(work_base(self.ctx.cfg[\"work_base\"]), self.arm)", inspect.getsource(runner.Session.prepare))
+        self.assertIn("deny_rules(work_base(self.ctx.cfg[\"work_base\"]), self.arm,", inspect.getsource(runner.Session.prepare))
         src = inspect.getsource(runner.selfcheck_core)
         self.assertIn("ss.hooks_dir()", src)
         self.assertIn('fork_of=sid', src)

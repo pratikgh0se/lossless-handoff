@@ -366,8 +366,10 @@ READ_COMMANDS = ("cat", "grep", "egrep", "fgrep", "rg", "head", "tail", "ls", "f
                  "xxd", "strings", "cd", "open", "env", "sh", "bash", "zsh", "eval", "python3 -c", "python3 -m", "python3 -")
 
 
-def deny_rules(base, arm=None):
-    """Permission deny rules. They block direct reads of any transcript and of bench state folders.
+def deny_rules(base, arm=None, shared=False):
+    """shared=True (the project folder of arm A without compaction, which the views of B, R, K, G, P fork): only the rules that hold for every arm.
+    The rules of the arm come with --settings (settings_json), so a view runs with the rules of its own arm. The cache prefix is unchanged: permissions are not in the prompt.
+    Permission deny rules. They block direct reads of any transcript and of bench state folders.
     A project's own filler files stay readable, because they are in the cwd and not under these patterns.
     Arms with Lossless Handoff (LH_ARMS) get the narrow form for the bench and state folders: `python3 <state>/hooks/recall.py ...` is not denied."""
     proj = os.path.join(HOME, ".claude", "projects")
@@ -376,6 +378,8 @@ def deny_rules(base, arm=None):
         rules += ["%s(~/.claude/projects/**)" % tool, "%s(/%s/**)" % (tool, proj),
                   "%s(/%s/lhbench-*-state/**)" % (tool, base)]
     rules += ["Bash(*.claude/projects*)", "Bash(*.claude*projects*)"]
+    if shared:
+        return rules
     if arm in LH_ARMS:
         for c in READ_COMMANDS:
             rules += ["Bash(%s *lhbench*)" % c, "Bash(%s *-state*)" % c]
@@ -467,6 +471,10 @@ class Session:
         s = {"env": self.overrides}
         if self.view_of is not None and self.arm in LH_ARMS:
             s["hooks"] = self.lh_cfg()["hooks"]
+            # the project folder is the one of arm A (its settings hold only the shared rules): the view adds the Bash rules of its own arm, so that it can run the printed recall command
+            s["permissions"] = {"deny": [r for r in deny_rules(work_base(self.ctx.cfg["work_base"]), self.arm) if r.startswith("Bash(")]}
+        elif self.arm == "A" and self.cond == "nocompact":      # arm A without compaction: its project settings hold only the shared rules
+            s["permissions"] = {"deny": ["Bash(*lhbench*)", "Bash(*-state*)"]}
         return json.dumps(s)
 
     def mcp_config(self):
@@ -492,7 +500,7 @@ class Session:
             os.makedirs(os.path.join(self.proj, ".claude"))
             os.makedirs(self.statedir, exist_ok=True)
             settings = self.lh_cfg() if self.arm in LH_ARMS else {}
-            settings["permissions"] = {"deny": deny_rules(work_base(self.ctx.cfg["work_base"]), self.arm)}
+            settings["permissions"] = {"deny": deny_rules(work_base(self.ctx.cfg["work_base"]), self.arm, shared=(self.arm == "A" and self.cond == "nocompact"))}
             settings["autoMemoryEnabled"] = False
             write_json(os.path.join(self.proj, ".claude", "settings.json"), settings)
             # make the folder its own git root, so that recall.py cannot search outside it
@@ -1924,6 +1932,23 @@ def selfcheck_core(model, lh_path, work_base_arg, echo=False):
         say("arm %s: the printed recall command in a fork: %s (Bash denials: %d; the word was found: %s)" % (arm, "OK" if good else "DENIED OR NOT RUN", len(denials), word in res))
         say("  reply:", res.replace("\n", " | ")[:300])
         ok_all = ok_all and good
+    # a no-compaction view (arm B forks the session of arm A without compaction) runs with the rules and hooks copy of arm B
+    main = Session(ctx, "chk-nc-A", 1, "A", ctx.sess("chk-nc-A"), "nocompact")
+    main.prepare()
+    msid = main.st["sid"]
+    word = "RECALLTOK-" + uuid.uuid4().hex[:10].upper()
+    main.call("Remember the word %s. Reply only `ok`." % word, "turn", sid=msid, first=True)
+    v = Session(ctx, "chk-nc-B", 1, "B", ctx.sess("chk-nc-B"), "nocompact")
+    v.proj, v.view_of = main.proj, main
+    os.makedirs(v.statedir, exist_ok=True)
+    printed = "python3 %s/recall.py search --fixed %s" % (v.hooks_dir(), word)
+    o = v.call("Run this command with the Bash tool, exactly as written, and copy its output: `%s`. Say DENIED if the tool was denied." % printed, "fork", fork_of=msid)
+    res = o.get("result") or ""
+    denials = [x for x in (o.get("permission_denials") or []) if isinstance(x, dict) and x.get("tool_name") == "Bash"]
+    good = bool(word in res and not denials)
+    say("arm B no-compaction view: the printed recall command in a fork: %s (Bash denials: %d; the word was found: %s)" % ("OK" if good else "DENIED OR NOT RUN", len(denials), word in res))
+    say("  reply:", res.replace("\n", " | ")[:300])
+    ok_all = ok_all and good
     shutil.rmtree(d, ignore_errors=True)
     say("selfcheck:", "PASS" if ok_all else "FAIL", "(clean up with: run.sh cleanup)")
     return ok_all, out
