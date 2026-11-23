@@ -1019,7 +1019,7 @@ Version: hooks 1.14.2; release 0.12.2. `HOOK_VERSION` in both hooks and `hook_ve
 
 Why: an independent review found that the default install changed too much (a global window value, two LaunchAgents, a model pull, a skill).
 
-**F64 (minimal default install).** `./install.sh` with no options installs only the core: the hooks (nudge, PreCompact handoff, post-compaction inject, SessionStart check, SubagentStart rules, SessionEnd index), `recall.py`, the recall subagent and the decisions list. It does not set `CLAUDE_CODE_AUTO_COMPACT_WINDOW`, does not install nightly jobs, does not pull an embedding model, and (since 0.14.0, F66) does not install the `llm_map` hook or skill at all.
+**F64 (minimal default install).** `./install.sh` with no options installs only the core: the hooks (nudge, PreCompact handoff, post-compaction inject, SessionStart check, SubagentStart rules, SessionEnd index), `recall.py`, the recall subagent the decisions list and (since 0.19.0, F81) the recall rule marker `.recall-rules`. It does not set `CLAUDE_CODE_AUTO_COMPACT_WINDOW`, does not install nightly jobs, does not pull an embedding model, and (since 0.14.0, F66) does not install the `llm_map` hook or skill at all.
 
 - F64.a Opt-in flags add the other parts: `--window N`, `--nightly`, `--semantic` (offers `ollama pull bge-m3`). `--llm-map` was an opt-in flag until 0.13.x. F66.a changes it. `--semantic` works on the local machine only. If `ollama` is not on PATH it prints how to get it and continues keyword-only. `--yes` pulls without a question.
 - F64.b The old flags `--no-window` and `--no-nightly` stay accepted and do nothing extra. The installer prints one note that the default is now off.
@@ -1258,3 +1258,13 @@ Why: in a long chat a key can have many values (set, changed, rejected, undone).
   Then the F73 blocks.
 
 **F77-F80.a Versions.** Product 0.18.0 (`install.sh`). `HOOK_VERSION` is `1.20.0` in every hook that has it, and in `guard_common.py`. The default install does not change. `guard_common.py` is installed with any of the three flags and is kept up to date after that.
+
+## F81 Recall rule on by default (2026-11-23)
+
+Why: in the 2026-11-23 proof test, Claude answered "unknown" for exact strings that a recall search would have found, because the current files no longer held them. The F68 rule line is short and costs almost no context, so it becomes the default, and it names this case.
+
+**F81.a Default install.** A default install writes the marker file `<hooks dir>/.recall-rules` (F68.a). `--no-recall-rules` skips it for that run. `--save-defaults --no-recall-rules` saves `recall_rules=0`, and later default installs then do not write the marker. A re-install still never removes an installed marker, except that `--no-recall-rules` together with `--save-defaults` removes it and prints `recall-rules: removed`. Uninstall removes it. `--dry-run` lists it. `HANDOFF_RECALL_RULES=0` still turns the line off at run time (F68.b). The `--recall-rules` flag stays valid and changes nothing when the marker is the default.
+
+**F81.b Rule line.** The F68.b line becomes exactly: `- recall rule: before you state an earlier number, path, name, command or decision, search for it. Do not answer from memory. If a value is not in your context, or a file no longer holds it, search before you answer "unknown". If the search finds nothing, say so.` It goes in the same places as F68.b (SessionStart `compact`, `startup` and `resume`, and SubagentStart), directly after the recall line. With no marker or with `HANDOFF_RECALL_RULES=0`, the output has no rule line (as in F68.b).
+
+**F81.c Release.** Version 0.19.0, hooks 1.21.0. F64 (minimal default install) now lists the recall rule as part of the default install. README install section and `install.sh --help` say that the recall rule is on by default and how to turn it off.
