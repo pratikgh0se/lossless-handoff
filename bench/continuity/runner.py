@@ -425,6 +425,18 @@ class Session:
     def lh_cfg(self):
         return lh_settings(self.hooks_dir(), auto_recall=self.arm in AUTO_ARMS, reanchor=self.arm in RECALL_ARMS, history_guard=(self.arm == "G"), action_guard=(self.arm == "G"))
 
+    def cache_guard(self, parent, u):
+        """Stop the run when the forks of one parent session do not share its cached prefix (a fork that misses writes the whole history: about $1.1 on Sonnet at
+        300k tokens, 25 times a fork that hits). Judged after CACHE_MIN_FORKS forks of the parent. The run can resume; the cause is a cold cache (see gates.cache_write_fraction)."""
+        log = self.ctx.__dict__.setdefault("cache_log", {}).setdefault(parent, [])
+        log.append({"cache_read": u.get("cache_read_input_tokens"), "cache_write": u.get("cache_creation_input_tokens")})
+        frac, n = gates.cache_write_fraction(log)
+        if n >= gates.CACHE_MIN_FORKS - 1 and frac > gates.CACHE_WRITE_MAX:
+            self.ctx.stop.set()
+            raise Fatal("the forks of session %s do not share the prompt cache: after %d forks the cache write is %.1f times the cache read (limit %.2f). "
+                        "Each fork pays to write the whole history. The parent was probably idle for more than 5 minutes. Stop. "
+                        "Keep the forks of a parent in one stretch, or warm the cache, before you resume." % (parent[:8], n + 1, frac, gates.CACHE_WRITE_MAX))
+
     def settings_json(self):
         """--settings text: the env overrides. A view (arm B, R or K forking the session of arm A) also gets the hooks of its arm."""
         s = {"env": self.overrides}
@@ -594,6 +606,8 @@ class Session:
                                        "cache_read": u.get("cache_read_input_tokens"), "cache_write": u.get("cache_creation_input_tokens"),
                                        "is_error": o.get("is_error")})
             o["_delta"] = delta
+            if kind == "fork" and fork_of:
+                self.cache_guard(fork_of, u)
             if o.get("is_error") and self.d4 and kind in ("fork", "z") and gates.failure_class(o.get("result")) == "runaway":
                 self.save_failed(o, out, err_txt, kind, fork_of, attempt)       # a probe that hit the output cap: an outcome, not a failure; no retry
                 o["_runaway"] = True

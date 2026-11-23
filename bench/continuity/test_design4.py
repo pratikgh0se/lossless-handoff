@@ -594,6 +594,67 @@ class PreflightRun5Fixes(unittest.TestCase):
         self.assertIn("reanchor-", src)
 
 
+class ForkCacheSharing(unittest.TestCase):
+    """The run 20261123T033514 cost bug: forks that miss the prompt cache write the whole history."""
+
+    def calls(self, read, write, n=6):
+        return [{"kind": "fork", "name": "s1-B-nc", "ts": "2026-11-23T04:0%d:00Z" % i, "cache_read": read, "cache_write": write, "delta_usd": 1.1 if write > 100000 else 0.04}
+                for i in range(n)]
+
+    def test_fraction_is_small_for_sharing_forks_and_large_for_missing_forks(self):
+        import gates
+        self.assertLess(gates.cache_write_fraction(self.calls(298154, 385))[0], gates.CACHE_WRITE_MAX)
+        self.assertGreater(gates.cache_write_fraction(self.calls(19805, 278700))[0], gates.CACHE_WRITE_MAX)
+        # the first fork of a parent may write everything: it does not count
+        mixed = [dict(self.calls(0, 298540, 1)[0])] + self.calls(298540, 300, 4)
+        self.assertLess(gates.cache_write_fraction(mixed)[0], gates.CACHE_WRITE_MAX)
+
+    def test_runner_guard_stops_after_the_minimum_number_of_forks(self):
+        import gates
+        s = runner.Session.__new__(runner.Session)
+
+        class Ctx:
+            pass
+        s.ctx = Ctx()
+        s.ctx.stop = __import__("threading").Event()
+        stopped = None
+        for i in range(8):
+            try:
+                s.cache_guard("fb0cc723-aaaa", {"cache_read_input_tokens": 19805, "cache_creation_input_tokens": 278700})
+            except runner.Fatal as e:
+                stopped = (i + 1, str(e))
+                break
+        self.assertIsNotNone(stopped)
+        self.assertEqual(stopped[0], gates.CACHE_MIN_FORKS)
+        self.assertIn("do not share the prompt cache", stopped[1])
+        self.assertTrue(s.ctx.stop.is_set())
+        # sharing forks never stop the run
+        s2 = runner.Session.__new__(runner.Session)
+        s2.ctx = Ctx()
+        s2.ctx.stop = __import__("threading").Event()
+        for i in range(20):
+            s2.cache_guard("p2", {"cache_read_input_tokens": 298154, "cache_creation_input_tokens": 385})
+
+    def test_preflight_line_fails_for_missing_forks(self):
+        import preflight
+        d = tempfile.mkdtemp()
+        try:
+            rd, projects = test_litm.make_pf_run(d, d4=True)
+            with open(os.path.join(rd, "calls.jsonl"), "a") as f:
+                for c in self.calls(19805, 278700):
+                    f.write(json.dumps(c) + "\n")
+            res = preflight.check(rd, projects, mcp=False)
+            line = [x for x in res if x[0].startswith("no-compaction forks share the prompt cache")]
+            self.assertEqual([x[1] for x in line], ["FAIL"])
+            self.assertIn("s1-B-nc", line[0][2])
+        finally:
+            shutil.rmtree(d)
+
+    def test_fork_estimate_for_the_cost_check(self):
+        e = cost.d4_nc_fork_estimate("B")
+        self.assertTrue(0.01 < e < 0.2, e)
+
+
 class AuditFixes(unittest.TestCase):
     """Fixes of the audit of PR #35 (findings 1 to 9). Offline, from the script generator and the code only."""
     SEEDS = range(1000, 1200)

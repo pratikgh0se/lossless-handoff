@@ -97,6 +97,23 @@ def flag_rate(rows, flag):
     return sum(1 for v in forks.values() if v), len(forks)
 
 
+CACHE_WRITE_MAX = 0.20      # cache_write / cache_read of the forks of one session, on average (a fork that shares the cached prefix writes only its probe)
+CACHE_MIN_FORKS = 4         # forks of one parent before the in-run guard judges (the first fork of a parent may write the whole prefix)
+FORK_COST_RATIO_MAX = 3.0   # average cost of a no-compaction fork / the cost.py estimate of a fork
+
+
+def cache_write_fraction(calls):
+    """calls: rows of calls.jsonl of the forks of ONE session, in order. -> (average of cache_write / cache_read over the forks after the first, number of those forks).
+    A fork that shares the cached prefix of its parent reads it and writes about its probe (a few hundred tokens). A fork that misses the cache reads only the
+    system prompt (about 20k tokens) and writes the whole history (about 280k tokens): a 14 times higher write than read. Cause seen in run 20261123T033514:
+    the parent session was idle for more than the 5 minute cache time, and a fork writes its cache at the END of its own probe, so no other fork can read it."""
+    ratios = []
+    for c in calls[1:]:
+        rd, wr = c.get("cache_read") or 0, c.get("cache_write") or 0
+        ratios.append(wr / float(rd) if rd else (float("inf") if wr else 0.0))
+    return (sum(ratios) / len(ratios) if ratios else 0.0), len(ratios)
+
+
 def runaway_rate(rows):
     return flag_rate(rows, "runaway")
 
