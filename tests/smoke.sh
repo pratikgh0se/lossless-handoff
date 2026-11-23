@@ -75,7 +75,7 @@ python3 - "$H" <<'PY'
 import hashlib, json, sys
 h = sys.argv[1]
 m = json.load(open(h + "/.handoff-manifest.json"))
-assert m["version"] == "1.20.0" and m["installed_at"], m
+assert m["version"] == "1.21.0" and m["installed_at"], m
 pkg = ["lossless_handoff/%s.py" % n for n in "__init__ transcript summary ledger handoff runtime redaction pipeline reconcile prove claims".split()]
 assert sorted(m["files"]) == sorted(["claims.json", "handoff-nudge.py", "postcompact-inject.py", "precompact-handoff.py", "recall.py"] + pkg), m
 for n, want in m["files"].items():
@@ -924,8 +924,8 @@ PY
   [ ! -e "$F/precompact-handoff.py" ] || fail "F66.a: uninstall did not finish its other work"
   rm "$F/llm_map.py" "$SK"; rmdir "$(dirname "$SK")"; o="$("$ROOT/uninstall.sh")"; ! grep -q "llm-map: kept" <<<"$o" || fail "F66.a: kept line without llm-map files"
   # F66.d versions
-  [ "$("$ROOT/install.sh" --version)" = "Lossless Handoff 0.18.0" ] || fail "F66.d: product version"
-  [ "$(grep -c '^HOOK_VERSION = "1.20.0"$' "$ROOT/hooks/precompact-handoff.py" "$ROOT/hooks/postcompact-inject.py" | grep -c ':1$')" = 2 ] || fail "F66.d: HOOK_VERSION"
+  [ "$("$ROOT/install.sh" --version)" = "Lossless Handoff 0.19.0" ] || fail "F66.d: product version"
+  [ "$(grep -c '^HOOK_VERSION = "1.21.0"$' "$ROOT/hooks/precompact-handoff.py" "$ROOT/hooks/postcompact-inject.py" | grep -c ':1$')" = 2 ] || fail "F66.d: HOOK_VERSION"
   # F66.c: README holds no claim markers; evidence page does; claims-lint default path
   ! grep -qE '\[C[1-9]\]' "$ROOT/README.md" && ! grep -qiE '^#+ .*proof|\*\*proof' "$ROOT/README.md" || fail "F66.c: README holds Proof or claim markers"
   grep -qE '\[C1\]' "$ROOT/docs/evidence.md" || fail "F66.c: docs/evidence.md has no markers"
@@ -972,7 +972,7 @@ rows = {json.loads(x)["sid"]: json.loads(x) for x in open(sys.argv[1]) if x.stri
 a, b = rows["f56a"], rows["f56b"]
 assert a["excerpt_chars"] > 0 and a["excerpt_dropped"] == 0, a
 assert b["excerpt_dropped"] > 0 and 0 < b["excerpt_chars"] <= 120000, b
-assert a["hook_version"] == "1.20.0"
+assert a["hook_version"] == "1.21.0"
 PY
   p="$(python3 "$ROOT/hooks/precompact-handoff.py" --prove --days 1; echo "rc=$?")"
   grep -qE "^excerpt cut: 1 of 2 compactions, median dropped [0-9]+ chars$" <<<"$p" || fail "F56.b: prove line: $p"
@@ -1138,7 +1138,7 @@ PY
 import json, sys
 rows = [json.loads(x) for x in open(sys.argv[1]) if x.strip()]
 r = [x for x in rows if x.get("event") == "subagent_start"][-1]
-assert r["rules"] == 2 and r["chars"] > 0 and r["hook_version"] == "1.20.0" and r["agent_type"] == "general-purpose", r
+assert r["rules"] == 2 and r["chars"] > 0 and r["hook_version"] == "1.21.0" and r["agent_type"] == "general-purpose", r
 PY
   # AC 262: no handoff text, no agent notes
   printf '# Handoff\n- cwd: %s\nLATESTTOKEN\n' "$PROJ" > "$STF/s58-latest.md"; printf 'AGENTTOKEN\n' > "$STF/s58-agent.md"
@@ -1912,7 +1912,7 @@ PY
   CMD="python3 $F/auto-recall.py"
   echo '{"model": "opus"}' > "$FS"
   grep -q -- "--auto-recall" <<<"$("$ROOT/install.sh" --help)" || fail "F67.a: --help lacks --auto-recall"
-  [ "$(grep -c '^HOOK_VERSION = "1.20.0"$' "$ROOT/hooks/auto-recall.py")" = 1 ] || fail "F67.e: auto-recall HOOK_VERSION"
+  [ "$(grep -c '^HOOK_VERSION = "1.21.0"$' "$ROOT/hooks/auto-recall.py")" = 1 ] || fail "F67.e: auto-recall HOOK_VERSION"
   # default install: not installed, not registered
   "$ROOT/install.sh" >/dev/null
   [ ! -e "$F/auto-recall.py" ] && ! grep -q "auto-recall" "$FS" && ! grep -q "auto-recall" "$F/.handoff-manifest.json" || fail "F67.a: default install holds auto-recall"
@@ -1960,13 +1960,13 @@ PY
   ok "F67: install, default off, dry-run, backup, upgrade message, uninstall, saved defaults"
 )
 
-# F68: strict recall rules (marker file, one extra line after the recall line, run-time off switch, health flag)
+# F68, F81: strict recall rules, on by default (marker file, one extra line after the recall line, run-time off switch, health flag)
 (
   set -e
   export HOME="$T/f68"; mkdir -p "$HOME/.claude"; F="$HOME/.claude/hooks"; DF="$HOME/.config/lossless-handoff/install-defaults"
   export HANDOFF_STATE_DIR="$HOME/.local/state/claude-handoffs"; STF="$HANDOFF_STATE_DIR"; mkdir -p "$STF"
   POST="$ROOT/hooks/postcompact-inject.py"
-  RULE='- recall rule: before you state an earlier number, path, name, command or decision, search for it. Do not answer from memory. If the search finds nothing, say so.'
+  RULE='- recall rule: before you state an earlier number, path, name, command or decision, search for it. Do not answer from memory. If a value is not in your context, or a file no longer holds it, search before you answer "unknown". If the search finds nothing, say so.'
   PROJ="$HOME/proj"; mkdir -p "$PROJ"; git -C "$PROJ" init -q; PROJ="$(cd "$PROJ" && pwd -P)"
   python3 - "$PROJ" "$STF" <<'PY'
 import hashlib, os, re, sys
@@ -1981,19 +1981,14 @@ PY
   run_led() { printf '{"cwd":"%s"}' "$PROJ" | python3 "$POST" --ledger --part 1; }
   run_sub() { printf '{"session_id":"s68","cwd":"%s","agent_id":"agx","agent_type":"general-purpose"}' "$PROJ" | python3 "$POST" --subagent-start; }
   ctx() { python3 -c "import sys,json; print(json.load(sys.stdin)['hookSpecificOutput']['additionalContext'])"; }
-  # no flag: install has no marker, and the outputs hold no rule line
+  # F81: a default install writes the marker, and the dry-run lists it
+  o="$("$ROOT/install.sh" --dry-run)"; grep -q "recall rules marker" <<<"$o" && [ ! -e "$F/.recall-rules" ] || fail "F81: default dry-run: $o"
   "$ROOT/install.sh" >/dev/null
-  [ ! -e "$F/.recall-rules" ] || fail "F68: default install wrote the marker"
-  ! grep -q "recall-rules" <<<"$("$ROOT/install.sh" --dry-run)" || fail "F68: default dry-run mentions recall-rules"
-  S0="$(run_start | ctx)"; L0="$(run_led | ctx)"; B0="$(run_sub | ctx)"
-  ! grep -qF "recall rule:" <<<"$S0$L0$B0" || fail "F68: rule line without the marker"
+  [ -e "$F/.recall-rules" ] || fail "F81: default install did not write the marker"
+  # baseline outputs: the off switch gives the output without the rule line
+  S0="$(HANDOFF_RECALL_RULES=0 run_start | ctx)"; L0="$(HANDOFF_RECALL_RULES=0 run_led | ctx)"; B0="$(HANDOFF_RECALL_RULES=0 run_sub | ctx)"
+  ! grep -qF "recall rule:" <<<"$S0$L0$B0" || fail "F68: rule line with HANDOFF_RECALL_RULES=0"
   grep -q "^- recall: " <<<"$S0" && grep -q "^- recall: " <<<"$L0" && grep -q "^- recall: " <<<"$B0" || fail "F68: a baseline output has no recall line"
-  # dry-run with the flag lists the marker and changes nothing
-  o="$("$ROOT/install.sh" --recall-rules --dry-run)"
-  grep -q "recall rules marker" <<<"$o" && [ ! -e "$F/.recall-rules" ] || fail "F68: dry-run: $o"
-  # install with the flag
-  "$ROOT/install.sh" --recall-rules >/dev/null
-  [ -e "$F/.recall-rules" ] || fail "F68: marker not written"
   for w in start led sub; do
     if [ "$w" = start ]; then o="$(run_start | ctx)"; b="$S0"; fi
     if [ "$w" = led ]; then o="$(run_led | ctx)"; b="$L0"; fi
@@ -2002,10 +1997,12 @@ PY
     n="$(grep -n '^- recall: ' <<<"$o" | cut -d: -f1)"
     [ "$(sed -n "$((n + 1))p" <<<"$o")" = "$RULE" ] || fail "F68: $w: the rule line is not directly after the recall line"
     [ "$(grep -vxF -- "$RULE" <<<"$o")" = "$b" ] || fail "F68: $w: output differs from the baseline in more than the rule line"
-    # the off switch: byte-identical to the output without the marker
-    case "$w" in start) o2="$(HANDOFF_RECALL_RULES=0 run_start | ctx)" ;; led) o2="$(HANDOFF_RECALL_RULES=0 run_led | ctx)" ;; sub) o2="$(HANDOFF_RECALL_RULES=0 run_sub | ctx)" ;; esac
-    [ "$o2" = "$b" ] || fail "F68: $w: HANDOFF_RECALL_RULES=0 changed the output"
   done
+  # no marker: no rule line
+  rm -f "$F/.recall-rules"
+  S1="$(run_start | ctx)"; ! grep -qF "recall rule:" <<<"$S1" || fail "F68: rule line without the marker"
+  "$ROOT/install.sh" --recall-rules >/dev/null
+  [ -e "$F/.recall-rules" ] || fail "F68: --recall-rules did not write the marker"
   # the receipt flag
   run_start >/dev/null; HANDOFF_RECALL_RULES=0 run_start >/dev/null
   python3 - "$STF/receipts.jsonl" <<'PY'
@@ -2013,24 +2010,25 @@ import json, sys
 rows = [json.loads(x) for x in open(sys.argv[1]) if x.strip()]
 assert rows[-2]["recall_rules"] is True and rows[-1]["recall_rules"] is False, rows[-2:]
 PY
-  # a rerun keeps it; --no-recall-rules keeps it
+  # a rerun keeps it; --no-recall-rules alone keeps it
   o="$("$ROOT/install.sh")"; grep -qx "recall-rules: already installed, kept" <<<"$o" || fail "F68: kept message: $o"
   o="$("$ROOT/install.sh" --no-recall-rules)"; grep -qx "recall-rules: already installed, kept" <<<"$o" && [ -e "$F/.recall-rules" ] || fail "F68: --no-recall-rules removed it"
   # uninstall: dry-run lists, real run removes
   o="$("$ROOT/uninstall.sh" --dry-run)"; grep -q "\.recall-rules" <<<"$o" && [ -e "$F/.recall-rules" ] || fail "F68: uninstall dry-run"
   "$ROOT/uninstall.sh" >/dev/null; [ ! -e "$F/.recall-rules" ] || fail "F68: uninstall left the marker"
-  # saved defaults
+  # saved defaults (F81)
   "$ROOT/install.sh" --save-defaults --recall-rules >/dev/null
   grep -qx "recall_rules=1" "$DF" && [ -e "$F/.recall-rules" ] || fail "F68: --save-defaults --recall-rules"
   "$ROOT/uninstall.sh" >/dev/null
-  o="$("$ROOT/install.sh" --dry-run)"; grep -q "saved defaults.*recall_rules" <<<"$o" && grep -q "recall rules marker" <<<"$o" || fail "F68: saved default not applied: $o"
-  "$ROOT/install.sh" >/dev/null; [ -e "$F/.recall-rules" ] || fail "F68: saved default did not install it"
-  "$ROOT/uninstall.sh" >/dev/null
   "$ROOT/install.sh" --no-recall-rules >/dev/null
-  [ ! -e "$F/.recall-rules" ] && grep -qx "recall_rules=1" "$DF" || fail "F68: --no-recall-rules did not skip it, or touched the saved default"
-  "$ROOT/install.sh" --save-defaults --no-recall-rules >/dev/null
-  ! grep -q "recall_rules" "$DF" && [ ! -e "$F/.recall-rules" ] || fail "F68: --save-defaults --no-recall-rules"
-  grep -q -- "--recall-rules" <<<"$("$ROOT/install.sh" --help)" || fail "F68: --help lacks --recall-rules"
+  [ ! -e "$F/.recall-rules" ] && grep -qx "recall_rules=1" "$DF" || fail "F81: --no-recall-rules did not skip it, or touched the saved default"
+  "$ROOT/install.sh" >/dev/null; [ -e "$F/.recall-rules" ] || fail "F68: saved default did not install it"
+  o="$("$ROOT/install.sh" --save-defaults --no-recall-rules)"
+  grep -qx "recall-rules: removed" <<<"$o" && [ ! -e "$F/.recall-rules" ] && grep -qx "recall_rules=0" "$DF" || fail "F81: --save-defaults --no-recall-rules: $o"
+  "$ROOT/install.sh" >/dev/null; [ ! -e "$F/.recall-rules" ] || fail "F81: saved recall_rules=0 did not stop the marker"
+  o="$("$ROOT/install.sh" --dry-run)"; ! grep -q "recall rules marker" <<<"$o" || fail "F81: dry-run with recall_rules=0 lists the marker"
+  "$ROOT/install.sh" --recall-rules >/dev/null; [ -e "$F/.recall-rules" ] || fail "F81: --recall-rules beats recall_rules=0"
+  grep -q -- "--recall-rules" <<<"$("$ROOT/install.sh" --help)" && grep -q "on by default" <<<"$("$ROOT/install.sh" --help)" || fail "F81: --help"
   "$ROOT/uninstall.sh" >/dev/null
   ok "F68: marker, rule line after the recall line (start, ledger, subagent), off switch, receipt flag, install, saved defaults, uninstall"
 )
@@ -2058,7 +2056,7 @@ SH
   [ ! -e "$F/recall-mcp.py" ] && ! grep -q "recall-mcp" "$F/.handoff-manifest.json" && [ ! -s "$FAKE_CLAUDE_LOG" ] || fail "F69: default install holds recall-mcp or called claude"
   ! grep -q "recall-mcp" <<<"$(PATH="$D/fakebin:$PATH" "$ROOT/install.sh" --dry-run)" || fail "F69: default dry-run mentions recall-mcp"
   grep -q -- "--recall-mcp" <<<"$("$ROOT/install.sh" --help)" || fail "F69: --help lacks --recall-mcp"
-  [ "$(grep -c '^HOOK_VERSION = "1.20.0"$' "$ROOT/hooks/recall-mcp.py")" = 1 ] || fail "F69: HOOK_VERSION"
+  [ "$(grep -c '^HOOK_VERSION = "1.21.0"$' "$ROOT/hooks/recall-mcp.py")" = 1 ] || fail "F69: HOOK_VERSION"
   # dry-run lists the file and the command; runs nothing
   o="$(PATH="$D/fakebin:$PATH" "$ROOT/install.sh" --recall-mcp --dry-run)"
   grep -q "install hook: .*/recall-mcp.py" <<<"$o" && grep -qF "claude mcp add --scope user lossless-recall -- $MC" <<<"$o" || fail "F69: dry-run: $o"
@@ -2164,7 +2162,7 @@ out, raw = run([
 by = {o.get("id"): o for o in out}
 assert [o.get("id") for o in out].count(2) == 1 and 99 not in by
 init = by[1]["result"]
-assert init["protocolVersion"] == "2025-06-18" and init["serverInfo"] == {"name": "lossless-recall", "version": "1.20.0"}, init
+assert init["protocolVersion"] == "2025-06-18" and init["serverInfo"] == {"name": "lossless-recall", "version": "1.21.0"}, init
 ins = init["instructions"]
 assert len(ins) < 4096 and "recall rule: before you state an earlier number, path, name, command or decision, search for it. Do not answer from memory. If the search finds nothing, say so." in ins, ins
 assert by[2]["result"] == {}
@@ -2227,7 +2225,7 @@ def tr(name, tokens):
 tr("t30k", 29985); tr("t60k", 59985); tr("t120k", 119985); tr("t20k", 19985)
 PY
   ra() { python3 -c 'import json,sys; print(json.dumps({"session_id":sys.argv[1],"transcript_path":sys.argv[2],"cwd":sys.argv[3],"hook_event_name":"PostToolUse","tool_name":"Bash"}))' "$1" "$D/$2.jsonl" "$W" | python3 "$HK"; }
-  [ "$(grep -c '^HOOK_VERSION = "1.20.0"$' "$HK")" = 1 ] || fail "F70: HOOK_VERSION"
+  [ "$(grep -c '^HOOK_VERSION = "1.21.0"$' "$HK")" = 1 ] || fail "F70: HOOK_VERSION"
   # below the interval: nothing, no state file
   [ -z "$(ra s1 t30k)" ] && [ ! -e "$HANDOFF_STATE_DIR/reanchor-s1.json" ] || fail "F70: output below 50,000"
   # at 60,000: exactly one JSON object, exact shape and first line, the rules block, the recall line is not required to exist here
@@ -2279,7 +2277,7 @@ PY
   set -e
   D="$T/f71"; mkdir -p "$D"; export HOME="$D/home"; mkdir -p "$HOME/.claude"
   export HANDOFF_STATE_DIR="$D/state"; HK="$ROOT/hooks/claim-guard.py"; LOG="$HANDOFF_STATE_DIR/claim-guard.jsonl"; unset HANDOFF_CLAIM_GUARD
-  [ "$(grep -c '^HOOK_VERSION = "1.20.0"$' "$HK")" = 1 ] || fail "F71: HOOK_VERSION"
+  [ "$(grep -c '^HOOK_VERSION = "1.21.0"$' "$HK")" = 1 ] || fail "F71: HOOK_VERSION"
   python3 - "$D" <<'PY'
 import json, sys
 d = sys.argv[1]
@@ -2732,7 +2730,7 @@ PY
   git -C "$W" init -q; : > "$W2/queue-limit"
   HG="$ROOT/hooks/history-guard.py"; AG="$ROOT/hooks/action-guard.py"; AR="$ROOT/hooks/auto-recall.py"
   for f in history-guard.py action-guard.py auto-recall.py guard_common.py; do
-    [ "$(grep -c '^HOOK_VERSION = "1.20.0"$' "$ROOT/hooks/$f")" = 1 ] || fail "F77: HOOK_VERSION of $f"
+    [ "$(grep -c '^HOOK_VERSION = "1.21.0"$' "$ROOT/hooks/$f")" = 1 ] || fail "F77: HOOK_VERSION of $f"
   done
   python3 - "$HOME" "$W" "$D" <<'PY'
 import json, os, re, sys

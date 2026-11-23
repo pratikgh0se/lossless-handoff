@@ -78,7 +78,7 @@ HARD_MAX = 9900    # each part's total output (warning + header + content + cont
 INLINE_MAX = 9700  # content target per part
 NAMES_MAX = 150    # the section-name list in a continuation line is cut to this many chars
 MAX_PARTS = 3      # F37.6
-HOOK_VERSION = "1.20.0"
+HOOK_VERSION = "1.21.0"
 
 
 def hooks_home():
@@ -230,7 +230,8 @@ def recall_path():
 
 
 RECALL_RULE_LINE = ("- recall rule: before you state an earlier number, path, name, command or decision, search for it. "
-                    "Do not answer from memory. If the search finds nothing, say so.")
+                    "Do not answer from memory. If a value is not in your context, or a file no longer holds it, "
+                    "search before you answer \"unknown\". If the search finds nothing, say so.")
 RECALL_MCP_SENTENCE = "Or call the search_earlier_chat tool."
 
 

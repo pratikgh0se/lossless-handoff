@@ -2,16 +2,18 @@
 # Lossless Handoff installer (formerly claude-handoff): copies the hooks and merges them into ~/.claude/settings.json.
 set -euo pipefail
 
-VERSION="0.18.0"
+VERSION="0.19.0"
 usage() {
   cat <<EOF
 Lossless Handoff $VERSION (formerly claude-handoff)
 Default install (F64): the core only. It copies the hooks (nudge, PreCompact handoff, post-compaction inject,
 SessionStart check, SubagentStart rules, SessionEnd index) and the recall command into ~/.claude/hooks,
 merges them into ~/.claude/settings.json, installs the recall subagent (~/.claude/agents/recall.md, unless a
-file of that name that is not ours is there), keeps the decisions list, and starts a first recall index.
-Hooks 1.20.0 keep the chat store: handoff files live 365 days, and --keep-transcripts raises Claude Code's transcript retention.
-Hooks 1.20.0 also mask secrets in every file they write (see SECURITY.md).
+file of that name that is not ours is there), keeps the decisions list, writes the recall rule marker
+(F81: the recall rule is on by default; turn it off with --no-recall-rules --save-defaults, or HANDOFF_RECALL_RULES=0),
+and starts a first recall index.
+Hooks 1.21.0 keep the chat store: handoff files live 365 days, and --keep-transcripts raises Claude Code's transcript retention.
+Hooks 1.21.0 also mask secrets in every file they write (see SECURITY.md).
 The default does NOT set CLAUDE_CODE_AUTO_COMPACT_WINDOW, pull a model, or install nightly jobs.
 Add them with the opt-in flags below. A rerun never removes, turns off or changes a part that is already installed
 (window value, meaning search, nightly jobs): a --no-* flag only skips adding it. Use ./uninstall.sh to remove parts.
@@ -32,9 +34,11 @@ Usage: ./install.sh [--dry-run] [--force] [--window N] [--nightly] [--semantic [
                 a prompt, and writes only ~/.local/state/claude-handoffs/auto-recall.jsonl (no prompt text).
                 Set HANDOFF_AUTO_RECALL=0 to switch it off at run time. Off by default
   --recall-rules
-                opt-in (F68): add one strict rule line after the recall line in every session start and subagent start:
-                search before you state an earlier number, path, name, command or decision. It writes the marker file
-                ~/.claude/hooks/.recall-rules. Set HANDOFF_RECALL_RULES=0 to switch it off at run time. Off by default
+                (F68, F81) add one strict rule line after the recall line in every session start and subagent start:
+                search before you state an earlier number, path, name, command or decision, also when a file no longer
+                holds a value. It writes the marker file ~/.claude/hooks/.recall-rules. On by default (since 0.19.0), so
+                this flag changes nothing. To turn it off: --no-recall-rules skips it for one run; add --save-defaults
+                to save the choice and remove an installed marker. Set HANDOFF_RECALL_RULES=0 to switch it off at run time
   --recall-mcp  opt-in (F69): install hooks/recall-mcp.py, a local MCP server (stdio) with the tools search_earlier_chat and
                 open_message, and register it with: claude mcp add --scope user lossless-recall -- python3 <hooks dir>/recall-mcp.py
                 If the claude command is not on PATH, the command is printed and the file is still installed. Off by default
@@ -160,6 +164,7 @@ if [ -f "$DEFAULTS_FILE" ]; then
       nightly=1) D_NIGHT=1 ;;
       auto_recall=1) D_AR=1 ;;
       recall_rules=1) D_RR=1 ;;
+      recall_rules=0) D_RR=0 ;;
       recall_mcp=1) D_RM=1 ;;
       reanchor=1) D_RA=1 ;;
       claim_guard=1) D_CG=1 ;;
@@ -179,7 +184,7 @@ pick window "$C_WIN" "$D_WIN"; case "$P" in ''|off) SETWINDOW=0 ;; *) SETWINDOW=
 pick nightly "$C_NIGHT" "$D_NIGHT"; [ "$P" = 1 ] && NIGHTLY=1 || NIGHTLY=0
 pick semantic "$C_SEM" "$D_SEM"; [ "$P" = 1 ] && SEMANTIC=1 || SEMANTIC=0
 pick auto_recall "$C_AR" "$D_AR"; [ "$P" = 1 ] && AUTORECALL=1 || AUTORECALL=0
-pick recall_rules "$C_RR" "$D_RR"; [ "$P" = 1 ] && RECALLRULES=1 || RECALLRULES=0
+pick recall_rules "$C_RR" "$D_RR"; [ "$P" = 0 ] && RECALLRULES=0 || RECALLRULES=1  # F81: on by default
 pick recall_mcp "$C_RM" "$D_RM"; [ "$P" = 1 ] && RECALLMCP=1 || RECALLMCP=0
 pick reanchor "$C_RA" "$D_RA"; [ "$P" = 1 ] && REANCHOR=1 || REANCHOR=0
 pick claim_guard "$C_CG" "$D_CG"; [ "$P" = 1 ] && CLAIMGUARD=1 || CLAIMGUARD=0
@@ -211,7 +216,11 @@ def setk(k, v, on):
 setk("semantic", os.environ["HC_CS"], "1")
 setk("nightly", os.environ["HC_CN"], "1")
 setk("auto_recall", os.environ["HC_CA"], "1")
-setk("recall_rules", os.environ["HC_CRR"], "1")
+crr = os.environ["HC_CRR"]  # F81: --no-recall-rules saves recall_rules=0
+if crr == "0":
+    cur["recall_rules"] = "0"
+elif crr == "1":
+    cur["recall_rules"] = "1"
 setk("recall_mcp", os.environ["HC_CRM"], "1")
 setk("reanchor", os.environ["HC_CRA"], "1")
 setk("claim_guard", os.environ["HC_CCG"], "1")
@@ -774,10 +783,14 @@ if [ "$AUTORECALL" = 0 ] && [ "$AR_THERE" = 1 ]; then
   say "auto-recall: already installed, kept"
 fi
 
-# F68: strict recall rules are opt-in. The marker file is the install. An installed marker is never removed by a rerun.
+# F68, F81: the recall rule marker is written by default. The marker file is the install. A rerun never removes an
+# installed marker, except --no-recall-rules together with --save-defaults.
 if [ "$RECALLRULES" = 1 ] && [ "$RR_THERE" = 0 ]; then
   say "install recall rules marker: $HOOKS_DIR/.recall-rules"
   if [ "$DRY" = 0 ]; then mkdir -p "$HOOKS_DIR"; : > "$HOOKS_DIR/.recall-rules"; chmod 644 "$HOOKS_DIR/.recall-rules"; fi
+elif [ "$C_RR" = 0 ] && [ "$SAVE" = 1 ] && [ "$RR_THERE" = 1 ]; then
+  say "recall-rules: removed"
+  if [ "$DRY" = 0 ]; then rm -f "$HOOKS_DIR/.recall-rules"; fi
 elif [ "$RR_THERE" = 1 ]; then
   say "recall-rules: already installed, kept"
 fi

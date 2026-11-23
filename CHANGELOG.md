@@ -2,7 +2,21 @@
 
 Lossless Handoff, formerly claude-handoff.
 
-## Unreleased
+## [0.19.0] - 2026-11-23
+
+Recall rule on by default (hooks 1.21.0). New F81 in `docs/spec.md`.
+
+### Upgrade notes
+
+- A default install now writes the marker file `~/.claude/hooks/.recall-rules`. The rule line follows the recall line in every session start and subagent start.
+- To turn it off, run `./install.sh --no-recall-rules --save-defaults`. This saves `recall_rules=0` and removes an installed marker (the installer prints `recall-rules: removed`). `HANDOFF_RECALL_RULES=0` turns the line off at run time.
+- Without `--save-defaults`, a rerun never removes an installed marker. `--recall-rules` stays valid and changes nothing.
+- Restart open Claude Code sessions after the install.
+
+### Changed
+
+- F81: the rule line now also says: if a value is not in your context, or a file no longer holds it, search before you answer "unknown". In the proof test, Claude answered "unknown" for exact strings that a search would have found. The benefit is not measured yet.
+- F64: the default install now includes the recall rule.
 
 ### Added
 
