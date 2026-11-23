@@ -4,6 +4,10 @@ Lossless Handoff, formerly claude-handoff.
 
 ## Unreleased
 
+### Added
+
+- Benchmark: the proof test, `bench/continuity/run.sh proof`. It uses 4 new seeds, the arms A, B, O and Z, and N = 1, 3 and 10, for about $165. The pass rule (P1 loss, P2 fix, validity gates) is in `thresholds.json`, and the report starts with a "Proof verdict" and side-by-side examples. The full suite is future work.
+
 ### Fixed
 
 - State files now have mode 0600 (folders 0700). Before, the handoff files and the decisions list were mode 644, so other local users could read them. The three hooks set `umask 077`, and `write_atomic` makes its temp file 0600. `install.sh` sets existing files in the state folder to 0600. Content, paths and hook behaviour are the same.

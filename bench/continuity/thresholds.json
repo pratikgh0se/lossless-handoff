@@ -1,7 +1,7 @@
 {
   "version": 7,
   "registered": "2026-11-18",
-  "note": "Pass thresholds. They come from the verification plan. v2 adds the headroom gate for generator v4. Committed before any v4 run. Do not change after a run to make a result pass. v3 adds the litm block (lost in the middle, phrasing, auto-recall), committed before any run of probe design 2. v4 adds H1n, H6, H7 and the design-3 settings, committed before any run of probe design 3. v5 adds the audit fixes (null-control margin, H7 ceiling, design-3 controls, pilot stop rule as fork counts), committed before any run of probe design 3. v6 (round 5): the K label depends on the data (fork_rule_line), the full run is V3, DISABLE_AUTOUPDATER is set.",
+  "note": "Pass thresholds. They come from the verification plan. v2 adds the headroom gate for generator v4. Committed before any v4 run. Do not change after a run to make a result pass. v3 adds the litm block (lost in the middle, phrasing, auto-recall), committed before any run of probe design 2. v4 adds H1n, H6, H7 and the design-3 settings, committed before any run of probe design 3. v5 adds the audit fixes (null-control margin, H7 ceiling, design-3 controls, pilot stop rule as fork counts), committed before any run of probe design 3. v6 (round 5): the K label depends on the data (fork_rule_line), the full run is V3, DISABLE_AUTOUPDATER is set. v7 adds the proof block (the proof test, run.sh proof), committed before any proof data exists.",
   "amnesia_max_accuracy": 0.02,
   "oracle_min_accuracy": 0.95,
   "fresh_min_accuracy": 0.95,
@@ -200,7 +200,10 @@
       "h10_note": "H10: O minus A at least headroom_min_points (15).",
       "h12_17_registered": "2026-11-22, F79, before any data of arms G and P. G = K + F77 (block) + F80 (inject); P = K + F78. Action probes (a task with no question, the fork writes a file) are the primary cell of H13 and H17.",
       "h12_min_share": 0.9,
-      "h12_phrasings": ["nonliteral", "neutral"],
+      "h12_phrasings": [
+        "nonliteral",
+        "neutral"
+      ],
       "h12_note": "H12 trigger: in G at least 90% of the non-literal probe items, and the same for neutral, got the history: the guard fired or the model searched (model_search).",
       "h13_min_points": 10,
       "h13_primary": "action",
@@ -227,5 +230,20 @@
       "kept": "H1 and its secondary forms use the primary cell. H6 and H7 and the null control are kept.",
       "compaction_condition": "as in design 3"
     }
+  },
+  "proof": {
+    "registered": "2026-11-23",
+    "types": "R D X S E C M",
+    "probes": "cued, compaction condition, refused forks left out",
+    "seeds": 4,
+    "n_low": 1,
+    "n_high": 10,
+    "p1_min_drop_points": 25,
+    "p1_min_seeds": 3,
+    "p2_min_gain_points": 15,
+    "p2_ci_lower_above": 0,
+    "p2_min_seeds": 3,
+    "validity_gates": "fresh-control F, oracle O, amnesia Z, parse rate, refused forks, missed checkpoints (the values above), and 4 seeds with A and B data at N=1 and N=10. A gate that does not pass makes the verdict INVALID, not FAIL.",
+    "note": "Pre-registered before any proof data. P1 (loss): A at N=1 minus A at N=10 >= p1_min_drop_points (pooled) and A at N=10 below A at N=1 in at least p1_min_seeds seeds. P2 (fix): B minus A at N=10 >= p2_min_gain_points (pooled), the 95% bootstrap lower bound over seeds above p2_ci_lower_above, and B >= A at N=10 in at least p2_min_seeds seeds. Do not change after a run."
   }
 }

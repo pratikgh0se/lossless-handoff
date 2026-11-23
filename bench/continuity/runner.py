@@ -19,7 +19,7 @@ import sys, tempfile, threading, time, uuid
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
-import cost, design4, gates, gen, grade  # noqa: E402
+import cost, design4, gates, gen, grade, proof  # noqa: E402
 import math  # noqa: E402
 
 REPO = os.path.realpath(os.path.join(HERE, "..", ".."))
@@ -116,6 +116,10 @@ KINDS = {
                     "conditions": "compact,nocompact", "phrasings": "cued,neutral,nonliteral", "probe_design": 4},
     "litm4-full-v3": {"model": "sonnet", "window": 400000, "n": [1, 3, 10, 30], "n_by_arm": {"R": [1, 3, 10], "K": [1, 3, 10]}, "arms": "A,B,R,K,Z,O", "seeds": 23,
                       "seed_file": "seeds-report.txt", "conditions": "compact,nocompact", "phrasings": "cued,neutral,nonliteral", "probe_design": 4},
+    # The proof test (run.sh proof): 4 new seeds (seeds-proof.txt, checked by proof.check_seeds), arms A B O Z, compaction only, no design-4 chains, the live selfcheck first.
+    # Pass rule: thresholds.json, block proof. Cost basis: the pilot rerun 20261123T154241 (about $165 for 4 seeds). The full suite (20 seeds, Wave 2, Opus) is future work.
+    "proof": {"model": "sonnet", "window": 400000, "n": [1, 3, 10], "arms": "A,B,O,Z", "seeds": 4, "seed_file": "seeds-proof.txt",
+              "conditions": "compact", "phrasings": "cued,neutral,nonliteral", "probe_design": 4, "selfcheck": True, "cost_basis": {"A": 19.59, "B": 16.85}},
     "preflight4": {"model": "haiku", "window": 30000, "n": [1], "arms": "A,B,R,K,Z,O", "seeds": 1, "seed_file": "seeds-dev.txt", "types": "R,X",
                    "conditions": "compact,nocompact", "phrasings": "cued,neutral,nonliteral", "probe_design": 4, "nc_window": 120000,
                    "mcp_check": True, "selfcheck": True, "big_check": True},
@@ -1636,6 +1640,10 @@ def build_cfg(kind, a):
     k = KINDS[kind]
     window = a.window or k["window"]
     seeds = seed_list(kind, a.seeds or k["seeds"], a.seed_file)
+    if kind == "proof":
+        bad_seeds = proof.check_seeds(seeds, HERE, want=len(seeds) if a.seeds else 4)
+        if bad_seeds:
+            raise SystemExit("proof test: the seeds must be new. " + "; ".join(bad_seeds))
     types = [t for t in ((a.types or k.get("types") or "").split(",") if (a.types or k.get("types")) else ALL_TYPES)]
     bad = [t for t in types if t not in ALL_TYPES]
     arms = (a.arms or k["arms"]).split(",")
@@ -1684,7 +1692,7 @@ def build_cfg(kind, a):
         "o_estimate_tokens": o_est,
         "conditions": conds, "phrasings": phr, "probe_design": k.get("probe_design", 1), "search_used": bool(k.get("search_used")), "gates": True,
         "mcp_check": bool(k.get("mcp_check")), "selfcheck": bool(k.get("selfcheck")), "big_check": bool(k.get("big_check")), "big_model": "sonnet", "big_cap_usd": BIG_CAP_USD,
-        "n_by_arm": k.get("n_by_arm", {}),
+        "n_by_arm": k.get("n_by_arm", {}), "cost_basis": k.get("cost_basis"),
         "live_recall_sha256": sha256_file(os.path.join(HOME, ".claude", "hooks", "recall.py")),      # the injected text still names ~/.claude/hooks/recall.py
         "pinned_recall_sha256": sha256_file(os.path.join(lh, "hooks", "recall.py")),
         "env_allowlist": list(ENV_ALLOW), "env_overrides": list(OVERRIDE_ENV), "auto_memory": "off (%s=1 and autoMemoryEnabled=false)" % MEMORY_ENV,
@@ -1733,7 +1741,7 @@ def execute(ctx):
             ctx.state["selfcheck"] = {"ok": ok_, "lines": lines_}
             ctx.save()
             if not ok_:
-                raise Fatal("deny-rule selfcheck failed: " + " | ".join(lines_)[:300])
+                raise Fatal(("proof test stopped before any probe: " if cfg.get("kind") == "proof" else "") + "deny-rule selfcheck failed: " + " | ".join(lines_)[:300])
         if cfg.get("big_check"):
             run_big_check(ctx)
         with concurrent.futures.ThreadPoolExecutor(max_workers=cfg["jobs"]) as ex:
@@ -1790,7 +1798,7 @@ def cmd_run(a):
             cfg["run_id"], cfg["kind"], cfg["model"], cfg["window"], cfg["nc_window"], cfg["nc_lines"]))
         print("units (seed, arm, condition):", len(units), "; conditions", cfg["conditions"], "; phrasings", cfg["phrasings"], "; probe design", cfg["probe_design"])
         print("budget_usd: %s%s" % (cfg["budget_usd"], " (default: %.1f x the estimate of the whole run; the run pauses there, exit code 3)" % gates.DEFAULT_BUDGET_FACTOR if cfg.get("budget_default") else ""))
-        c_ = {"levels": cfg.get("levels"), "seeds": len(cfg["seeds"]), "arms": cfg["arms"], "n": cfg["n"], "conditions": cfg["conditions"], "phrasings": cfg["phrasings"], "n_by_arm": cfg.get("n_by_arm"), "design": cfg["probe_design"]}
+        c_ = {"levels": cfg.get("levels"), "seeds": len(cfg["seeds"]), "arms": cfg["arms"], "n": cfg["n"], "conditions": cfg["conditions"], "phrasings": cfg["phrasings"], "n_by_arm": cfg.get("n_by_arm"), "design": cfg["probe_design"], "cost_basis": cfg.get("cost_basis")}
         if cfg["kind"].startswith("preflight"):
             tot, ln = cost.estimate_preflight(cfg["arms"], cfg["conditions"], 4 if cfg.get("probe_design", 1) >= 4 else 3)
             print("ESTIMATE FOR THIS RUN (Haiku, assumptions in cost.py):\n" + "\n".join("  " + x for x in ln) + "\n  total about $%.2f (target: under $3)" % tot)

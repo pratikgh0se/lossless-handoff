@@ -493,6 +493,18 @@ def build(run_id, draws=None):
             md.append("")
             md += d4md
             out["design4"] = d4out
+    if cfg.get("kind") == "proof":      # the proof test: the verdict and the side-by-side examples come first
+        import proof
+        scripts = {}
+        for sd in {r["seed"] for r in rows_all}:
+            try:
+                scripts[sd] = json.load(open(os.path.join(rd, "scripts", "%s.json" % sd), encoding="utf-8"))
+            except (OSError, ValueError):
+                pass
+        pmd, pout = proof.section(rows_all, sess_all, cfg, th, scripts, draws)
+        out["proof"] = pout
+        text = "\n".join(head[:1] + [""] + pmd + [""] + head[1:] + md) + "\n"
+        return out, text
     text = "\n".join(head + md) + "\n"
     return out, text
 

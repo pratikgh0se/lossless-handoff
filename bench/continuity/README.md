@@ -58,6 +58,27 @@ bench/continuity/run.sh slice --seeds 1 --arms A,B --n 1 --types R,X
 bench/continuity/run.sh cleanup
 ```
 
+## The proof test (`run.sh proof`)
+
+The proof test is a small, cheap run. It shows that plain Claude Code loses information across compactions and that Lossless Handoff keeps it. The full suite (20 seeds, Wave 2 with 30 compactions, Opus, a published benchmark) is future work.
+
+- Preset `proof`: Sonnet, window 400000, arms A, B, O and Z, N = 1, 3 and 10, compaction condition only. There is no no-compaction condition and there are no design-4 chains. The probe types and phrasings are the same as in `litm4-pilot`.
+- Seeds: 2001 to 2004, in `seeds-proof.txt`. `proof.check_seeds` checks every `seeds*.txt` file and the `config.json` of every run in `results/`. If a seed was used before, the run does not start.
+- The run starts with the live selfcheck. If it fails, the run stops with the message "proof test stopped before any probe".
+- `run.sh proof --dry-run` prints the estimate. The basis is the pilot rerun 20261123T154241 (arm A $19.59 and arm B $16.85 for each seed). Arms O and Z come from the estimate. The total is about $165. The default budget is 1.5 times the estimate.
+
+### Pass rule (thresholds.json, block `proof`)
+
+The rule was committed before any proof data existed. Do not change it after a run. Types R, D, X, S, E, C and M are pooled, as in Table 1. The probes are the cued ones.
+
+- P1 (loss): arm A at N=1 minus arm A at N=10 is at least 25 points (pooled). Arm A at N=10 is below arm A at N=1 in at least 3 of 4 seeds.
+- P2 (fix): arm B minus arm A at N=10 is at least 15 points (pooled). The 95% bootstrap lower bound over seeds is above 0. Arm B is at least arm A at N=10 in at least 3 of 4 seeds.
+- Validity gates: fresh control F, oracle O, amnesia Z, parse rate, refused forks and missed checkpoints, plus 4 seeds with data. If a gate does not pass, the verdict is INVALID, not FAIL.
+
+### Report
+
+For a proof run, `summary.md` starts with "Proof verdict": P1, P2 and each gate with the measured value and PASS, FAIL or INVALID. It also says that the run used 4 seeds and is a small benchmark, not the full suite. Then comes "Side-by-side examples": up to 5 items at N=10 where A is wrong and B is right, and all items where B is wrong and A is right. The order is fixed (seed, item id, type), so nobody picks by hand. The logic is in `proof.py`. The tests are in `test_proof.py`.
+
 ## Lost-in-the-middle design (probe design 2, 2026-11-20)
 
 This design adds four things. It does not change the old arms, the old probe text or the old scores. `test_litm.py` checks this with hashes of old scripts and old probe text, and with a stored run (`fixtures/legacy-run/`) that must give the same report, byte for byte.
