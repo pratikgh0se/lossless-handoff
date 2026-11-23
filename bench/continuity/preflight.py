@@ -384,6 +384,30 @@ def check(rd, projects=None, mcp=True):
             BIG_MIN_TOKENS <= big["tokens"] <= BIG_MAX_TOKENS and not big["over_call_cap"],
             "tokens %d, cost $%.2f (standard price $%.2f), price ratio %s%s" % (big["tokens"], big["cost_usd"], big["standard_price_usd"], big["price_ratio"],
                                                                            "; the price per token is above the standard price (long-context price)" if (big["price_ratio"] or 0) > 1.3 else ""))
+    # 13b. forks share the prompt cache: the forks of one no-compaction session write about their probe, not the whole history
+    by_s = {}
+    for c in R.calls:
+        if c.get("kind") == "fork" and str(c.get("name", "")).endswith("-nc"):
+            by_s.setdefault(c["name"], []).append(c)
+    bad_c, ratio_txt = [], []
+    for nm, cs in sorted(by_s.items()):
+        frac, n_ = gates.cache_write_fraction(sorted(cs, key=lambda x: x.get("ts", "")))
+        if n_ >= 2:
+            ratio_txt.append("%s %.2f (%d forks)" % (nm, frac, n_ + 1))
+            if frac > gates.CACHE_WRITE_MAX:
+                bad_c.append(nm)
+    add("no-compaction forks share the prompt cache: cache write at most %d%% of cache read, on average per session" % int(100 * gates.CACHE_WRITE_MAX),
+        None if not ratio_txt else not bad_c, "write/read: %s; above the limit: %s" % (", ".join(ratio_txt) or "no session with 3 forks", bad_c or "none"))
+    if R.cfg.get("model") == "sonnet":
+        bad_cost = []
+        for nm, cs in sorted(by_s.items()):
+            arm = nm.split("-")[1] if nm.count("-") >= 2 else None
+            est = cost.d4_nc_fork_estimate(arm)
+            avg = sum(c.get("delta_usd") or 0 for c in cs) / float(len(cs))
+            if avg > gates.FORK_COST_RATIO_MAX * est:
+                bad_cost.append("%s $%.3f vs estimate $%.3f" % (nm, avg, est))
+        add("no-compaction forks cost at most %.0f x the cost.py estimate of a fork (average per session)" % gates.FORK_COST_RATIO_MAX, None if not by_s else not bad_cost,
+            "above the limit: %s" % (bad_cost or "none"))
     # 14. cost
     spent = R.state.get("spent", 0.0)
     add("total cost under $%.0f" % COST_CAP_USD, spent < COST_CAP_USD, "$%.2f" % spent)

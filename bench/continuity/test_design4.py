@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Self-test of probe design 4 (update chains with interference). No model, no network, no claude process.
 Run: python3 bench/continuity/test_design4.py"""
-import hashlib, json, os, re, shutil, sys, tempfile, unittest
+import time, hashlib, json, os, re, shutil, sys, tempfile, unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
@@ -592,6 +592,155 @@ class PreflightRun5Fixes(unittest.TestCase):
         src = inspect.getsource(preflight.check)
         self.assertIn("has_anchor", src)
         self.assertIn("reanchor-", src)
+
+
+class ForkCacheSharing(unittest.TestCase):
+    """The run 20261123T033514 cost bug: forks that miss the prompt cache write the whole history."""
+
+    def calls(self, read, write, n=6):
+        return [{"kind": "fork", "name": "s1-B-nc", "ts": "2026-11-23T04:0%d:00Z" % i, "cache_read": read, "cache_write": write, "delta_usd": 1.1 if write > 100000 else 0.04}
+                for i in range(n)]
+
+    def test_fraction_is_small_for_sharing_forks_and_large_for_missing_forks(self):
+        import gates
+        self.assertLess(gates.cache_write_fraction(self.calls(298154, 385))[0], gates.CACHE_WRITE_MAX)
+        self.assertGreater(gates.cache_write_fraction(self.calls(19805, 278700))[0], gates.CACHE_WRITE_MAX)
+        # the first fork of a parent may write everything: it does not count
+        mixed = [dict(self.calls(0, 298540, 1)[0])] + self.calls(298540, 300, 4)
+        self.assertLess(gates.cache_write_fraction(mixed)[0], gates.CACHE_WRITE_MAX)
+
+    def test_runner_guard_stops_after_the_minimum_number_of_forks(self):
+        import gates
+        s = runner.Session.__new__(runner.Session)
+
+        class Ctx:
+            pass
+        s.ctx = Ctx()
+        s.ctx.stop = __import__("threading").Event()
+        stopped = None
+        for i in range(8):
+            try:
+                s.cache_guard("fb0cc723-aaaa", {"cache_read_input_tokens": 19805, "cache_creation_input_tokens": 278700})
+            except runner.Fatal as e:
+                stopped = (i + 1, str(e))
+                break
+        self.assertIsNotNone(stopped)
+        self.assertEqual(stopped[0], gates.CACHE_MIN_FORKS)
+        self.assertIn("do not share the prompt cache", stopped[1])
+        self.assertTrue(s.ctx.stop.is_set())
+        # sharing forks never stop the run
+        s2 = runner.Session.__new__(runner.Session)
+        s2.ctx = Ctx()
+        s2.ctx.stop = __import__("threading").Event()
+        for i in range(20):
+            s2.cache_guard("p2", {"cache_read_input_tokens": 298154, "cache_creation_input_tokens": 385})
+
+    def test_preflight_line_fails_for_missing_forks(self):
+        import preflight
+        d = tempfile.mkdtemp()
+        try:
+            rd, projects = test_litm.make_pf_run(d, d4=True)
+            with open(os.path.join(rd, "calls.jsonl"), "a") as f:
+                for c in self.calls(19805, 278700):
+                    f.write(json.dumps(c) + "\n")
+            res = preflight.check(rd, projects, mcp=False)
+            line = [x for x in res if x[0].startswith("no-compaction forks share the prompt cache")]
+            self.assertEqual([x[1] for x in line], ["FAIL"])
+            self.assertIn("s1-B-nc", line[0][2])
+        finally:
+            shutil.rmtree(d)
+
+    def test_fork_estimate_for_the_cost_check(self):
+        e = cost.d4_nc_fork_estimate("B")
+        self.assertTrue(0.01 < e < 0.2, e)
+
+
+class ColdParentRule(unittest.TestCase):
+    """Resume rule (fake clock): a no-compaction parent that is idle for more than 4 minutes runs again before its forks."""
+    T0 = 1795400000        # any fixed second
+
+    def iso(self, t):
+        return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(t))
+
+    def calls(self, last):
+        return [{"name": "s1-A-nc", "kind": "turn", "sid": "P1", "ts": self.iso(self.T0)},
+                {"name": "s1-A-nc", "kind": "fork", "fork_of": "P1", "sid": "F1", "ts": self.iso(last)}]
+
+    def test_age_and_cold_with_a_fake_clock(self):
+        c = self.calls(self.T0 + 60)
+        self.assertEqual(runner.parent_age_s(c, "P1", now=self.T0 + 100), 40)         # the fork counts as a use of the parent
+        self.assertFalse(runner.parent_is_cold(c, "P1", now=self.T0 + 60 + runner.CACHE_TTL_S))
+        self.assertTrue(runner.parent_is_cold(c, "P1", now=self.T0 + 60 + runner.CACHE_TTL_S + 1))
+        self.assertFalse(runner.parent_is_cold([], "P1", now=self.T0))
+
+    def make(self, status_b="running", done=False):
+        d = tempfile.mkdtemp()
+
+        class Ctx:
+            pass
+        ctx = Ctx()
+        ctx.dir = d
+        ctx.lock = __import__("threading").RLock()
+        ctx.saved = 0
+        ctx.save = lambda: None
+        cfg = {"arms": ["A", "B"], "probe_design": 4, "levels": ["L1", "L2"], "phrasings": ["cued"]}
+        ctx.cfg = cfg
+        ctx.state = {"sessions": {"s1-B-nc": {"status": status_b}}}
+        keys = [runner.fork_key(0, t, ph) for t in runner.nc_types(cfg) for ph in runner.probe_plan(cfg, t, d3=True)]
+        ss = runner.Session.__new__(runner.Session)
+        ss.arm, ss.seed, ss.name, ss.ctx = "A", 1, "s1-A-nc", ctx
+        ss.st = {"nc_done": 5, "sid": "P1", "done_forks": keys if done else keys[:1], "status": "running", "restarts": 0, "next_turn": 5}
+        ss.proj = d
+        ss.transcript = lambda sid: os.path.join(d, sid + ".jsonl")
+        rows = [{"seed": 1, "arm": a, "condition": "nocompact", "item": 1, "attempt": 0} for a in ("A", "B")] + [{"seed": 1, "arm": "O", "condition": "nocompact", "item": 1}]
+        with open(os.path.join(d, "results.jsonl"), "w") as f:
+            f.writelines(json.dumps(r) + "\n" for r in rows)
+        return ctx, ss, d
+
+    def run_rule(self, last, **kw):
+        ctx, ss, d = self.make(**kw)
+        with open(os.path.join(d, "calls.jsonl"), "w") as f:
+            f.writelines(json.dumps(c) + "\n" for c in self.calls(last))
+        try:
+            r = runner.rewarm_cold_parent(ctx, ss, list(range(5)), now=self.T0 + 600)
+            return r, ctx, ss, d
+        finally:
+            pass
+
+    def test_a_cold_parent_with_forks_left_runs_again_and_supersedes_the_fork_rows(self):
+        r, ctx, ss, d = self.run_rule(self.T0 + 60)             # last use 540 s ago
+        try:
+            self.assertTrue(r)
+            self.assertNotEqual(ss.st["sid"], "P1")
+            self.assertEqual((ss.st["nc_done"], ss.st["restarts"], ss.st["done_forks"], ss.st["first"]), (0, 1, [], True))
+            left = [json.loads(l) for l in open(os.path.join(d, "results.jsonl"))]
+            self.assertEqual([x["arm"] for x in left], ["O"])                  # arm O is a separate session: kept
+            sup = [json.loads(l) for f in os.listdir(os.path.join(d, "superseded")) for l in open(os.path.join(d, "superseded", f))]
+            self.assertEqual(sorted(x["arm"] for x in sup), ["A", "B"])
+        finally:
+            shutil.rmtree(d)
+
+    def test_a_warm_parent_a_finished_parent_and_an_unfinished_main_are_left_alone(self):
+        r, _c, ss, d = self.run_rule(self.T0 + 500)             # last use 100 s ago: warm
+        shutil.rmtree(d)
+        self.assertFalse(r)
+        r, _c, ss, d = self.run_rule(self.T0 + 60, status_b="done", done=True)       # nothing left to fork
+        shutil.rmtree(d)
+        self.assertFalse(r)
+        ctx, ss, d = self.make()
+        ss.st["nc_done"] = 2                                                     # the main session is not finished
+        with open(os.path.join(d, "calls.jsonl"), "w") as f:
+            f.write("")
+        try:
+            self.assertFalse(runner.rewarm_cold_parent(ctx, ss, list(range(5)), now=self.T0 + 9999))
+        finally:
+            shutil.rmtree(d)
+
+    def test_call_refuses_a_cold_nc_fork_in_a_running_run(self):
+        import inspect
+        src = inspect.getsource(runner.Session.call)
+        self.assertIn("age > CACHE_TTL_S", src)
+        self.assertIn('self.cond == "nocompact"', src)
 
 
 class AuditFixes(unittest.TestCase):

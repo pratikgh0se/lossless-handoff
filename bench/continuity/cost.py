@@ -107,6 +107,11 @@ D4_MAIN = SMOKE_REAL["main_nc_75_turns"] * D4_TURNS / 75.0            # about $4
 D4_A_FORK_UNIT = SMOKE_REAL["forks_15"]["A"] / 15.0                    # real: $0.0447 for one fork (the smoke: 15 forks cost $0.671)
 D4_A_FORKS = D4_A_FORK_UNIT * D4_FORKS                                 # about $1.61 for 36 forks (was $0.70 for 12)
 D4_FORK_FACTOR = {a: v / SMOKE_REAL["forks_15"]["A"] for a, v in SMOKE_REAL["forks_15"].items()}    # real: B 1.00, R 1.02, K 2.09
+def d4_nc_fork_estimate(arm):
+    """USD estimate of one design-4 no-compaction probe fork of an arm (Sonnet prices, 300k context read from the cache)."""
+    return D4_A_FORKS / float(D4_FORKS) * D4_FORK_FACTOR.get(arm, 1.0)
+
+
 D4_FORK_FACTOR["G"], D4_FORK_FACTOR["P"] = D4_FORK_FACTOR["K"] * 1.6, D4_FORK_FACTOR["K"] * 1.3       # assumed (F79), not measured
 # Arm O at about $0.9 (audit of PR #35: its short session holds the 69 plant turns, 3 phrasings of 4 levels of forks); the per-session cost gate
 # (gates.session_reasons: above 2 x the estimate and above the estimate plus $0.25) then allows up to $1.80, so a $0.9 session does not trip it.
