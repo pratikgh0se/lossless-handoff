@@ -13,6 +13,7 @@ It never touches ~/.claude settings or hooks, ~/.local/state/claude-handoffs, or
 
 Exit: 0 finished, 1 a session failed, 2 usage error, 3 paused (budget reached; resume later).
 """
+import calendar
 import argparse, concurrent.futures, datetime, glob, hashlib, json, os, re, shutil, signal, subprocess
 import sys, tempfile, threading, time, uuid
 
@@ -548,6 +549,14 @@ class Session:
                     self.st["replays"] = self.st.get("replays", 0) + 1
                     return {"result": text, "session_id": sid, "total_cost_usd": self.st["last_cost"], "usage": {}, "_delta": 0.0, "is_error": False, "_replayed": True}
                 first = first and not os.path.isfile(self.transcript(sid))
+            if fork_of and self.cond == "nocompact" and self.d4:
+                # a no-compaction fork must start within CACHE_TTL_S of the last request that read the parent prefix, or it writes the whole history
+                last = self.ctx.__dict__.setdefault("parent_use", {}).get(fork_of)
+                age = (CLOCK() - last) if last is not None else parent_age_s(read_jsonl(os.path.join(self.ctx.dir, "calls.jsonl")), fork_of)
+                if age is not None and age > CACHE_TTL_S:
+                    self.ctx.stop.set()
+                    raise Fatal("the parent session %s was last used %d s ago (cache time %d s): a fork would write the whole history (about $1.1 on Sonnet). "
+                                "Stop. Resume the run: the main session of arm A runs again and its forks follow in one stretch." % (fork_of[:8], age, CACHE_TTL_S))
             big = len(prompt) > 100000          # argv is limited (about 1 MB on macOS, 128 KB for one argument on Linux): a big prompt goes through stdin
             cmd = ["claude", "-p"]
             if fork_of:
@@ -608,6 +617,7 @@ class Session:
             o["_delta"] = delta
             if kind == "fork" and fork_of:
                 self.cache_guard(fork_of, u)
+                self.ctx.__dict__.setdefault("parent_use", {})[fork_of] = CLOCK()
             if o.get("is_error") and self.d4 and kind in ("fork", "z") and gates.failure_class(o.get("result")) == "runaway":
                 self.save_failed(o, out, err_txt, kind, fork_of, attempt)       # a probe that hit the output cap: an outcome, not a failure; no retry
                 o["_runaway"] = True
@@ -815,6 +825,61 @@ def count_cleared(path):
     return n
 
 
+CACHE_TTL_S = 240          # a parent session is cold after 4 minutes without a request that reads its prefix (the cache lives 5 minutes)
+CLOCK = time.time          # replaced in the tests (fake clock)
+
+
+def parse_ts(ts):
+    """Seconds since the epoch of a ts of calls.jsonl ("2026-11-23T04:01:15Z", UTC). None if it cannot be read."""
+    try:
+        return calendar.timegm(time.strptime(str(ts), "%Y-%m-%dT%H:%M:%SZ"))
+    except (ValueError, TypeError):
+        return None
+
+
+def parent_age_s(calls, sid, now=None):
+    """Seconds since the last request that read the prefix of the parent session `sid`: its own turns and the forks of it. None if there is none."""
+    now = CLOCK() if now is None else now
+    ts = [parse_ts(c.get("ts")) for c in calls if c.get("sid") == sid or c.get("fork_of") == sid]
+    ts = [t for t in ts if t is not None]
+    return (now - max(ts)) if ts else None
+
+
+def parent_is_cold(calls, sid, now=None, ttl=CACHE_TTL_S):
+    """True when the parent was last used more than `ttl` seconds ago: a fork of it would write the whole history (about $1.1 at 300k tokens on Sonnet)."""
+    age = parent_age_s(calls, sid, now)
+    return age is not None and age > ttl
+
+
+def supersede_rows(ctx, seed):
+    """The forks of the no-compaction parent of a seed run again on a fresh parent: move the earlier fork rows (arms A, B, R, K, condition nocompact) of the
+    seed out of results.jsonl into superseded/results-<time>.jsonl, so they stay for audit and are not in any score. Returns the number of rows moved."""
+    path = os.path.join(ctx.dir, "results.jsonl")
+    with ctx.lock:
+        keep, moved = [], []
+        if os.path.isfile(path):
+            with open(path, encoding="utf-8") as f:
+                for ln in f:
+                    try:
+                        r = json.loads(ln)
+                    except ValueError:
+                        keep.append(ln)
+                        continue
+                    if r.get("seed") == seed and r.get("condition") == "nocompact" and r.get("arm") in ("A", "B", "R", "K"):
+                        moved.append(ln)
+                    else:
+                        keep.append(ln)
+        if moved:
+            os.makedirs(os.path.join(ctx.dir, "superseded"), exist_ok=True)
+            with open(os.path.join(ctx.dir, "superseded", "results-s%d-%s.jsonl" % (seed, time.strftime("%Y%m%dT%H%M%S", time.gmtime(CLOCK())))), "a", encoding="utf-8") as f:
+                f.writelines(moved)
+            tmp = path + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                f.writelines(keep)
+            os.replace(tmp, path)
+        return len(moved)
+
+
 def last_turn_context(calls, name):
     """Context size of the last main turn of a session: input_tokens + cache_read_input_tokens of its last `turn` call. None if unknown."""
     last = [c for c in calls if c.get("name") == name and c.get("kind") == "turn"]
@@ -955,6 +1020,7 @@ def run_nc3_session(ctx, ss):
     cfg, st, script = ctx.cfg, ss.st, ss.script
     steps = script["plan"] if ss.arm != "O" else [x for x in script["plan"] if x["kind"] != "fill"]
     st.setdefault("nc_done", 0)       # a fresh session has no counter yet
+    rewarm_cold_parent(ctx, ss, steps)
     while st["nc_done"] < len(steps):
         ctx.check_budget()
         step = steps[st["nc_done"]]
@@ -985,6 +1051,41 @@ def run_nc3_session(ctx, ss):
     if ss.arm == "A":
         for arm in [x for x in cfg["arms"] if x in NC3_FORK_ARMS]:
             run_fork_view(ctx, ss, arm, valid=ok)
+
+
+def nc_forks_unfinished(ctx, ss):
+    """True when the main session of arm A has forks left to run: its own, or those of a view arm (B, R, K)."""
+    cfg, st = ctx.cfg, ss.st
+    own = [fork_key(0, t, ph) for t in nc_types(cfg) for ph in probe_plan(cfg, t, d3=True)]
+    if any(k not in st.get("done_forks", []) for k in own):
+        return True
+    return any(ctx.state["sessions"].get("s%d-%s-nc" % (ss.seed, a), {}).get("status") != "done" for a in cfg["arms"] if a in NC3_FORK_ARMS)
+
+
+def rewarm_cold_parent(ctx, ss, steps, now=None):
+    """Resume rule. Never fork a cold no-compaction parent. If the main session of arm A is finished, forks are left, and its last request is more than
+    CACHE_TTL_S old, every fork would write the whole history (about $1.1 each). Run the main session again from the start (same script, a new session id,
+    about $2.8) and then all its forks in one stretch: the earlier fork rows go to superseded/ and are not in the scores. Returns True when it restarted."""
+    st = ss.st
+    if ss.arm != "A" or st.get("nc_done", 0) < len(steps) or st.get("status") == "invalid" or not st.get("sid"):
+        return False
+    if not nc_forks_unfinished(ctx, ss):
+        return False
+    if not parent_is_cold(read_jsonl(os.path.join(ctx.dir, "calls.jsonl")), st["sid"], now):
+        return False
+    old = st["sid"]
+    moved = supersede_rows(ctx, ss.seed)
+    drop_fork(ss, old)
+    st.update({"next_turn": 0, "ckpt_i": 0, "boundaries": 0, "last_cost": 0.0, "done_forks": [], "f_planted": [], "missed": [], "first": True,
+               "sid": str(uuid.uuid4()), "events_done": 0, "fill_done": 0, "filler_no_read_turns": 0, "filler_retries": 0, "filler_retry_no_read": 0,
+               "nc_done": 0, "status": "running", "rewarmed": st.get("rewarmed", 0) + 1})
+    for k in ("nc_valid", "nc_reasons", "reason", "filler_task_total", "filler_task_ok"):
+        st.pop(k, None)
+    st["restarts"] = st.get("restarts", 0) + 1       # the view arms see a new attempt of the main session and run their forks again
+    ctx.save()
+    print("%s: the parent session %s is cold (older than %d s) and forks are left. Run it again from turn 0 (new session). %d fork row(s) moved to superseded/." % (
+        ss.name, old[:8], CACHE_TTL_S, moved), file=sys.stderr)
+    return True
 
 
 def run_fork_view(ctx, main, arm, valid=True):
