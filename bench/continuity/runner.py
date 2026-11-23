@@ -495,6 +495,21 @@ class Session:
         return base + (" " + MCP_TOOLS + " " + TOOL_SEARCH if self.arm in RECALL_ARMS else "")
 
     # -- folders
+    def refresh_deny(self):
+        """A project folder that exists keeps the permission rules of the code that made it. When they differ from deny_rules now, write the current ones
+        (a stale folder of the selfcheck kept the broad Bash(*lhbench*) rule of arm B after PR #51 and denied the printed recall command)."""
+        p = os.path.join(self.proj, ".claude", "settings.json")
+        try:
+            s = json.load(open(p))
+        except (OSError, ValueError):
+            return False
+        want = deny_rules(work_base(self.ctx.cfg["work_base"]), self.arm, shared=(self.arm == "A" and self.cond == "nocompact"))
+        if (s.get("permissions") or {}).get("deny") == want:
+            return False
+        s["permissions"] = dict(s.get("permissions") or {}, deny=want)
+        write_json(p, s)
+        return True
+
     def prepare(self):
         if not os.path.isdir(self.proj):
             os.makedirs(os.path.join(self.proj, ".claude"))
@@ -516,6 +531,8 @@ class Session:
                                 "f_planted": [], "missed": [], "first": True, "sid": None, "events_done": 0, "fill_done": 0,
                                 "filler_no_read_turns": 0, "filler_retries": 0, "filler_retry_no_read": 0, "nc_done": 0})
                 self.st["restarts"] = self.st.get("restarts", 0) + 1       # rows of the lost run stay in results.jsonl; gates.dedupe_rows drops them
+        else:
+            self.refresh_deny()
         self.proj = os.path.realpath(self.proj)
         if not self.st.get("sid"):
             self.st["sid"] = str(uuid.uuid4())
@@ -1882,6 +1899,8 @@ def selfcheck_core(model, lh_path, work_base_arg, echo=False):
     cfg = {"run_id": "selfcheck", "model": model, "window": 30000, "work_base": work_base(work_base_arg), "call_cap_usd": 0.5,
            "turn_timeout_s": 300, "lh_path": lh_path, "budget_usd": None, "gen_version": gen.GEN_VERSION,
            "o_window": 200000, "claude_version": ""}
+    for stale in glob.glob(os.path.join(cfg["work_base"], PREFIX + "selfcheck-*")):      # folders of an earlier selfcheck keep their old settings
+        shutil.rmtree(stale, ignore_errors=True)
     d = tempfile.mkdtemp(prefix="selfcheck-")
     ctx = Ctx(d, cfg)
     ok_all = True

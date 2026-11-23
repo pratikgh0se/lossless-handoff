@@ -805,6 +805,31 @@ class RecallCommandAllowed(unittest.TestCase):
         import inspect
         self.assertIn('"chk-nc-B"', inspect.getsource(runner.selfcheck_core))
 
+    def test_stale_project_folder_gets_the_current_deny_rules(self):
+        base = tempfile.mkdtemp()
+        cfg = {"run_id": "r", "model": "m", "window": 1, "work_base": base, "call_cap_usd": 1, "turn_timeout_s": 1, "lh_path": runner.REPO,
+               "budget_usd": None, "gen_version": runner.gen.GEN_VERSION, "o_window": 1, "claude_version": ""}
+        ctx = runner.Ctx(tempfile.mkdtemp(), cfg)
+        ss = runner.Session(ctx, "b", 1, "B", ctx.sess("b"))
+        ss.prepare()
+        p = os.path.join(ss.proj, ".claude", "settings.json")
+        s = json.load(open(p))
+        s["permissions"]["deny"] = runner.deny_rules(base, "A")          # the old broad rules
+        json.dump(s, open(p, "w"))
+        self.assertTrue(runner.bash_denied("python3 %s/hooks/recall.py search x" % ss.statedir, json.load(open(p))["permissions"]["deny"]))
+        ss2 = runner.Session(ctx, "b", 1, "B", ctx.sess("b"))
+        ss2.prepare()
+        deny = json.load(open(p))["permissions"]["deny"]
+        self.assertEqual(deny, runner.deny_rules(runner.work_base(base), "B"))
+        self.assertFalse(runner.bash_denied("python3 %s/hooks/recall.py search x" % ss.statedir, deny))
+        self.assertFalse(ss2.refresh_deny())          # nothing to change the second time
+
+    def test_selfcheck_removes_stale_selfcheck_folders(self):
+        import inspect
+        src = inspect.getsource(runner.selfcheck_core)
+        self.assertIn('PREFIX + "selfcheck-*"', src)
+        self.assertLess(src.index('PREFIX + "selfcheck-*"'), src.index("Ctx(d, cfg)"))
+
     def test_prepare_passes_the_arm_and_the_selfcheck_runs_the_printed_command_in_a_fork(self):
         import inspect
         self.assertIn("deny_rules(work_base(self.ctx.cfg[\"work_base\"]), self.arm,", inspect.getsource(runner.Session.prepare))
