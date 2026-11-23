@@ -375,7 +375,7 @@ def check(rd, projects=None, mcp=True):
     add("environment of `claude`: only allow-listed names (recorded as env_keys)", not e_bad and any("env_keys" in s for s in R.sessions), "names outside the list: %s" % (e_bad or "none"))
     # 13. deny-rule selfcheck and the big Sonnet turn
     sc = R.state.get("selfcheck")
-    add("deny-rule selfcheck (arms A and B)", bool(sc and sc.get("ok")), "not run" if not sc else ("ok" if sc.get("ok") else "; ".join(sc.get("lines", []))[:200]))
+    add("deny-rule selfcheck (arms A and B, and the printed recall command of B and R in a fork)", bool(sc and sc.get("ok")), "not run" if not sc else ("ok" if sc.get("ok") else "; ".join(sc.get("lines", []))[:200]))
     big = R.state.get("big")
     if not big:
         add("one Sonnet turn with a 300k-token paste (size, price, call cap)", False, "not run")

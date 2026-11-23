@@ -743,6 +743,49 @@ class ColdParentRule(unittest.TestCase):
         self.assertIn('self.cond == "nocompact"', src)
 
 
+class RecallCommandAllowed(unittest.TestCase):
+    """Pilot 20261123T122439: the deny rules Bash(*-state*) and Bash(*lhbench*) denied the recall command that the rules line prints (F72)."""
+    BASE = "/private/var/folders/x/T"
+    STATE = BASE + "/lhbench-20261123T122439-litm4-pilot-s3-B-state"
+
+    def rules(self, arm):
+        return runner.deny_rules(self.BASE, arm)
+
+    def test_the_printed_recall_command_is_allowed_for_lh_arms(self):
+        for arm in ("B", "R", "K", "G", "P"):
+            r = self.rules(arm)
+            for cmd in ('python3 %s/hooks/recall.py search "sync-0818"' % self.STATE, "python3 %s/hooks/recall.py open 12" % self.STATE,
+                        "python3 %s/hooks/recall.py user --last 20" % self.STATE, 'python3 %s/hooks/recall.py search "a" | head -20' % self.STATE):
+                self.assertFalse(runner.bash_denied(cmd, r), (arm, cmd))
+
+    def test_direct_reads_stay_denied_for_every_arm(self):
+        for arm in ("A", "B", "R", "K"):
+            r = self.rules(arm)
+            for cmd in ("cat %s/projects/p/decisions.md" % self.STATE, "cd %s/hooks && ls" % self.STATE, "grep -r x %s" % self.STATE, "ls %s" % self.STATE,
+                        "cat ~/.claude/projects/x/y.jsonl", 'python3 -c "print(open(\'%s/x\').read())"' % self.STATE, "head %s/lhbench-other/file" % self.BASE,
+                        "wc -l < %s/hooks/recall.py" % self.STATE, "tail -5 %s/nodes.jsonl" % self.STATE):
+                self.assertTrue(runner.bash_denied(cmd, r), (arm, cmd))
+
+    def test_arm_a_keeps_the_broad_deny(self):
+        self.assertTrue(runner.bash_denied("python3 %s/hooks/recall.py search x" % self.STATE, self.rules("A")))
+        self.assertIn("Bash(*-state*)", self.rules("A"))
+        self.assertNotIn("Bash(*-state*)", self.rules("B"))
+
+    def test_file_tools_and_transcript_rules_are_the_same_for_all_arms(self):
+        a, b = self.rules("A"), self.rules("B")
+        self.assertEqual([x for x in a if not x.startswith("Bash(")], [x for x in b if not x.startswith("Bash(")])
+        for x in ("Bash(*.claude/projects*)", "Bash(*.claude*projects*)"):
+            self.assertIn(x, b)
+
+    def test_prepare_passes_the_arm_and_the_selfcheck_runs_the_printed_command_in_a_fork(self):
+        import inspect
+        self.assertIn("deny_rules(work_base(self.ctx.cfg[\"work_base\"]), self.arm)", inspect.getsource(runner.Session.prepare))
+        src = inspect.getsource(runner.selfcheck_core)
+        self.assertIn("ss.hooks_dir()", src)
+        self.assertIn('fork_of=sid', src)
+        self.assertIn('for arm in ("B", "R")', src)
+
+
 class AuditFixes(unittest.TestCase):
     """Fixes of the audit of PR #35 (findings 1 to 9). Offline, from the script generator and the code only."""
     SEEDS = range(1000, 1200)
