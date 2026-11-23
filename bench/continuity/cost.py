@@ -139,7 +139,7 @@ def d4_nc_forks(arm="A"):
     return D4_A_FORKS * D4_FORK_FACTOR.get(arm, 1.0)
 
 
-def estimate3(seeds, arms, n, conditions, phrasings=("cued", "neutral", "nonliteral"), skip=(), n_by_arm=None, design=3, levels=None):
+def estimate3(seeds, arms, n, conditions, phrasings=("cued", "neutral", "nonliteral"), skip=(), n_by_arm=None, design=3, levels=None, basis=None):
     """Design 3. Compaction units: the design-2 model (cued and neutral phrasings), with the arm factor. No-compaction condition: ONE main session
     for each seed (arm A) plus the forks of each arm A, B, R, K on it (token model). skip: (arm, condition) pairs that are not run."""
     mult = fork_multiplier(["cued", "neutral"])
@@ -151,6 +151,8 @@ def estimate3(seeds, arms, n, conditions, phrasings=("cued", "neutral", "nonlite
             if "compact" in conditions and (a, "compact") not in skip:
                 nn = (n_by_arm or {}).get(a, n)
                 u = (BASE + PER_COMPACTION * max(nn)) * mult * (1.2 if a in ("K", "G", "P") else 1.0)      # compaction units: Wave numbers, not calibrated
+                if basis and a in basis:
+                    u = float(basis[a])      # measured: the compaction unit of one seed in a finished run (PROOF_BASIS)
                 per_seed += u
                 lines.append("arm %s, with compactions (N up to %d): $%.2f per seed" % (a, max(nn), u))
             if "nocompact" in conditions and (a, "nocompact") not in skip:
@@ -338,7 +340,7 @@ def estimate_per_seed(cfg):
     if kind == "slice":
         return None
     if cfg.get("probe_design", 1) >= 3:
-        return estimate3(1, arms, cfg["n"], conds, cfg.get("phrasings", ["cued"]), n_by_arm=cfg.get("n_by_arm"), design=cfg["probe_design"], levels=cfg.get("levels"))[2]
+        return estimate3(1, arms, cfg["n"], conds, cfg.get("phrasings", ["cued"]), n_by_arm=cfg.get("n_by_arm"), design=cfg["probe_design"], levels=cfg.get("levels"), basis=cfg.get("cost_basis"))[2]
     return estimate(1, arms, cfg["n"], conds, cfg.get("phrasings", ["cued"]))[2]
 
 
@@ -354,10 +356,12 @@ def unit_estimate(cfg, arm, cond):
         dz = cfg["probe_design"]
         if arm == "A" and cond == "nocompact":        # the unit holds the forks of arms B, R and K
             return estimate3(1, [x for x in arms if x in ("A", "B", "R", "K", "G", "P")], cfg["n"], ["nocompact"], cfg.get("phrasings", ["cued"]), design=dz, levels=cfg.get("levels"))[2]
-        return estimate3(1, [arm], cfg["n"], [cond], cfg.get("phrasings", ["cued"]), n_by_arm=cfg.get("n_by_arm"), design=dz, levels=cfg.get("levels"))[2]
+        return estimate3(1, [arm], cfg["n"], [cond], cfg.get("phrasings", ["cued"]), n_by_arm=cfg.get("n_by_arm"), design=dz, levels=cfg.get("levels"), basis=cfg.get("cost_basis"))[2]
     return estimate(1, [arm], cfg["n"], [cond], cfg.get("phrasings", ["cued"]))[2]
 
 
+# The proof test: per seed of a finished run with compaction, litm4-pilot rerun 20261123T154241 (arm A $19.59, arm B $16.85). O and Z come from the estimate.
+PROOF_BASIS = {"A": 19.59, "B": 16.85}
 CALIBRATE4 = {"seeds": 2, "arms": ["A", "O", "Z"], "n": [1], "conditions": ["nocompact"], "phrasings": ["cued", "neutral", "nonliteral", "action"], "design": 4}      # F79: action probes for A, O and Z
 ORACLE_CHECK4 = {"seeds": 1, "arms": ["O"], "n": [1], "conditions": ["nocompact"], "phrasings": ["cued", "neutral", "nonliteral", "action"], "design": 4}      # litm4-oracle-check
 CALIBRATE4_L5 = dict(CALIBRATE4, seeds=1, levels=["L1", "L2", "L3", "L4", "L5"])
@@ -368,7 +372,7 @@ FULL4_V3 = dict(FULL3_V3, design=4)
 
 def render3(name, cfg):
     total, lines, per_seed = estimate3(cfg["seeds"], cfg["arms"], cfg["n"], cfg["conditions"], cfg["phrasings"], skip=cfg.get("skip", ()), n_by_arm=cfg.get("n_by_arm"),
-                                       design=cfg.get("design", 3), levels=cfg.get("levels"))
+                                       design=cfg.get("design", 3), levels=cfg.get("levels"), basis=cfg.get("cost_basis"))
     out = ["%s: %d seeds, arms %s, N=%s, conditions %s, phrasings %s" % (
         name, cfg["seeds"], ",".join(cfg["arms"]), ",".join(map(str, cfg["n"])), ",".join(cfg["conditions"]), ",".join(cfg["phrasings"]))]
     out += ["  " + x for x in lines]

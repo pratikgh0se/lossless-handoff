@@ -89,6 +89,26 @@ The parts, the events and the files are in [docs/architecture.md](docs/architect
 - **One-off measurements.** The author ran a blind quiz (2026-11-14) and a cost estimate (2026-10-20). Models wrote and graded the quiz. Both come from one user and one machine. Read them as hints. The numbers are in [docs/evidence.md](docs/evidence.md).
 - The details, the limits of each test and the other reliability notes are in [docs/evidence.md](docs/evidence.md) and [docs/handoff-reliability.md](docs/handoff-reliability.md).
 
+## Benchmarks
+
+The proof test is a small benchmark. It checks two claims.
+
+- Plain Claude Code loses information across compactions (P1).
+- Lossless Handoff keeps that information (P2).
+
+The test uses 4 new seeds, the arms A, B, O and Z, and 1, 3 and 10 compactions. It uses Sonnet and a 400k context window. The cost is about $165.
+
+One command runs the test. The live selfcheck runs first. If it fails, the run stops before any probe.
+
+```
+bench/continuity/run.sh proof            # the run, then the report
+bench/continuity/run.sh proof --dry-run  # only print the estimate, no model call
+```
+
+The pass rule is in `bench/continuity/thresholds.json` (block `proof`). It was written before any proof data existed. The report starts with a "Proof verdict" section (PASS, FAIL or INVALID) and a list of side-by-side examples.
+
+There are no proof results yet. The full suite is future work: 20 seeds, 30 compactions, Opus, and a published benchmark. Details: [bench/continuity/README.md](bench/continuity/README.md).
+
 ## Limitations
 
 - **One heavy user so far.** All numbers come from the author's machine. Nobody has tested whether it helps other workflows.
