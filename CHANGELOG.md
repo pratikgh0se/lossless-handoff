@@ -6,6 +6,7 @@ Lossless Handoff, formerly claude-handoff.
 
 ### Added
 
+- Docs: the result of the proof test (2026-11-23, 4 seeds, $149.50). Plain Claude Code scored 100%, 80% and 58% after 1, 3 and 10 compactions. Lossless Handoff scored 100% each time. The README Benchmarks section, `docs/proof/benchmarks/2026-11-23-proof-test.md` and the claims register (C9) have the numbers and the limits.
 - Benchmark: the proof test, `bench/continuity/run.sh proof`. It uses 4 new seeds, the arms A, B, O and Z, and N = 1, 3 and 10, for about $165. The pass rule (P1 loss, P2 fix, validity gates) is in `thresholds.json`, and the report starts with a "Proof verdict" and side-by-side examples. The full suite is future work.
 
 ### Fixed

@@ -84,30 +84,41 @@ The parts, the events and the files are in [docs/architecture.md](docs/architect
 
 ## Evidence
 
-- **One OOLONG run is published** ([bench/oolong/evidence/run-20261118T221353-summary.md](bench/oolong/evidence/run-20261118T221353-summary.md)). The harness flagged it for shared-temp use (2.2% of units); on every cleaned task set, Lossless Handoff with llm_map tied plain Claude Code. In that run the main session never compacted, so it does not test the handoff. No scored benchmark result for the handoff's main claim is published yet. Two benchmarks are in this repository: [bench/continuity/README.md](bench/continuity/README.md) and [bench/oolong/README.md](bench/oolong/README.md). Both are code-graded. The full evaluation is not finished, and no part of it is published yet. The pilot files in `bench/oolong/evidence/` are from a 2-task pilot. They show that the test harness works. They are not a result.
+- **One OOLONG run is published** ([bench/oolong/evidence/run-20261118T221353-summary.md](bench/oolong/evidence/run-20261118T221353-summary.md)). The harness flagged it for shared-temp use (2.2% of units); on every cleaned task set, Lossless Handoff with llm_map tied plain Claude Code. In that run the main session never compacted, so it does not test the handoff. One small continuity test (the proof test, 4 seeds) is published: see Benchmarks below. Two benchmarks are in this repository: [bench/continuity/README.md](bench/continuity/README.md) and [bench/oolong/README.md](bench/oolong/README.md). Both are code-graded. The full evaluation is not finished, and no part of it is published yet. The small proof test is the only continuity result. The pilot files in `bench/oolong/evidence/` are from a 2-task pilot. They show that the test harness works. They are not a result.
 - **Live mechanism checks.** The hooks check themselves on the author's machine: is a handoff there, does it reach the model, does recall return old messages word for word. These checks show that the mechanism works. They do not show that answers get better. Some of these checks currently fail. [docs/evidence.md](docs/evidence.md) lists each check, its number and the reason for each failure.
 - **One-off measurements.** The author ran a blind quiz (2026-11-14) and a cost estimate (2026-10-20). Models wrote and graded the quiz. Both come from one user and one machine. Read them as hints. The numbers are in [docs/evidence.md](docs/evidence.md).
 - The details, the limits of each test and the other reliability notes are in [docs/evidence.md](docs/evidence.md) and [docs/handoff-reliability.md](docs/handoff-reliability.md).
 
 ## Benchmarks
 
-The proof test is a small benchmark. It checks two claims.
+The proof test is a small benchmark with 4 seeds. It ran on 2026-11-23 with Sonnet, a 400k context window and Claude Code 2.1.326. The seeds were new (2001 to 2004). The cost was $149.50. The pass rule was written before the run, and the run passed it.
 
-- Plain Claude Code loses information across compactions (P1).
-- Lossless Handoff keeps that information (P2).
+| Arm | 1 compaction | 3 compactions | 10 compactions |
+|---|---|---|---|
+| Plain Claude Code (A) | 100% | 80% | 58% |
+| Lossless Handoff (B) | 100% | 100% | 100% |
 
-The test uses 4 new seeds, the arms A, B, O and Z, and 1, 3 and 10 compactions. It uses Sonnet and a 400k context window. The cost is about $165.
+At 10 compactions, B is 42 points above A. The 95% interval is +27 to +51 points, over 4 seeds.
 
-One command runs the test. The live selfcheck runs first. If it fails, the run stops before any probe.
+- Controls: the oracle (no compaction) scored 100%, the amnesia control (no history) scored 0%, and the fresh control scored 100%.
+- At 10 compactions, A was wrong and B was right on 42 items. There were 0 items where B was wrong and A was right.
 
-```
-bench/continuity/run.sh proof            # the run, then the report
-bench/continuity/run.sh proof --dry-run  # only print the estimate, no model call
-```
+Two examples from the report (seed 2001, 10 compactions):
 
-The pass rule is in `bench/continuity/thresholds.json` (block `proof`). It was written before any proof data existed. The report starts with a "Proof verdict" section (PASS, FAIL or INVALID) and a list of side-by-side examples.
+- The exact deploy command for `mirror-3481`. Expected: `rk-ship --lane 5912 --tag JBENXM`. A answered `UNKNOWN`. B gave the exact command, after a search.
+- The order of three decisions made at different times. Expected: `NSKK-7211-TXNE, L3N9-0550-F4DU, 3K49-3054-TNDJ`. A gave an empty list. B gave the correct order, with no search.
 
-There are no proof results yet. The full suite is future work: 20 seeds, 30 compactions, Opus, and a published benchmark. Details: [bench/continuity/README.md](bench/continuity/README.md).
+Limits:
+
+- It is a small benchmark: 4 seeds.
+- It is our own synthetic benchmark. Code grades it, but we wrote it.
+- It used Sonnet only, at most 10 compactions, and one Claude Code version.
+- On questions without a hint (neutral wording, types R D X S E), B scored 95% (76/80). Claude sometimes checks the current files and does not search.
+- A pilot with 2 seeds ran first. It found a benchmark bug: the deny rules blocked the recall command (fixed in PR #51 and PR #52). The proof test uses only new seeds.
+
+The full suite is future work: 20 seeds, 30 compactions, Opus, and a published benchmark.
+
+The full report is in [docs/proof/benchmarks/2026-11-23-proof-test.md](docs/proof/benchmarks/2026-11-23-proof-test.md). To run the test again, use `bench/continuity/run.sh proof`. Add `--dry-run` to only print the estimate. The numbers are listed in the evidence register ([docs/evidence.md](docs/evidence.md)).
 
 ## Limitations
 

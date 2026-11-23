@@ -927,9 +927,9 @@ PY
   [ "$("$ROOT/install.sh" --version)" = "Lossless Handoff 0.18.0" ] || fail "F66.d: product version"
   [ "$(grep -c '^HOOK_VERSION = "1.20.0"$' "$ROOT/hooks/precompact-handoff.py" "$ROOT/hooks/postcompact-inject.py" | grep -c ':1$')" = 2 ] || fail "F66.d: HOOK_VERSION"
   # F66.c: README holds no claim markers; evidence page does; claims-lint default path
-  ! grep -qE '\[C[1-8]\]' "$ROOT/README.md" && ! grep -qiE '^#+ .*proof|\*\*proof' "$ROOT/README.md" || fail "F66.c: README holds Proof or claim markers"
+  ! grep -qE '\[C[1-9]\]' "$ROOT/README.md" && ! grep -qiE '^#+ .*proof|\*\*proof' "$ROOT/README.md" || fail "F66.c: README holds Proof or claim markers"
   grep -qE '\[C1\]' "$ROOT/docs/evidence.md" || fail "F66.c: docs/evidence.md has no markers"
-  grep -qi "no scored benchmark result" "$ROOT/README.md" || fail "F66.c: README does not state that no scored result exists"
+  grep -qi "small benchmark" "$ROOT/README.md" && grep -q "docs/proof/benchmarks/2026-11-23-proof-test.md" "$ROOT/README.md" || fail "F66.c: README does not state the limits of its one scored result and link its report"
   # a clean state has no live evidence, so lint may exit 1 (no-data); the file must be found and every marker known
   r=0; ( cd "$ROOT" && HANDOFF_STATE_DIR="$T/f66-state" python3 hooks/precompact-handoff.py --claims-lint ) >"$T/f66-lint.out" 2>&1 || r=$?
   [ "$r" -le 1 ] && ! grep -qE "no docs/evidence.md|cannot read|unknown claim" "$T/f66-lint.out" || fail "F66.c: --claims-lint default path: $(cat "$T/f66-lint.out")"
