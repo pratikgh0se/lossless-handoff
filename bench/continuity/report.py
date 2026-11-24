@@ -467,17 +467,19 @@ def build(run_id, draws=None):
         md.append("| %s | %d | %d | %d |" % (names[a], v["sessions"], v["filler_no_read_turns"], v["filler_retries"]))
     if any("bash_denials" in r for r in rows_all):      # runs before the field existed keep their report byte for byte
         md.append("\n### Bash permission denials of the forks\n")
-        md.append("| Arm | Forks | Bash denials |")
-        md.append("|---|---|---|")
+        md.append("| Arm | Forks | Bash denials (our rules) | Native Claude Code blocks |")
+        md.append("|---|---|---|---|")
         den_tab = {}
         for a in cost_tab:
             fk_ = {}
             for r in rows_all:
                 if r["arm"] == a and r.get("fork_sid"):
-                    fk_[r["fork_sid"]] = r.get("bash_denials")
-            tot_ = sum(v for v in fk_.values() if isinstance(v, int))
-            den_tab[a] = {"forks": len(fk_), "bash_denials": tot_}
-            md.append("| %s | %d | %s |" % (names[a], len(fk_), tot_ if any(isinstance(v, int) for v in fk_.values()) else "no data"))
+                    fk_[r["fork_sid"]] = (r.get("bash_denials"), r.get("bash_native_blocks") or 0)
+            has_ = any(isinstance(v[0], int) for v in fk_.values())
+            tot_ = sum(v[0] for v in fk_.values() if isinstance(v[0], int))
+            nat_ = sum(v[1] for v in fk_.values())
+            den_tab[a] = {"forks": len(fk_), "bash_denials": tot_, "bash_native_blocks": nat_}
+            md.append("| %s | %d | %s | %s |" % (names[a], len(fk_), tot_ if has_ else "no data", nat_ if has_ else "no data"))
         out["bash_denials"] = den_tab
     md.append("\nA filler turn with no Read call gets one retry turn before the quiet counter counts it. Runs of gen v4 or older have no data here (shown as 0).\n")
     md.append("\nThe plant turns (epoch 0) are part of the main-turn cost, so a short run overstates the cost per compaction. Predict a full run as: sessions x (plant cost + compactions x cost per compaction + forks x cost per fork). Take the numbers from a pilot at the same model and window.\n")

@@ -417,6 +417,39 @@ def bash_denied(command, rules):
     return any(fnmatch.fnmatchcase(p, pat) for p in parts for pat in pats)
 
 
+NATIVE_BLOCKS = ("was blocked. For security, Claude Code may only change directories", "can't be checked before it runs")      # Claude Code itself in headless mode, not our rules
+OUR_DENIALS = ("has been denied", "blocked by a deny rule", "Permission to use Bash")
+
+
+def bash_results(frecs):
+    """[(command, result text)] of the Bash tool calls in a transcript, in order."""
+    cmds, out = {}, []
+    for r in frecs:
+        c = (r.get("message") or {}).get("content")
+        if not isinstance(c, list):
+            continue
+        for b in c:
+            if not isinstance(b, dict):
+                continue
+            if b.get("type") == "tool_use" and b.get("name") == "Bash":
+                cmds[b.get("id")] = (b.get("input") or {}).get("command") or ""
+            elif b.get("type") == "tool_result" and b.get("tool_use_id") in cmds:
+                t = b.get("content")
+                if isinstance(t, list):
+                    t = " ".join(x.get("text", "") for x in t if isinstance(x, dict))
+                out.append((cmds[b["tool_use_id"]], str(t)))
+    return out
+
+
+def classify_result(text):
+    """'native' (a Claude Code block that no rule of ours causes), 'deny' (a deny rule or permission of ours) or 'ran'."""
+    if any(m in text for m in NATIVE_BLOCKS):
+        return "native"
+    if any(m in text for m in OUR_DENIALS):
+        return "deny"
+    return "ran"
+
+
 class Session:
     def __init__(self, ctx, name, seed, arm, st, cond="compact"):
         self.ctx, self.name, self.seed, self.arm, self.st, self.cond = ctx, name, seed, arm, st, cond
@@ -813,7 +846,9 @@ class Session:
                         "Stop. Check hooks/auto-recall.py in --lh-path." % (self.arm, os.path.join(self.statedir, AUTO_RECALL_LOG), fsid))
         posmap = {x["id"]: (x.get("position") or (None if self.d4 else gen.position_of(script, ptype, x))) for x in items}
         u = o.get("usage") if isinstance(o.get("usage"), dict) else {}
-        bash_denials = sum(1 for x in (o.get("permission_denials") or []) if isinstance(x, dict) and x.get("tool_name") == "Bash")
+        n_perm = sum(1 for x in (o.get("permission_denials") or []) if isinstance(x, dict) and x.get("tool_name") == "Bash")
+        bash_native_blocks = sum(1 for _c, t in bash_results(frecs) if classify_result(t) == "native") if fsid else 0
+        bash_denials = max(n_perm - bash_native_blocks, 0)      # permission_denials also lists the native blocks: ours are the rest
         n_actual, pre = (st["boundaries"], st.get("precomputed", 0)) if self.arm != "Z" else (0, 0)
         for g in graded:
             self.ctx.append("results.jsonl", {
@@ -826,7 +861,7 @@ class Session:
                 "output_tokens": u.get("output_tokens"), "fork_cost_usd": round(o["_delta"], 6), "claude_version": cfg["claude_version"], "model": cfg["model"],
                 "window": self.window, "commit": cfg["lh_commit"], "turn_index": st["turns"],
                 "condition": self.cond, "phrasing": phrasing, "position": posmap.get(g["id"]), "attempt": st.get("restarts", 0), **view_fields,
-                "bash_denials": bash_denials, "auto_recall_fired": fired, "auto_recall_hits": hits, "auto_recall_timed_out": timed_out,
+                "bash_denials": bash_denials, "bash_native_blocks": bash_native_blocks, "auto_recall_fired": fired, "auto_recall_hits": hits, "auto_recall_timed_out": timed_out,
                 **({k_: g[k_] for k_ in ("m1", "m2", "m3", "error_class", "lag", "alt_ok", "undo_last")} if self.d4 else {}),
                 **({"chunk": chunk[0], "runaway": bool(o.get("_runaway")), "refused": bool(o.get("_refused")), "guard_fired": "guard" in kinds, "free_form": bool(cfg.get("free_form")),
                                                           "requests": n_req, "max_request_output": max_req} if self.d4 else {}),
@@ -1980,7 +2015,7 @@ def selfcheck_core(model, lh_path, work_base_arg, echo=False):
         say("arm %s: the printed recall command in a fork: %s (Bash denials: %d; the word was found: %s)" % (arm, "OK" if good else "DENIED OR NOT RUN", len(denials), word in res))
         say("  reply:", res.replace("\n", " | ")[:300])
         ok_all = ok_all and good
-    # recall-forms: the forms that a fork writes (cd, loop, ls; ...) are not denied, and the reads of state stay denied
+    # recall-forms: no deny rule of ours blocks a recall form (Claude Code may block cd and loops itself in headless mode), and the reads of state stay denied
     for arm in ("B", "R"):
         ss = Session(ctx, "forms-" + arm, 1, arm, ctx.sess("forms-" + arm))
         ss.prepare()
@@ -1997,15 +2032,20 @@ def selfcheck_core(model, lh_path, work_base_arg, echo=False):
                   "(first 200 characters), or `N: DENIED` if the tool was denied. Do not retry a denied command.\n" +
                   "\n".join("%d. `%s`" % (i + 1, c) for i, c in enumerate(cmds + bad)))
         o = ss.call(prompt, "fork", fork_of=sid)
-        res = o.get("result") or ""
-        denials = [x for x in (o.get("permission_denials") or []) if isinstance(x, dict) and x.get("tool_name") == "Bash"]
-        dtxt = json.dumps(denials)
-        n_ok = sum(1 for c in cmds if c not in dtxt)
-        n_bad = sum(1 for c in bad if c in dtxt)
-        good = bool(res.count(word) >= len(cmds) and n_ok == len(cmds) and n_bad == len(bad) and len(denials) == len(bad))
-        say("arm %s: recall forms in a fork: %s (allowed forms %d of %d; state reads denied %d of %d; Bash denials: %d; the word appears %d times)"
-            % (arm, "OK" if good else "FAIL", n_ok, len(cmds), n_bad, len(bad), len(denials), res.count(word)))
-        say("  reply:", res.replace("\n", " | ")[:400])
+        frecs = read_jsonl(ss.transcript(o.get("session_id"))) if o.get("session_id") else []
+        by_cmd = {c: classify_result(t) for c, t in bash_results(frecs)}
+        texts = {c: t for c, t in bash_results(frecs)}
+        kinds = [by_cmd.get(c) for c in cmds]
+        found = [word in texts.get(c, "") for c in cmds]
+        # forms 1 and 4 must run and find the word; forms 2 and 3 must run or hit the native block, never a deny rule of ours; state reads must be denied
+        good = bool(kinds[0] == "ran" and found[0] and kinds[3] == "ran" and found[3]
+                    and all(k in ("ran", "native") for k in kinds[1:3]) and all(found[i] for i in (1, 2) if kinds[i] == "ran")
+                    and all(by_cmd.get(c) == "deny" or "deny rule" in texts.get(c, "") for c in bad))
+        names_ = {"ran": "ran", "native": "native block", "deny": "deny-rule block", None: "not run"}
+        for i, c in enumerate(cmds):
+            say("  form %d: %s%s" % (i + 1, names_[kinds[i]], " (word found)" if found[i] else ""))
+        say("  state reads: %s" % ", ".join("denied" if (by_cmd.get(c) == "deny" or "deny rule" in texts.get(c, "")) else "NOT DENIED" for c in bad))
+        say("arm %s: recall forms in a fork: %s" % (arm, "OK" if good else "FAIL"))
         ok_all = ok_all and good
     # a no-compaction view (arm B forks the session of arm A without compaction) runs with the rules and hooks copy of arm B
     main = Session(ctx, "chk-nc-A", 1, "A", ctx.sess("chk-nc-A"), "nocompact")
