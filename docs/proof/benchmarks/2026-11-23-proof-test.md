@@ -366,7 +366,7 @@ A hypothesis that is NOT SUPPORTED or REFUTED stays in the report. The threshold
 
 ## Added: kind of fact at 10 compactions
 
-This section was added after the run. It counts the rows of `results.jsonl` with arm A or B, condition `compact` and `n_target` 10. It pools the cued and the neutral probes, so the counts are larger than in Table 2 (which holds only the cued probes). The data is the same run, 4 seeds (2001 to 2004).
+This section was added after the run. It counts the rows of `results.jsonl` with arm A or B, condition `compact` and `n_target` 10. It pools the cued and the neutral probes for the types R D X S E, so these counts are larger than in Table 2 (cued only). C, M and U have cued probes only, so their counts equal Table 2. The data is the same run, 4 seeds (2001 to 2004).
 
 | Kind of fact | Type | Where the fact lived | A plain | B Lossless Handoff |
 |---|---|---|---|---|
@@ -380,5 +380,7 @@ This section was added after the run. It counts the rows of `results.jsonl` with
 | Fact that only a subagent saw | U | subagent | 0/12 (0%) | 8/12 (67%) |
 
 Plain Claude Code keeps the simple things the user said. It loses changes, order, exact strings and tool output.
+
+Row U is different. The main session never saw this fact, and plain Claude Code scored 0 of 12 with no compaction too. It shows what recall adds.
 
 At 10 compactions, 76 of the 192 probes of arm B in the table above used a lookup (a recall or transcript search) by their own choice: all 32 E probes, all 32 S probes and all 12 U probes. The fresh control (type F, 12 rows) is not in the table.

@@ -16,7 +16,7 @@ The raw files (`results.jsonl`, `summary.md`) stay on the machine that ran the c
 | Model, window, Claude Code | Sonnet, 400000 tokens, 2.1.326 | Sonnet, 400000 tokens, 2.1.326 |
 | Command | `runner.py run proof-recheck --compare 20261123T190206-proof` | `runner.py run proof-recheck --seeds 2 --n 1,3 --compare 20261123T190206-proof` |
 
-Both runs use arm B only and the types R D X S E. The proof test (run 20261123T190206-proof) is the base.
+Both runs use arm B only. The tables below count the types R D X S E. The proof test (run 20261123T190206-proof) is the base.
 
 ## Recheck 0.19.0 (4 seeds, invalid for the rule)
 

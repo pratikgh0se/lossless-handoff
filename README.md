@@ -1,6 +1,6 @@
 # Lossless Handoff
 
-**Claude Code hooks that make compaction safe: a handoff before every compaction, a decisions list per project, and exact-words search over every earlier chat.**
+**Claude Code hooks that aim to make compaction safe: a handoff before every compaction, a decisions list per project, and exact-words search over every earlier chat.**
 
 *Formerly claude-handoff.*
 
@@ -24,7 +24,7 @@ Before each compaction, the hooks write a structured handoff and feed it back in
 
 ![Plain compaction against Lossless Handoff](docs/img/flow.svg)
 
-A compaction replaces the chat with a short summary. Exact commands, error codes and replaced decisions are gone. Lossless Handoff keeps them safe, and Claude can get the exact old text back.
+A compaction replaces the chat with a short summary. Exact commands, error codes and replaced decisions can be gone. Lossless Handoff aims to make compaction safe: to lose nothing important, and to let Claude get the exact old text back.
 
 <details><summary>The four parts</summary>
 
@@ -127,11 +127,11 @@ Full report: [docs/proof/benchmarks/2026-11-23-proof-test.md](docs/proof/benchma
 
 <details><summary>What the test does</summary>
 
-The proof test is a small benchmark with 4 seeds. It plants facts with random answers early in a long scripted session. Filler turns force compactions. Then the runner asks questions and code grades the answers. It ran on 2026-11-23 with Sonnet, a 400k context window and Claude Code 2.1.326. The seeds were new (2001 to 2004). The cost was $149.50. The pass rule was written before the run, and the run passed it.
+The proof test is a small benchmark with 4 seeds. It plants facts with random answers early in a long scripted session. Filler turns force compactions. Then the runner asks questions and code grades the answers. It ran on 2026-11-23 with Sonnet, a 400k context window and Claude Code 2.1.326. The seeds were new (2001 to 2004). The cost was $149.50. The pass rule was written after the 2-seed pilot and before any proof data, and the run passed it. The older gain rule in the same report needs 20 seeds, and at 4 seeds it gives "small sample: no claim".
 
-- Controls: the oracle (no compaction) scored 100%, the amnesia control (no history) scored 0%, and the fresh control scored 100%. So the test can tell a good result from a bad one.
-- At 10 compactions, A was wrong and B was right on 42 items. There were 0 items where B was wrong and A was right.
-- An older test on real projects (model-graded, with an older version) shows the same direction at 1, 2 and 3 or more compactions. See the decisions-list row in [docs/evidence.md](docs/evidence.md#one-off-measurements).
+- Controls (types R D X S E C M): the oracle (no compaction) scored 100%, the amnesia control (no history) scored 0%, and the fresh control scored 100%. So the test can tell a good result from a bad one.
+- On the questions with a hint, at 10 compactions, A was wrong and B was right on 42 items. There were 0 items where B was wrong and A was right. Without a hint, B scored 93% at 3 compactions and 95% at 10, and at 3 compactions there were 2 such items.
+- An older test on real projects (model-graded) compared two versions of the handoff, not plain Claude Code. In both versions the score fell with more compactions (1, 2, and 3 or more). See the decisions-list row in [docs/evidence.md](docs/evidence.md#one-off-measurements).
 
 </details>
 
@@ -143,7 +143,7 @@ Plain Claude Code keeps the simple things the user said. It loses changes, order
 
 <details><summary>Numbers and two examples</summary>
 
-Items correct at 10 compactions (cued and neutral questions together, 4 seeds). Source: the section "Added: kind of fact at 10 compactions" in [the report](docs/proof/benchmarks/2026-11-23-proof-test.md#added-kind-of-fact-at-10-compactions).
+Items correct at 10 compactions, 4 seeds. R, D, X, S and E count the questions with a hint and without a hint together. C, M and U have questions with a hint only. Source: the section "Added: kind of fact at 10 compactions" in [the report](docs/proof/benchmarks/2026-11-23-proof-test.md#added-kind-of-fact-at-10-compactions).
 
 | Kind of fact | Where it lived | Plain (A) | Lossless Handoff (B) |
 |---|---|---|---|
@@ -155,6 +155,8 @@ Items correct at 10 compactions (cued and neutral questions together, 4 seeds). 
 | Dead end, the exact error code (E) | tool output | 4/32 (12%) | 32/32 (100%) |
 | Order of three decisions (M) | user messages at different times | 0/4 (0%) | 4/4 (100%) |
 | Fact that only a subagent saw (U) | subagent | 0/12 (0%) | 8/12 (67%) |
+
+Row U is different. The main session never saw this fact, and plain Claude Code scored 0 of 12 with no compaction too. It shows what recall adds.
 
 Two examples from the report (seed 2001, 10 compactions):
 
@@ -194,18 +196,22 @@ Limits of the proof test: it is a small benchmark with 4 seeds (2001 to 2004), a
 Shown:
 
 - Plain Claude Code loses facts as compactions add up (100%, 80%, 58% at 1, 3 and 10 compactions).
-- Lossless Handoff stopped that loss up to 10 compactions (100%, 100%, 100%). It made things worse on 0 items.
-- The loss is in the details that long tasks need: replaced decisions, exact strings, error codes, order and subagent facts.
-- The mechanism runs on the author's machine. In the 7 days to 2026-11-24 there were 35 compactions. The handoff was delivered 35 of 35 times, and the right agent got it 35 of 35 times. The lossless spot check passed 23 of 34 times and failed 11 times. The author has not investigated the cause of these 11 failures.
+- On the questions with a hint, Lossless Handoff stopped that loss up to 10 compactions (100%, 100%, 100%), with 0 items where it was wrong and plain Claude Code was right. Without a hint it scored 93% at 3 compactions and 95% at 10, and at 3 compactions there were 2 such items.
+
+Seen, not proved:
+
+- The loss is largest for replaced decisions, exact strings, error codes and order (a table made after the run).
+- The mechanism runs on the author's machine. In the 7 days to 2026-11-24 there were 35 compactions with a handoff receipt. The handoff was delivered 35 of 35 times, and the right agent got it 35 of 35 times. The lossless spot check passed 23 of 34 times and failed 11 times. The author has not investigated the cause of these 11 failures.
 
 Not shown yet:
 
 - Only 4 seeds, only Sonnet, only up to 10 compactions, and one Claude Code version.
 - It is our own benchmark, code-graded. No outside benchmark with forced compactions has run yet.
-- On questions without a hint (neutral wording, types R D X S E), B scored 95% (76/80). Claude sometimes checks the current files and does not search.
+- On questions without a hint (neutral wording, types R D X S E), B scored 95% (76/80). The 4 wrong items are one probe (seed 2002, exact strings). Claude ran the recall command from a different folder and then answered that it did not know.
 - A pilot with 2 seeds ran first. It found a benchmark bug: the deny rules blocked the recall command (fixed in PR #51 and PR #52). The proof test uses only new seeds.
 - No study of other people's real work.
 - The 0.19.1 fix has 2 seeds and at most 3 compactions.
+- The live word-for-word spot check passed 23 of 34 times. The cause of the 11 failures is not known.
 
 </details>
 

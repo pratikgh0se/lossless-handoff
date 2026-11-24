@@ -90,7 +90,7 @@ The tables above are one-off measurements. From 1.10.0, the install also keeps i
 | `delivered` | the transcript after the boundary holds the injected text [C4] |
 | `decisions_safe` | no decision id present before a decisions update is missing after it, and no superseded id came back [C5] |
 
-**Live numbers of 2026-11-24 (7 days).** The author ran `python3 ~/.claude/hooks/precompact-handoff.py --prove --days 7` on 2026-11-24. The window held 35 compactions.
+**Live numbers of 2026-11-24 (7 days).** The author ran `python3 ~/.claude/hooks/precompact-handoff.py --prove --days 7` on 2026-11-24. The window held 35 receipts (one for each compaction that got a handoff).
 
 | Check | Result |
 |---|---|
