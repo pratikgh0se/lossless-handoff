@@ -27,6 +27,7 @@ RESULTS = os.path.join(HERE, "results")
 HOME = os.path.expanduser("~")
 PROJECTS = os.path.join(HOME, ".claude", "projects")
 PREFIX = "lhbench-"
+TOOLS_PREFIX = "lhtools-"      # hooks copies of the arms, outside the lhbench-*-state folders
 ALL_TYPES = gen.TYPES + ["F"]
 ALL_ARMS = ("A", "B", "Z", "O", "R", "K", "G", "P")
 LH_ARMS = ("B", "R", "K", "G", "P")   # arms with Lossless Handoff hooks: B default install, R plus --auto-recall, K plus auto-recall, recall rules, recall MCP and reanchor
@@ -378,7 +379,7 @@ def lh_settings(hooks_dir, auto_recall=False, reanchor=False, history_guard=Fals
 
 # Shell commands that read or copy files. For the arms with Lossless Handoff (B, R, K, G, P) these are denied on bench folders and state folders one by one,
 # so that the command the injected rules line prints stays allowed: `python3 <HANDOFF_HOOKS_HOME>/recall.py search ...`, where HANDOFF_HOOKS_HOME is the
-# hooks copy inside <run>-sN-<arm>-state (F72). Docs (https://code.claude.com/docs/en/permissions): "Rules are evaluated in order: deny, then ask, then allow."
+# hooks copy in <base>/lhtools-<run>-sN-<arm>/hooks (F72). Docs (https://code.claude.com/docs/en/permissions): "Rules are evaluated in order: deny, then ask, then allow."
 # So a broad deny such as Bash(*-state*) also denies that printed command, whatever Bash(python3:*) allows. This was the pilot 20261123T122439 bug.
 READ_COMMANDS = ("cat", "grep", "egrep", "fgrep", "rg", "head", "tail", "ls", "find", "less", "more", "sed", "awk", "cp", "mv", "tar", "zip", "sqlite3",
                  "xxd", "strings", "cd", "open", "env", "sh", "bash", "zsh", "eval", "python3 -c", "python3 -m", "python3 -")
@@ -424,6 +425,7 @@ class Session:
         stem = "%s%s-s%d-%s%s" % (PREFIX, cfg["run_id"], seed, arm, "-nc" if cond == "nocompact" else "")
         self.proj = os.path.join(base, stem)
         self.statedir = os.path.join(base, stem + "-state")
+        self.toolsdir = os.path.join(base, "lhtools-%s-s%d-%s%s" % (cfg["run_id"], seed, arm, "-nc" if cond == "nocompact" else ""))      # hooks copy: no "lhbench" and no "-state" in its path, so no deny rule matches a recall command
         self.window = cfg["o_window"] if arm == "O" else (cfg.get("nc_window", NC_SESSION_WINDOW) if cond == "nocompact" else cfg["window"])
         self.script = ctx.script3(seed) if (cond == "nocompact" and cfg.get("probe_design", 1) >= 3) else ctx.script(seed)
         self.d3 = self.script.get("design") in (3, 4)
@@ -438,7 +440,7 @@ class Session:
             if arm == "G":
                 ov["HANDOFF_HISTORY_GUARD"] = "block"      # F77 (Stop) in block mode
                 ov["HANDOFF_ACTION_GUARD"] = "inject"      # F80 (tool calls) in inject mode
-            ov["HANDOFF_HOOKS_HOME"] = os.path.join(self.statedir, "hooks")      # F72: the hooks read only this private copy, never ~/.claude/hooks
+            ov["HANDOFF_HOOKS_HOME"] = os.path.join(self.toolsdir, "hooks")      # F72: the hooks read only this private copy, never ~/.claude/hooks
         self.overrides = ov
 
     def hooks_dir(self):
@@ -448,9 +450,9 @@ class Session:
         src = os.path.join(self.ctx.cfg["lh_path"], "hooks")
         if self.arm not in LH_ARMS:
             return src
-        dst = os.path.join(self.statedir, "hooks")
+        dst = os.path.join(self.toolsdir, "hooks")
         if not os.path.isdir(dst):
-            os.makedirs(self.statedir, exist_ok=True)
+            os.makedirs(self.toolsdir, exist_ok=True)
             shutil.copytree(src, dst, ignore=shutil.ignore_patterns("__pycache__"))
             if self.arm in RECALL_ARMS or (self.arm == "B" and lh_has_f81(self.ctx.cfg["lh_path"])):
                 open(os.path.join(dst, ".recall-rules"), "w").close()
@@ -811,6 +813,7 @@ class Session:
                         "Stop. Check hooks/auto-recall.py in --lh-path." % (self.arm, os.path.join(self.statedir, AUTO_RECALL_LOG), fsid))
         posmap = {x["id"]: (x.get("position") or (None if self.d4 else gen.position_of(script, ptype, x))) for x in items}
         u = o.get("usage") if isinstance(o.get("usage"), dict) else {}
+        bash_denials = sum(1 for x in (o.get("permission_denials") or []) if isinstance(x, dict) and x.get("tool_name") == "Bash")
         n_actual, pre = (st["boundaries"], st.get("precomputed", 0)) if self.arm != "Z" else (0, 0)
         for g in graded:
             self.ctx.append("results.jsonl", {
@@ -823,7 +826,7 @@ class Session:
                 "output_tokens": u.get("output_tokens"), "fork_cost_usd": round(o["_delta"], 6), "claude_version": cfg["claude_version"], "model": cfg["model"],
                 "window": self.window, "commit": cfg["lh_commit"], "turn_index": st["turns"],
                 "condition": self.cond, "phrasing": phrasing, "position": posmap.get(g["id"]), "attempt": st.get("restarts", 0), **view_fields,
-                "auto_recall_fired": fired, "auto_recall_hits": hits, "auto_recall_timed_out": timed_out,
+                "bash_denials": bash_denials, "auto_recall_fired": fired, "auto_recall_hits": hits, "auto_recall_timed_out": timed_out,
                 **({k_: g[k_] for k_ in ("m1", "m2", "m3", "error_class", "lag", "alt_ok", "undo_last")} if self.d4 else {}),
                 **({"chunk": chunk[0], "runaway": bool(o.get("_runaway")), "refused": bool(o.get("_refused")), "guard_fired": "guard" in kinds, "free_form": bool(cfg.get("free_form")),
                                                           "requests": n_req, "max_request_output": max_req} if self.d4 else {}),
@@ -1887,8 +1890,9 @@ def cmd_cleanup(a):
                 continue
             if stt.get("status") in ("paused", "running", "failed") and cfg.get("work_base") == base:
                 protected.append(PREFIX + cfg["run_id"] + "-")
+                protected.append(TOOLS_PREFIX + cfg["run_id"] + "-")
     todo = []
-    for p in sorted(glob.glob(work_prefix + "*")):
+    for p in sorted(glob.glob(work_prefix + "*") + glob.glob(os.path.join(base, TOOLS_PREFIX) + "*")):
         if os.path.isdir(p) and not os.path.islink(p) and not any(os.path.basename(p).startswith(x) for x in protected):
             todo.append(p)
     try:
@@ -1961,7 +1965,7 @@ def selfcheck_core(model, lh_path, work_base_arg, echo=False):
         say("  reply:", res.replace("\n", " | ")[:600])
         good = leaked is False and "Read" in names and "Bash" in names
         ok_all = ok_all and good
-    # B and R must be able to run the recall command that the rules line prints (the hooks copy inside the state folder, F72) in a probe fork
+    # B and R must be able to run the recall command that the rules line prints (the hooks copy in the lhtools folder, F72) in a probe fork
     for arm in ("B", "R"):
         ss = Session(ctx, "rec-" + arm, 1, arm, ctx.sess("rec-" + arm))
         ss.prepare()
@@ -1975,6 +1979,33 @@ def selfcheck_core(model, lh_path, work_base_arg, echo=False):
         good = bool(word in res and not denials)
         say("arm %s: the printed recall command in a fork: %s (Bash denials: %d; the word was found: %s)" % (arm, "OK" if good else "DENIED OR NOT RUN", len(denials), word in res))
         say("  reply:", res.replace("\n", " | ")[:300])
+        ok_all = ok_all and good
+    # recall-forms: the forms that a fork writes (cd, loop, ls; ...) are not denied, and the reads of state stay denied
+    for arm in ("B", "R"):
+        ss = Session(ctx, "forms-" + arm, 1, arm, ctx.sess("forms-" + arm))
+        ss.prepare()
+        sid = ss.st["sid"]
+        word = "RECALLTOK-" + uuid.uuid4().hex[:10].upper()
+        ss.call("Remember the word %s. Reply only `ok`." % word, "turn", sid=sid, first=True)
+        hd = ss.hooks_dir()
+        cmds = ["python3 %s/recall.py search --fixed %s" % (hd, word),
+                "cd %s && python3 recall.py search --fixed %s" % (hd, word),
+                "cd %s && for k in %s; do python3 recall.py search --fixed \"$k\" | head -20; done" % (hd, word),
+                "ls; python3 %s/recall.py search --fixed %s" % (hd, word)]
+        bad = ["cd %s && cat receipts.jsonl" % ss.statedir, "cat %s" % os.path.join(ss.statedir, "health.jsonl")]
+        prompt = ("Run each of these commands with the Bash tool, one tool call each, exactly as written. After each one write a line `N: ` and its output "
+                  "(first 200 characters), or `N: DENIED` if the tool was denied. Do not retry a denied command.\n" +
+                  "\n".join("%d. `%s`" % (i + 1, c) for i, c in enumerate(cmds + bad)))
+        o = ss.call(prompt, "fork", fork_of=sid)
+        res = o.get("result") or ""
+        denials = [x for x in (o.get("permission_denials") or []) if isinstance(x, dict) and x.get("tool_name") == "Bash"]
+        dtxt = json.dumps(denials)
+        n_ok = sum(1 for c in cmds if c not in dtxt)
+        n_bad = sum(1 for c in bad if c in dtxt)
+        good = bool(res.count(word) >= len(cmds) and n_ok == len(cmds) and n_bad == len(bad) and len(denials) == len(bad))
+        say("arm %s: recall forms in a fork: %s (allowed forms %d of %d; state reads denied %d of %d; Bash denials: %d; the word appears %d times)"
+            % (arm, "OK" if good else "FAIL", n_ok, len(cmds), n_bad, len(bad), len(denials), res.count(word)))
+        say("  reply:", res.replace("\n", " | ")[:400])
         ok_all = ok_all and good
     # a no-compaction view (arm B forks the session of arm A without compaction) runs with the rules and hooks copy of arm B
     main = Session(ctx, "chk-nc-A", 1, "A", ctx.sess("chk-nc-A"), "nocompact")

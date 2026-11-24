@@ -6,6 +6,7 @@ Lossless Handoff, formerly claude-handoff.
 
 ### Changed
 
+- Benchmark: the hooks copy of each arm moves to `<base>/lhtools-<run>-sN-<arm>/hooks`, outside the state folder, so no deny rule matches a recall command in any form (`cd`, loop, `ls; ...`). Result rows hold `bash_denials`, the report totals them per arm, and the selfcheck has a `recall-forms` check. `run.sh cleanup` also deletes `lhtools-*`.
 - Benchmark: new preset `proof-recheck` re-measures arm B on the proof seeds, with no PASS or FAIL. Arm B now gets the `.recall-rules` marker when the checkout has F81.
 
 ## [0.19.1] - 2026-11-24
