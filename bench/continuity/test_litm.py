@@ -682,7 +682,7 @@ class Design3(unittest.TestCase):
             kd = k.hooks_dir()
             self.assertTrue(os.path.isfile(os.path.join(kd, ".recall-rules")))             # F68 marker, in K's own copy
             self.assertTrue(os.path.isfile(os.path.join(kd, "recall-mcp.py")))
-            self.assertEqual(b.hooks_dir(), os.path.join(b.statedir, "hooks"))
+            self.assertEqual(b.hooks_dir(), os.path.join(b.toolsdir, "hooks"))
             self.assertFalse(os.path.exists(os.path.join(lh, "hooks", ".recall-rules")))   # the shared checkout is untouched
             mcp = json.loads(k.mcp_config())["mcpServers"]["lossless-recall"]
             self.assertEqual(mcp["args"], [os.path.join(kd, "recall-mcp.py")])
@@ -1183,7 +1183,7 @@ class Round4(unittest.TestCase):
             s = {a: runner.Session(ctx, "s1-" + a, 1, a, {}, "compact") for a in "ABRK"}
             for a in "BRK":
                 hd = s[a].hooks_dir()
-                self.assertEqual(hd, os.path.join(s[a].statedir, "hooks"))
+                self.assertEqual(hd, os.path.join(s[a].toolsdir, "hooks"))
                 self.assertEqual(s[a].overrides["HANDOFF_HOOKS_HOME"], hd)
                 self.assertEqual(os.path.isfile(os.path.join(hd, ".recall-rules")), a == "K")      # the test checkout has no F81 heading: the marker is in K only
                 hs = s[a].hook_hashes()
@@ -1278,7 +1278,7 @@ class Round4(unittest.TestCase):
             self.assertEqual(len(views["R"]["hooks"]["PostToolUse"]), 1)
             self.assertIn("SessionStart", views["K"]["hooks"])                        # the resume matcher gives the startup injection at the fork
             self.assertEqual([x.get("matcher") for x in views["K"]["hooks"]["SessionStart"]], ["compact", "startup", "resume"])
-            self.assertEqual(views["K"]["env"]["HANDOFF_HOOKS_HOME"], os.path.join(os.path.realpath(d), "lhbench-t-s1-K-nc-state", "hooks"))
+            self.assertEqual(views["K"]["env"]["HANDOFF_HOOKS_HOME"], os.path.join(os.path.realpath(d), "lhtools-t-s1-K-nc", "hooks"))
         finally:
             shutil.rmtree(d)
 

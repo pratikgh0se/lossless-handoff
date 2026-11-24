@@ -766,6 +766,20 @@ class RecallCommandAllowed(unittest.TestCase):
                         "wc -l < %s/hooks/recall.py" % self.STATE, "tail -5 %s/nodes.jsonl" % self.STATE):
                 self.assertTrue(runner.bash_denied(cmd, r), (arm, cmd))
 
+    def test_recall_forms_not_denied(self):
+        """The hooks copy lives in <base>/lhtools-<run>-sN-<arm>/hooks (no lhbench, no -state): cd, loop and ls forms are not denied; state reads stay denied."""
+        hd = self.BASE + "/lhtools-20261124T094639-proof-recheck-s2001-B/hooks"
+        forms = ["python3 %s/recall.py search --fixed WORD" % hd, "cd %s && python3 recall.py search --fixed WORD" % hd,
+                 'cd %s && for k in WORD; do python3 recall.py search --fixed "$k" | head -20; done' % hd,
+                 "ls; python3 %s/recall.py search --fixed WORD" % hd]
+        reads = ["cd %s && cat receipts.jsonl" % self.STATE, "cat %s/health.jsonl" % self.STATE]
+        for arm in ("B", "R"):
+            r = self.rules(arm)
+            for cmd in forms:
+                self.assertFalse(runner.bash_denied(cmd, r), (arm, cmd))
+            for cmd in reads:
+                self.assertTrue(runner.bash_denied(cmd, r), (arm, cmd))
+
     def test_arm_a_keeps_the_broad_deny(self):
         self.assertTrue(runner.bash_denied("python3 %s/hooks/recall.py search x" % self.STATE, self.rules("A")))
         self.assertIn("Bash(*-state*)", self.rules("A"))
@@ -795,7 +809,7 @@ class RecallCommandAllowed(unittest.TestCase):
             self.assertNotIn("Bash(*lhbench*)", deny)
             self.assertFalse(runner.bash_denied("python3 %s/hooks/recall.py search x" % self.STATE, deny))
             self.assertTrue(runner.bash_denied("cat %s/nodes.jsonl" % self.STATE, deny))
-            self.assertEqual(sv["env"]["HANDOFF_HOOKS_HOME"], os.path.join(v.statedir, "hooks"))
+            self.assertEqual(sv["env"]["HANDOFF_HOOKS_HOME"], os.path.join(v.toolsdir, "hooks"))
         # the project settings of arm A without compaction hold only the rules for every arm
         shared = runner.deny_rules(base, "A", shared=True)
         self.assertNotIn("Bash(*-state*)", shared)

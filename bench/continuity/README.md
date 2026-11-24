@@ -66,6 +66,7 @@ The proof test is a small, cheap run. It shows that plain Claude Code loses info
 - Seeds: 2001 to 2004, in `seeds-proof.txt`. `proof.check_seeds` checks every `seeds*.txt` file and the `config.json` of every run in `results/`. If a seed was used before, the run does not start.
 - The run starts with the live selfcheck. If it fails, the run stops with the message "proof test stopped before any probe".
 - Preset `proof-recheck` (`run.sh proof-recheck [--compare <run id>]`): a re-measure after F81, about $70. It runs arm B only on the used proof seeds, skips the new-seed check and prints a "Recheck" section (cued and neutral accuracy, and the paired difference per seed with `--compare`) and no PASS or FAIL. Arm B gets the `.recall-rules` marker only if the `--lh-path` checkout has the F81 heading in `docs/spec.md`; the run config records `b_recall_rules`.
+- Hooks copy: each arm with hooks has its copy in `<base>/lhtools-<run id>-sN-<arm>[-nc]/hooks` (no `lhbench` and no `-state` in the path), so the deny rules never match a recall command. Each result row holds `bash_denials` (Bash permission denials of the fork); `summary.md` totals them per arm. `run.sh cleanup` also deletes `lhtools-*`.
 - `run.sh proof --dry-run` prints the estimate. The basis is the pilot rerun 20261123T154241 (arm A $19.59 and arm B $16.85 for each seed). Arms O and Z come from the estimate. The total is about $165. The default budget is 1.5 times the estimate.
 
 ### Pass rule (thresholds.json, block `proof`)
