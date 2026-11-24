@@ -75,7 +75,7 @@ python3 - "$H" <<'PY'
 import hashlib, json, sys
 h = sys.argv[1]
 m = json.load(open(h + "/.handoff-manifest.json"))
-assert m["version"] == "1.21.0" and m["installed_at"], m
+assert m["version"] == "1.21.1" and m["installed_at"], m
 pkg = ["lossless_handoff/%s.py" % n for n in "__init__ transcript summary ledger handoff runtime redaction pipeline reconcile prove claims".split()]
 assert sorted(m["files"]) == sorted(["claims.json", "handoff-nudge.py", "postcompact-inject.py", "precompact-handoff.py", "recall.py"] + pkg), m
 for n, want in m["files"].items():
@@ -924,8 +924,8 @@ PY
   [ ! -e "$F/precompact-handoff.py" ] || fail "F66.a: uninstall did not finish its other work"
   rm "$F/llm_map.py" "$SK"; rmdir "$(dirname "$SK")"; o="$("$ROOT/uninstall.sh")"; ! grep -q "llm-map: kept" <<<"$o" || fail "F66.a: kept line without llm-map files"
   # F66.d versions
-  [ "$("$ROOT/install.sh" --version)" = "Lossless Handoff 0.19.0" ] || fail "F66.d: product version"
-  [ "$(grep -c '^HOOK_VERSION = "1.21.0"$' "$ROOT/hooks/precompact-handoff.py" "$ROOT/hooks/postcompact-inject.py" | grep -c ':1$')" = 2 ] || fail "F66.d: HOOK_VERSION"
+  [ "$("$ROOT/install.sh" --version)" = "Lossless Handoff 0.19.1" ] || fail "F66.d: product version"
+  [ "$(grep -c '^HOOK_VERSION = "1.21.1"$' "$ROOT/hooks/precompact-handoff.py" "$ROOT/hooks/postcompact-inject.py" | grep -c ':1$')" = 2 ] || fail "F66.d: HOOK_VERSION"
   # F66.c: README holds no claim markers; evidence page does; claims-lint default path
   ! grep -qE '\[C[1-9]\]' "$ROOT/README.md" && ! grep -qiE '^#+ .*proof|\*\*proof' "$ROOT/README.md" || fail "F66.c: README holds Proof or claim markers"
   grep -qE '\[C1\]' "$ROOT/docs/evidence.md" || fail "F66.c: docs/evidence.md has no markers"
@@ -972,7 +972,7 @@ rows = {json.loads(x)["sid"]: json.loads(x) for x in open(sys.argv[1]) if x.stri
 a, b = rows["f56a"], rows["f56b"]
 assert a["excerpt_chars"] > 0 and a["excerpt_dropped"] == 0, a
 assert b["excerpt_dropped"] > 0 and 0 < b["excerpt_chars"] <= 120000, b
-assert a["hook_version"] == "1.21.0"
+assert a["hook_version"] == "1.21.1"
 PY
   p="$(python3 "$ROOT/hooks/precompact-handoff.py" --prove --days 1; echo "rc=$?")"
   grep -qE "^excerpt cut: 1 of 2 compactions, median dropped [0-9]+ chars$" <<<"$p" || fail "F56.b: prove line: $p"
@@ -1138,7 +1138,7 @@ PY
 import json, sys
 rows = [json.loads(x) for x in open(sys.argv[1]) if x.strip()]
 r = [x for x in rows if x.get("event") == "subagent_start"][-1]
-assert r["rules"] == 2 and r["chars"] > 0 and r["hook_version"] == "1.21.0" and r["agent_type"] == "general-purpose", r
+assert r["rules"] == 2 and r["chars"] > 0 and r["hook_version"] == "1.21.1" and r["agent_type"] == "general-purpose", r
 PY
   # AC 262: no handoff text, no agent notes
   printf '# Handoff\n- cwd: %s\nLATESTTOKEN\n' "$PROJ" > "$STF/s58-latest.md"; printf 'AGENTTOKEN\n' > "$STF/s58-agent.md"
@@ -1912,7 +1912,7 @@ PY
   CMD="python3 $F/auto-recall.py"
   echo '{"model": "opus"}' > "$FS"
   grep -q -- "--auto-recall" <<<"$("$ROOT/install.sh" --help)" || fail "F67.a: --help lacks --auto-recall"
-  [ "$(grep -c '^HOOK_VERSION = "1.21.0"$' "$ROOT/hooks/auto-recall.py")" = 1 ] || fail "F67.e: auto-recall HOOK_VERSION"
+  [ "$(grep -c '^HOOK_VERSION = "1.21.1"$' "$ROOT/hooks/auto-recall.py")" = 1 ] || fail "F67.e: auto-recall HOOK_VERSION"
   # default install: not installed, not registered
   "$ROOT/install.sh" >/dev/null
   [ ! -e "$F/auto-recall.py" ] && ! grep -q "auto-recall" "$FS" && ! grep -q "auto-recall" "$F/.handoff-manifest.json" || fail "F67.a: default install holds auto-recall"
@@ -1966,7 +1966,7 @@ PY
   export HOME="$T/f68"; mkdir -p "$HOME/.claude"; F="$HOME/.claude/hooks"; DF="$HOME/.config/lossless-handoff/install-defaults"
   export HANDOFF_STATE_DIR="$HOME/.local/state/claude-handoffs"; STF="$HANDOFF_STATE_DIR"; mkdir -p "$STF"
   POST="$ROOT/hooks/postcompact-inject.py"
-  RULE='- recall rule: before you state an earlier number, path, name, command or decision, search for it. Do not answer from memory. If a value is not in your context, or a file no longer holds it, search before you answer "unknown". If the search finds nothing, say so.'
+  RULE='- recall rule: if your context does not clearly show an earlier number, path, name, command or decision, run the recall command above before you answer. Copy it exactly: full path, no cd. A failed or denied command is not "not found": run the exact command again. If no search can run, say so.'
   PROJ="$HOME/proj"; mkdir -p "$PROJ"; git -C "$PROJ" init -q; PROJ="$(cd "$PROJ" && pwd -P)"
   python3 - "$PROJ" "$STF" <<'PY'
 import hashlib, os, re, sys
@@ -2042,6 +2042,64 @@ PY
   ok "F68: marker, rule line after the recall line (start, ledger, subagent), off switch, receipt flag, install, saved defaults, uninstall"
 )
 
+# F83: recall robustness (OLDPWD fallback, zero-session warning, recall line, rule line)
+(
+  set -e
+  D="$T/f83"; mkdir -p "$D"; export HOME="$D/home"; mkdir -p "$HOME/.claude/hooks"
+  export HANDOFF_STATE_DIR="$D/state"; mkdir -p "$HANDOFF_STATE_DIR"
+  PROJ="$D/proj"; mkdir -p "$PROJ"; git -C "$PROJ" init -q; PROJ="$(cd "$PROJ" && pwd -P)"
+  HK="$D/hookscopy"; mkdir -p "$HK"; cp "$ROOT"/hooks/*.py "$HK"/
+  # a transcript for the project, in the Claude Code projects folder
+  python3 - "$PROJ" "$HOME" <<'PY'
+import json, os, re, sys
+proj, home = sys.argv[1:3]
+d = os.path.join(home, ".claude", "projects", re.sub(r"[^A-Za-z0-9]", "-", proj)); os.makedirs(d)
+rows = [{"type": "user", "sessionId": "s83", "cwd": proj, "timestamp": "2026-11-20T10:00:00Z", "message": {"role": "user", "content": "zebrafish marker F83UNIQUE"}}]
+open(os.path.join(d, "s83.jsonl"), "w").write("\n".join(json.dumps(r) for r in rows) + "\n")
+PY
+  # F83.a: cd into the hooks copy with OLDPWD set to the project
+  o="$(cd "$PROJ" && cd "$HK" && python3 "$HK/recall.py" search "F83UNIQUE")"
+  grep -q "F83UNIQUE" <<<"$o" && ! grep -q "^0 hits shown" <<<"$o" && ! grep -q "no sessions for project" <<<"$o" || fail "F83.a: OLDPWD fallback found no hit: $o"
+  # F83.b: a search with 0 sessions prints the warning, exit code 0
+  E="$D/empty"; mkdir -p "$E"; E="$(cd "$E" && pwd -P)"
+  r=0; o="$(cd "$E" && python3 "$HK/recall.py" search "zzqq")" || r=$?
+  [ "$r" = 0 ] || fail "F83.b: exit code $r"
+  [ "$(tail -n 1 <<<"$o")" = "recall.py: no sessions for project $E. This is the wrong folder, not an empty result. Run: python3 $HK/recall.py search \"zzqq\" --cwd <project folder>" ] || fail "F83.b: warning line: $o"
+  # a search that covers a session does not print the warning
+  o="$(python3 "$HK/recall.py" search "F83UNIQUE" --cwd "$PROJ")"; ! grep -q "no sessions for project" <<<"$o" || fail "F83.b: warning with sessions"
+  # F83.c and F83.d: recall line and rule line text, both hooks
+  python3 - "$ROOT/hooks" <<'PY'
+import importlib.util, sys
+def load(n, f):
+    sp = importlib.util.spec_from_file_location(n, sys.argv[1] + "/" + f); m = importlib.util.module_from_spec(sp); sp.loader.exec_module(m); return m
+a = load("pci", "postcompact-inject.py"); m = load("rmcp", "recall-mcp.py")
+assert "(same full path for: open <id>; user --last 20; do not cd)" in a.RECALL_LINE and "then: recall.py" not in a.RECALL_LINE, a.RECALL_LINE
+assert a.RECALL_RULE_LINE == '- recall rule: if your context does not clearly show an earlier number, path, name, command or decision, run the recall command above before you answer. Copy it exactly: full path, no cd. A failed or denied command is not "not found": run the exact command again. If no search can run, say so.', a.RECALL_RULE_LINE
+assert m.RULE == a.RECALL_RULE_LINE and m.INSTRUCTIONS.startswith(m.RULE)
+PY
+  # F83.g: every HOOK_VERSION constant is 1.21.1
+  ! grep -rn --include='*.py' -E '^HOOK_VERSION = "' "$ROOT/hooks" | grep -v '"1.21.1"' | grep -q . || fail "F83.g: a HOOK_VERSION is not 1.21.1"
+  [ "$(grep -rc --include='*.py' -E '^HOOK_VERSION = "1\.21\.1"$' "$ROOT/hooks" | grep -vc ':0$')" -ge 9 ] || fail "F83.g: fewer than 9 hooks at 1.21.1"
+  # F83.c: the PreCompact recall line (summary.py) holds the new text, the same as the inject line
+  python3 - "$ROOT/hooks" <<'PY'
+import importlib.util, sys
+sys.path.insert(0, sys.argv[1])
+from lossless_handoff import summary
+sp = importlib.util.spec_from_file_location("pci2", sys.argv[1] + "/postcompact-inject.py"); a = importlib.util.module_from_spec(sp); sp.loader.exec_module(a)
+assert summary.RECALL_LINE == a.RECALL_LINE and "(same full path for: open <id>; user --last 20; do not cd)" in summary.RECALL_LINE
+PY
+  ! grep -rn "then: recall.py" "$ROOT/hooks" --include='*.py' | grep -q . || fail "F83.c: old recall line text left in hooks"
+  # the MCP tool still says "no matches" for a project with 0 sessions
+  python3 - "$ROOT/hooks" "$E" <<'PY'
+import importlib.util, os, sys
+os.environ["CLAUDE_PROJECT_DIR"] = sys.argv[2]; os.chdir(sys.argv[2])
+sp = importlib.util.spec_from_file_location("rm3", sys.argv[1] + "/recall-mcp.py"); m = importlib.util.module_from_spec(sp); sp.loader.exec_module(m)
+out, n = m.tool_search({"query": "zzqq"})
+assert out == "no matches" and n == 0, (out, n)
+PY
+  ok "F83: OLDPWD fallback, zero-session warning, recall line, rule line"
+)
+
 # F69: recall MCP tool (install, registration through the claude command, protocol, tools, limits, health)
 (
   set -e
@@ -2065,7 +2123,7 @@ SH
   [ ! -e "$F/recall-mcp.py" ] && ! grep -q "recall-mcp" "$F/.handoff-manifest.json" && [ ! -s "$FAKE_CLAUDE_LOG" ] || fail "F69: default install holds recall-mcp or called claude"
   ! grep -q "recall-mcp" <<<"$(PATH="$D/fakebin:$PATH" "$ROOT/install.sh" --dry-run)" || fail "F69: default dry-run mentions recall-mcp"
   grep -q -- "--recall-mcp" <<<"$("$ROOT/install.sh" --help)" || fail "F69: --help lacks --recall-mcp"
-  [ "$(grep -c '^HOOK_VERSION = "1.21.0"$' "$ROOT/hooks/recall-mcp.py")" = 1 ] || fail "F69: HOOK_VERSION"
+  [ "$(grep -c '^HOOK_VERSION = "1.21.1"$' "$ROOT/hooks/recall-mcp.py")" = 1 ] || fail "F69: HOOK_VERSION"
   # dry-run lists the file and the command; runs nothing
   o="$(PATH="$D/fakebin:$PATH" "$ROOT/install.sh" --recall-mcp --dry-run)"
   grep -q "install hook: .*/recall-mcp.py" <<<"$o" && grep -qF "claude mcp add --scope user lossless-recall -- $MC" <<<"$o" || fail "F69: dry-run: $o"
@@ -2082,13 +2140,20 @@ SH
   printf '# Handoff\n- authority: x\n- recall: old line\n## Goal\nhi\n' > "$D/h.md"
   mkdir -p "$HANDOFF_STATE_DIR"; cp "$D/h.md" "$HANDOFF_STATE_DIR/s69-latest.md"
   echo "{\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"trigger\":\"auto\",\"degraded\":false,\"status\":\"ok\"}" > "$HANDOFF_STATE_DIR/s69-last-health.json"
+  # F83.e: the file alone is not enough; the server must be in the user MCP configuration
+  o="$(printf '{"session_id":"s69","cwd":"/tmp","source":"compact"}' | python3 "$ROOT/hooks/postcompact-inject.py" --part 1)"
+  ! grep -q "search_earlier_chat" <<<"$o" || fail "F83.e: tool sentence with the file but no registration: $o"
+  printf '{"mcpServers":{"lossless-recall":{"command":"python3","args":["x"]}}}' > "$HOME/.claude.json"
   o="$(printf '{"session_id":"s69","cwd":"/tmp","source":"compact"}' | python3 "$ROOT/hooks/postcompact-inject.py" --part 1)"
   python3 - "$o" <<'PY'
 import json, sys
 c = json.loads(sys.argv[1])["hookSpecificOutput"]["additionalContext"]
 l = [x for x in c.split("\n") if x.startswith("- recall:")][0]
 assert l.endswith(" Or call the search_earlier_chat tool."), l
+r = [x for x in c.split("\n") if x.startswith("- recall rule:")][0]
+assert r.endswith(' run the exact command again. If no search can run, say so. If Bash is not allowed, call search_earlier_chat.'), r
 PY
+  rm -f "$HOME/.claude.json"
   # uninstall: no claude on PATH still exits 0; with claude it runs the remove command
   : > "$FAKE_CLAUDE_LOG"
   o="$(PATH="$D/fakebin:$PATH" "$ROOT/uninstall.sh" --dry-run)"; grep -q "recall-mcp.py" <<<"$o" && [ ! -s "$FAKE_CLAUDE_LOG" ] || fail "F69: uninstall dry-run"
@@ -2171,9 +2236,9 @@ out, raw = run([
 by = {o.get("id"): o for o in out}
 assert [o.get("id") for o in out].count(2) == 1 and 99 not in by
 init = by[1]["result"]
-assert init["protocolVersion"] == "2025-06-18" and init["serverInfo"] == {"name": "lossless-recall", "version": "1.21.0"}, init
+assert init["protocolVersion"] == "2025-06-18" and init["serverInfo"] == {"name": "lossless-recall", "version": "1.21.1"}, init
 ins = init["instructions"]
-assert len(ins) < 4096 and "recall rule: before you state an earlier number, path, name, command or decision, search for it. Do not answer from memory. If a value is not in your context, or a file no longer holds it, search before you answer \"unknown\". If the search finds nothing, say so." in ins, ins
+assert len(ins) < 4096 and "recall rule: if your context does not clearly show an earlier number, path, name, command or decision, run the recall command above before you answer. Copy it exactly: full path, no cd. A failed or denied command is not \"not found\": run the exact command again. If no search can run, say so." in ins and "search_earlier_chat" in ins, ins
 assert by[2]["result"] == {}
 tools = {t["name"]: t for t in by[3]["result"]["tools"]}
 assert set(tools) == {"search_earlier_chat", "key_history", "open_message"}
@@ -2234,7 +2299,7 @@ def tr(name, tokens):
 tr("t30k", 29985); tr("t60k", 59985); tr("t120k", 119985); tr("t20k", 19985)
 PY
   ra() { python3 -c 'import json,sys; print(json.dumps({"session_id":sys.argv[1],"transcript_path":sys.argv[2],"cwd":sys.argv[3],"hook_event_name":"PostToolUse","tool_name":"Bash"}))' "$1" "$D/$2.jsonl" "$W" | python3 "$HK"; }
-  [ "$(grep -c '^HOOK_VERSION = "1.21.0"$' "$HK")" = 1 ] || fail "F70: HOOK_VERSION"
+  [ "$(grep -c '^HOOK_VERSION = "1.21.1"$' "$HK")" = 1 ] || fail "F70: HOOK_VERSION"
   # below the interval: nothing, no state file
   [ -z "$(ra s1 t30k)" ] && [ ! -e "$HANDOFF_STATE_DIR/reanchor-s1.json" ] || fail "F70: output below 50,000"
   # at 60,000: exactly one JSON object, exact shape and first line, the rules block, the recall line is not required to exist here
@@ -2286,7 +2351,7 @@ PY
   set -e
   D="$T/f71"; mkdir -p "$D"; export HOME="$D/home"; mkdir -p "$HOME/.claude"
   export HANDOFF_STATE_DIR="$D/state"; HK="$ROOT/hooks/claim-guard.py"; LOG="$HANDOFF_STATE_DIR/claim-guard.jsonl"; unset HANDOFF_CLAIM_GUARD
-  [ "$(grep -c '^HOOK_VERSION = "1.21.0"$' "$HK")" = 1 ] || fail "F71: HOOK_VERSION"
+  [ "$(grep -c '^HOOK_VERSION = "1.21.1"$' "$HK")" = 1 ] || fail "F71: HOOK_VERSION"
   python3 - "$D" <<'PY'
 import json, sys
 d = sys.argv[1]
@@ -2418,6 +2483,9 @@ PY
   # the private folder holds the marker and recall-mcp.py: both are seen
   : > "$PRIV/.recall-rules"; : > "$PRIV/recall-mcp.py"
   o="$(HANDOFF_HOOKS_HOME="$PRIV" sub | ctx)"
+  grep -q "^- recall rule: " <<<"$o" && ! grep -q "search_earlier_chat" <<<"$o" || fail "F83.e: tool sentence without registration (private folder): $o"
+  printf '{"mcpServers":{"lossless-recall":{}}}' > "$HOME/.claude.json"
+  o="$(HANDOFF_HOOKS_HOME="$PRIV" sub | ctx)"; rm -f "$HOME/.claude.json"
   grep -q "^- recall rule: " <<<"$o" && grep -q "search_earlier_chat" <<<"$o" || fail "F72: postcompact-inject ignored the private marker: $o"
   # HOME marker alone (override unset): seen, as before. Override not a folder: as if unset.
   o="$(sub | ctx)"; grep -q "^- recall rule: " <<<"$o" || fail "F72: unset override changed the behaviour: $o"
@@ -2739,7 +2807,7 @@ PY
   git -C "$W" init -q; : > "$W2/queue-limit"
   HG="$ROOT/hooks/history-guard.py"; AG="$ROOT/hooks/action-guard.py"; AR="$ROOT/hooks/auto-recall.py"
   for f in history-guard.py action-guard.py auto-recall.py guard_common.py; do
-    [ "$(grep -c '^HOOK_VERSION = "1.21.0"$' "$ROOT/hooks/$f")" = 1 ] || fail "F77: HOOK_VERSION of $f"
+    [ "$(grep -c '^HOOK_VERSION = "1.21.1"$' "$ROOT/hooks/$f")" = 1 ] || fail "F77: HOOK_VERSION of $f"
   done
   python3 - "$HOME" "$W" "$D" <<'PY'
 import json, os, re, sys

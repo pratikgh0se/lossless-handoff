@@ -6,7 +6,7 @@
 
 This documentation uses ASD-STE100 Simplified Technical English.
 
-Current versions: product 0.19.0 (`install.sh`), hooks 1.21.0 (`HOOK_VERSION` in `hooks/precompact-handoff.py`, `hooks/postcompact-inject.py`, `hooks/auto-recall.py`, `hooks/recall-mcp.py`, `hooks/reanchor.py`, `hooks/claim-guard.py`, `hooks/history-guard.py` and `hooks/action-guard.py`).
+Current versions: product 0.19.1 (`install.sh`), hooks 1.21.1 (`HOOK_VERSION` in `hooks/precompact-handoff.py`, `hooks/postcompact-inject.py`, `hooks/auto-recall.py`, `hooks/recall-mcp.py`, `hooks/reanchor.py`, `hooks/claim-guard.py`, `hooks/history-guard.py` and `hooks/action-guard.py`).
 
 [![CI](https://github.com/pratikgh0se/lossless-handoff/actions/workflows/ci.yml/badge.svg)](https://github.com/pratikgh0se/lossless-handoff/actions/workflows/ci.yml) [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE) [![Release](https://img.shields.io/github/v/release/pratikgh0se/lossless-handoff)](https://github.com/pratikgh0se/lossless-handoff/releases/latest)
 
@@ -35,7 +35,7 @@ You need `python3` and `bash` on macOS or Linux, and Claude Code. Windows is not
 | `--nightly` | Two nightly jobs: the index (03:30) and the reconcile-and-prove run (04:15). They are macOS LaunchAgents. On Linux the installer prints the cron lines. |
 | `--semantic` | Meaning search on your machine only. If `ollama` is on your PATH, the installer offers `ollama pull bge-m3` (`--yes` pulls without a question). |
 | `--auto-recall` | A `UserPromptSubmit` hook. When your prompt refers to the past ("what did we decide earlier"), it searches the earlier chats of the project and adds the top 3 exact quotes to the context. It runs for at most 2 seconds. |
-| `--recall-rules` | On by default (0.19.0), so this flag changes nothing. The line goes after the recall line in every session start and subagent start: search before you state an earlier number, path, name, command or decision, also when a file no longer holds it. It does not force a search. `--no-recall-rules` skips it; add `--save-defaults` to remove it. |
+| `--recall-rules` | On by default (0.19.0), so this flag changes nothing. The line goes after the recall line in every session start and subagent start: if your context does not clearly show an earlier number, path, name, command or decision, run the recall command above before you answer (full path, no `cd`). A failed or denied command is not "not found". It does not force a search. `--no-recall-rules` skips it; add `--save-defaults` to remove it. |
 | `--recall-mcp` | Installs a local MCP server with the tools `search_earlier_chat` and `open_message` and registers it with `claude mcp add --scope user`. It does not force a search. |
 | `--reanchor` | A `PostToolUse` hook. Each time the context grows by 50,000 tokens, it repeats the active rules of the project near the end of the context. It prints nothing when there is no rule. |
 | `--claim-guard` | A `Stop` hook. When a reply states an earlier fact ("as we decided", "you said") and the turn has no recall search, it writes one log line. It does not change the reply, unless you set `HANDOFF_CLAIM_GUARD=block`. |
