@@ -1,6 +1,6 @@
 # Continuity proof test: result of 2026-11-23
 
-This page is the report of one benchmark run. It is the file `summary.md` of the run, without changes except for the two path placeholders below.
+This page is the report of one benchmark run. It is the file `summary.md` of the run, without changes except for the two path placeholders below and one added section at the end ("Added: kind of fact at 10 compactions"). The raw `results.jsonl` of the run stays on the machine that ran it (`bench/continuity/results/` is not committed).
 
 | Item | Value |
 |---|---|
@@ -362,3 +362,23 @@ Registered rule: |B minus A| <= 5 points and the interval holds 0. Result: **NO 
 
 A hypothesis that is NOT SUPPORTED or REFUTED stays in the report. The thresholds do not change after a run.
 
+---
+
+## Added: kind of fact at 10 compactions
+
+This section was added after the run. It counts the rows of `results.jsonl` with arm A or B, condition `compact` and `n_target` 10. It pools the cued and the neutral probes, so the counts are larger than in Table 2 (which holds only the cued probes). The data is the same run, 4 seeds (2001 to 2004).
+
+| Kind of fact | Type | Where the fact lived | A plain | B Lossless Handoff |
+|---|---|---|---|---|
+| Rule the user stated | R | user message | 32/32 (100%) | 32/32 (100%) |
+| Decision | D | user message | 32/32 (100%) | 32/32 (100%) |
+| Conflict, latest word wins | C | user message | 16/16 (100%) | 16/16 (100%) |
+| Decision that replaced an older one | X | user message | 12/32 (38%) | 32/32 (100%) |
+| Exact string, for example a deploy command | S | only in a file the agent read once | 4/32 (12%) | 28/32 (88%) |
+| Dead end: exact error code of a failed approach | E | only in tool output | 4/32 (12%) | 32/32 (100%) |
+| Order of three decisions | M | user messages at different times | 0/4 (0%) | 4/4 (100%) |
+| Fact that only a subagent saw | U | subagent | 0/12 (0%) | 8/12 (67%) |
+
+Plain Claude Code keeps the simple things the user said. It loses changes, order, exact strings and tool output.
+
+At 10 compactions, 76 of the 192 probes of arm B in the table above used a lookup (a recall or transcript search) by their own choice: all 32 E probes, all 32 S probes and all 12 U probes. The fresh control (type F, 12 rows) is not in the table.
