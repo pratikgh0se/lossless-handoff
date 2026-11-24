@@ -132,7 +132,7 @@ When recall and the decisions list disagree, the decisions list and the latest w
 
 ## Verified facts
 
-These numbers come from the code in this repository (hooks 1.21.1), not from a benchmark run.
+These numbers come from the code in this repository (hooks 1.21.2), not from a benchmark run.
 
 | Fact | Where it is in the code |
 |---|---|

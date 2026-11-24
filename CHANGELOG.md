@@ -4,6 +4,15 @@ Lossless Handoff, formerly claude-handoff.
 
 ## [Unreleased]
 
+## [0.19.2] - 2026-11-25
+
+Lossless check fix (hooks 1.21.2). Amendment (a) in the proof section of `docs/spec.md`.
+
+### Fixed
+
+- The lossless check in `--prove` now reads both recall label forms, `<session8>:<line>` and `<parent8>/<agent8>:<line>`, and opens the hit with the same label. Before, every subagent receipt failed with "recall found no hit". All 11 live failures of 2026-11-18 to 2026-11-24 were of this kind. The 26 main-chat checks passed. Old rows in `proofs.jsonl` stay as they are.
+- A recall call that times out in the lossless check gives `skip` with the reason `timeout`, not `fail`.
+
 ### Changed
 
 - Benchmark: the hooks copy of each arm moves to `<base>/lhtools-<run>-sN-<arm>/hooks`, outside the state folder, so no deny rule matches a recall command in any form (`cd`, loop, `ls; ...`). Result rows hold `bash_denials` (our rules) and `bash_native_blocks` (Claude Code itself), the report totals them per arm, and the selfcheck `recall-forms` fails only when our deny rules block a recall form. `run.sh cleanup` also deletes `lhtools-*`.

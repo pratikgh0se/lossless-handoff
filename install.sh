@@ -2,7 +2,7 @@
 # Lossless Handoff installer (formerly claude-handoff): copies the hooks and merges them into ~/.claude/settings.json.
 set -euo pipefail
 
-VERSION="0.19.1"
+VERSION="0.19.2"
 usage() {
   cat <<EOF
 Lossless Handoff $VERSION (formerly claude-handoff)
@@ -12,8 +12,8 @@ merges them into ~/.claude/settings.json, installs the recall subagent (~/.claud
 file of that name that is not ours is there), keeps the decisions list, writes the recall rule marker
 (F81: the recall rule is on by default; turn it off with --no-recall-rules --save-defaults, or HANDOFF_RECALL_RULES=0),
 and starts a first recall index.
-Hooks 1.21.1 keep the chat store: handoff files live 365 days, and --keep-transcripts raises Claude Code's transcript retention.
-Hooks 1.21.1 also mask secrets in every file they write (see SECURITY.md).
+Hooks 1.21.2 keep the chat store: handoff files live 365 days, and --keep-transcripts raises Claude Code's transcript retention.
+Hooks 1.21.2 also mask secrets in every file they write (see SECURITY.md).
 The default does NOT set CLAUDE_CODE_AUTO_COMPACT_WINDOW, pull a model, or install nightly jobs.
 Add them with the opt-in flags below. A rerun never removes, turns off or changes a part that is already installed
 (window value, meaning search, nightly jobs): a --no-* flag only skips adding it. Use ./uninstall.sh to remove parts.
