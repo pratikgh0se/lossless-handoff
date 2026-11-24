@@ -97,7 +97,7 @@ A result has at most 12,000 characters. A bad input or an unknown id gives a too
 
 `recall.py` takes the project from the current folder. If you run it with no `--cwd` from the folder that holds `recall.py` (for example `cd ~/.claude/hooks`), it uses the previous folder (`OLDPWD`) when that folder exists. If a search covers 0 sessions, it prints one more line: `recall.py: no sessions for project <root>. This is the wrong folder, not an empty result. Run: ...`. The exit code does not change. Use the full path and do not `cd`.
 
-In ask mode and in headless runs, a recall search can be denied. You can add one optional permission allow rule to your Claude Code settings: `Bash(python3 ~/.claude/hooks/recall.py:*)`. The installer does not write it.
+The permission allow rule `Bash(python3 ~/.claude/hooks/recall.py:*)` (F44.7) lets the exact recall command run without a prompt in ask mode and in headless runs (`claude -p`). F83 does not change what the installer writes.
 
 ## Re-anchor and claim guard
 

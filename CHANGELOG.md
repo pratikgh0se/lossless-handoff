@@ -18,7 +18,7 @@ Recall robustness (hooks 1.21.1). New F83 in `docs/spec.md`.
 - A search that covers 0 sessions prints a warning line with the full command.
 - The recall line says "same full path ... do not cd". The rule line is new: run the recall command, copy it exactly, run a failed or denied command again, and say so if no search can run.
 - The MCP sentences appear only when the `lossless-recall` server is registered in `~/.claude.json`. The rule line then ends with `If Bash is not allowed, call search_earlier_chat.`
-- Docs name one optional allow rule: `Bash(python3 ~/.claude/hooks/recall.py:*)`. The installer does not write it.
+- Docs name the allow rule `Bash(python3 ~/.claude/hooks/recall.py:*)` (F44.7) and say what it does. The installer is unchanged.
 
 ## [0.19.0] - 2026-11-23
 

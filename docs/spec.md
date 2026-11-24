@@ -1283,6 +1283,6 @@ Why: `cd <hooks dir> && python3 recall.py search ...` searched 0 sessions and lo
 
 **F83.e MCP sentence.** The recall line and the rule line mention the MCP tool (`search_earlier_chat`) only when the recall MCP server is registered for the user (the server name that `install.sh --recall-mcp` registers is in the user MCP configuration), not only when the file exists. When it is registered, the rule line ends with ` If Bash is not allowed, call search_earlier_chat.`
 
-**F83.f Docs.** The recall docs name one optional permission allow rule for ask mode and headless runs: `Bash(python3 ~/.claude/hooks/recall.py:*)`. The installer does not write it.
+**F83.f Docs.** The recall docs name the allow rule `Bash(python3 ~/.claude/hooks/recall.py:*)` (F44.7) and say that it lets the exact recall command run without a prompt in ask mode and in headless runs (`claude -p`). F83 does not change what the installer writes.
 
 **F83.g Release.** Version 0.19.1, hooks 1.21.1.
