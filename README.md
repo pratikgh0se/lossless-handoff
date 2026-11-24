@@ -8,6 +8,8 @@ This documentation uses ASD-STE100 Simplified Technical English.
 
 Current versions: product 0.19.1 (`install.sh`), hooks 1.21.1 (`HOOK_VERSION` in `hooks/precompact-handoff.py`, `hooks/postcompact-inject.py`, `hooks/auto-recall.py`, `hooks/recall-mcp.py`, `hooks/reanchor.py`, `hooks/claim-guard.py`, `hooks/history-guard.py` and `hooks/action-guard.py`).
 
+![plain Claude Code at 10 compactions: 58%](https://img.shields.io/badge/plain%20at%2010%20compactions-58%25-c0392b) ![Lossless Handoff at 10 compactions: 100%](https://img.shields.io/badge/Lossless%20Handoff-100%25-0b7a75) ![4 seeds, small benchmark](https://img.shields.io/badge/benchmark-4%20seeds-8197a0)
+
 [![CI](https://github.com/pratikgh0se/lossless-handoff/actions/workflows/ci.yml/badge.svg)](https://github.com/pratikgh0se/lossless-handoff/actions/workflows/ci.yml) [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE) [![Release](https://img.shields.io/github/v/release/pratikgh0se/lossless-handoff)](https://github.com/pratikgh0se/lossless-handoff/releases/latest)
 
 ## The problem and the fix
@@ -20,21 +22,11 @@ Before each compaction, the hooks write a structured handoff and feed it back in
 
 ## Why this exists
 
-A long Claude Code session compacts many times. Each compaction replaces the chat with a short summary. A detail that is not in the summary is gone. The details that go first are the exact commands, the error codes, the decision that replaced an older one, and what a subagent found. Lossless Handoff makes compaction safe. Nothing important is lost, and Claude can get the exact old text back.
+![Plain compaction against Lossless Handoff](docs/img/flow.svg)
 
-```mermaid
-flowchart LR
-    subgraph P["Plain Claude Code"]
-        direction LR
-        P1[Long chat] --> P2[Compaction] --> P3[Short summary] --> P4[Details lost] --> P5["Claude guesses or says UNKNOWN"]
-    end
-    subgraph L["Lossless Handoff"]
-        direction LR
-        L1[Long chat] --> L2["PreCompact hook writes a handoff and keeps the full transcript searchable"] --> L3[Compaction] --> L4["SessionStart hook injects the handoff, the decisions list and the recall line"] --> L5["Claude searches the old text with recall"] --> L6[Exact answer]
-    end
-```
+A compaction replaces the chat with a short summary. Exact commands, error codes and replaced decisions are gone. Lossless Handoff keeps them safe, and Claude can get the exact old text back.
 
-The four parts:
+<details><summary>The four parts</summary>
 
 1. **Handoff.** A hook writes it before each compaction: the goal, the decisions, the dead ends and the next step.
 2. **Decisions list.** Your standing rules and decisions come back after every compaction. Your latest words win.
@@ -42,6 +34,8 @@ The four parts:
 4. **Recall rule.** One line in the new context: if the context does not clearly show a value, run the recall command and copy it exactly. A failed command is not "not found".
 
 The details are in [How it works](#how-it-works) below.
+
+</details>
 
 ## Quick start
 
@@ -53,6 +47,8 @@ cd lossless-handoff
 ```
 
 You need `python3` and `bash` on macOS or Linux, and Claude Code. Windows is not supported. Then restart open Claude Code sessions. Hooks load when a session starts. The default install is small. It installs the core and the recall rule line (on by default since 0.19.0). Each other option below is opt-in. To turn the recall rule off, run `./install.sh --no-recall-rules --save-defaults`, or set `HANDOFF_RECALL_RULES=0`:
+
+<details><summary>All install flags</summary>
 
 | Flag | What it adds |
 |---|---|
@@ -68,6 +64,8 @@ You need `python3` and `bash` on macOS or Linux, and Claude Code. Windows is not
 | `--action-guard` | A `PostToolBatch` hook (F80). It checks Edit, Write, MultiEdit, NotebookEdit and Bash calls for a key that changed in this chat. It writes one log line, or with `HANDOFF_ACTION_GUARD=inject` it adds the history before the next step. It never blocks a call. |
 | `--recall-size-trigger` | Needs `--auto-recall` (F78). Auto-recall also fires with no cue phrase when the context is 100,000 tokens or more and the prompt names a key that changed in this chat. `HANDOFF_AUTO_RECALL_SIZE=0` switches it off. |
 | `--save-defaults` | Saves the opt-in flags of that run to `~/.config/lossless-handoff/install-defaults`. Every later `./install.sh` run applies them. |
+
+</details>
 
 Run `./install.sh --window 400000 --nightly --semantic` to get everything. All flags, the saved defaults file and the upgrade from 0.12.x are in [docs/install.md](docs/install.md). `llm_map` (label each item of a big list with a small model) is now a separate project: [pratikgh0se/llm-map](https://github.com/pratikgh0se/llm-map). See [docs/llm-map.md](docs/llm-map.md).
 
@@ -116,48 +114,36 @@ The parts, the events and the files are in [docs/architecture.md](docs/architect
 
 ## Benchmarks
 
-### What the benchmark does
+![Accuracy after 1, 3 and 10 compactions](docs/img/accuracy.svg)
 
-The proof test is a small benchmark with 4 seeds. It plants facts with random answers early in a long scripted session. Filler turns force compactions. Then the runner asks questions and code grades the answers. It ran on 2026-11-23 with Sonnet, a 400k context window and Claude Code 2.1.326. The seeds were new (2001 to 2004). The cost was $149.50. The pass rule was written before the run, and the run passed it. The full report is [docs/proof/benchmarks/2026-11-23-proof-test.md](docs/proof/benchmarks/2026-11-23-proof-test.md).
-
-### Accuracy against compactions
-
-```mermaid
-xychart-beta
-    title "Accuracy after 1, 3 and 10 compactions (%)"
-    x-axis ["1 compaction", "3 compactions", "10 compactions"]
-    y-axis "Accuracy (%)" 0 --> 100
-    line [100, 80, 58]
-    line [100, 100, 100]
-```
-
-First line: plain Claude Code (A). Second line: Lossless Handoff (B).
+At 10 compactions, plain Claude Code scores 58% and Lossless Handoff scores 100%. The gain is +42 points (95% interval +27 to +51), over 4 seeds. The test measured 1, 3 and 10 compactions only. It did not measure 2 or 5 compactions.
 
 | Arm | 1 compaction | 3 compactions | 10 compactions |
 |---|---|---|---|
 | Plain Claude Code (A) | 100% | 80% | 58% |
 | Lossless Handoff (B) | 100% | 100% | 100% |
 
-At 10 compactions, B is 42 points above A. The 95% interval is +27 to +51 points, over 4 seeds. The test measured 1, 3 and 10 compactions only. It did not measure 2 or 5 compactions. The chart axis has equal spacing between the three points, so do not read a trend between them.
+Full report: [docs/proof/benchmarks/2026-11-23-proof-test.md](docs/proof/benchmarks/2026-11-23-proof-test.md).
+
+<details><summary>What the test does</summary>
+
+The proof test is a small benchmark with 4 seeds. It plants facts with random answers early in a long scripted session. Filler turns force compactions. Then the runner asks questions and code grades the answers. It ran on 2026-11-23 with Sonnet, a 400k context window and Claude Code 2.1.326. The seeds were new (2001 to 2004). The cost was $149.50. The pass rule was written before the run, and the run passed it.
 
 - Controls: the oracle (no compaction) scored 100%, the amnesia control (no history) scored 0%, and the fresh control scored 100%. So the test can tell a good result from a bad one.
 - At 10 compactions, A was wrong and B was right on 42 items. There were 0 items where B was wrong and A was right.
 - An older test on real projects (model-graded, with an older version) shows the same direction at 1, 2 and 3 or more compactions. See the decisions-list row in [docs/evidence.md](docs/evidence.md#one-off-measurements).
 
+</details>
+
 ### Which facts plain Claude Code forgets
 
+![Items correct at 10 compactions, by kind of fact](docs/img/kinds.svg)
+
+Plain Claude Code keeps the simple things the user said. It loses changes, order, exact strings and tool output. A long coding task needs exactly these details.
+
+<details><summary>Numbers and two examples</summary>
+
 Items correct at 10 compactions (cued and neutral questions together, 4 seeds). Source: the section "Added: kind of fact at 10 compactions" in [the report](docs/proof/benchmarks/2026-11-23-proof-test.md#added-kind-of-fact-at-10-compactions).
-
-```mermaid
-xychart-beta
-    title "Items correct at 10 compactions (%)"
-    x-axis ["R rule", "D decision", "C conflict", "X replaced", "S string", "E dead end", "M order", "U subagent"]
-    y-axis "Correct (%)" 0 --> 100
-    bar [100, 100, 100, 38, 12, 12, 0, 0]
-    bar [100, 100, 100, 100, 88, 100, 100, 67]
-```
-
-First bars: plain Claude Code (A). Second bars: Lossless Handoff (B).
 
 | Kind of fact | Where it lived | Plain (A) | Lossless Handoff (B) |
 |---|---|---|---|
@@ -170,38 +156,58 @@ First bars: plain Claude Code (A). Second bars: Lossless Handoff (B).
 | Order of three decisions (M) | user messages at different times | 0/4 (0%) | 4/4 (100%) |
 | Fact that only a subagent saw (U) | subagent | 0/12 (0%) | 8/12 (67%) |
 
-Plain Claude Code keeps the simple things the user said. It loses changes, order, exact strings and tool output. A long coding task needs exactly these details.
-
 Two examples from the report (seed 2001, 10 compactions):
 
 - The exact deploy command for `mirror-3481`. Expected: `rk-ship --lane 5912 --tag JBENXM`. A answered `UNKNOWN`. B gave the exact command, after a search.
 - The order of three decisions made at different times. Expected: `NSKK-7211-TXNE, L3N9-0550-F4DU, 3K49-3054-TNDJ`. A gave an empty list. B gave the correct order, with no search.
 
-### Limits of this benchmark
-
-- It is a small benchmark: 4 seeds (2001 to 2004).
-- It is our own synthetic benchmark. Code grades it, but we wrote it.
-- It used Sonnet only, at most 10 compactions, and one Claude Code version.
-- On questions without a hint (neutral wording, types R D X S E), B scored 95% (76/80). Claude sometimes checks the current files and does not search.
-- A pilot with 2 seeds ran first. It found a benchmark bug: the deny rules blocked the recall command (fixed in PR #51 and PR #52). The proof test uses only new seeds.
+</details>
 
 ### The recall rule check (small)
 
-After the proof test, the recall rule changed twice. A re-measure of the strict rule (0.19.0, 4 seeds, $70.57) is invalid for the rule: Claude Code blocked searches, and recall run from its own folder searched 0 sessions. Fix 0.19.1 followed. A small check of 0.19.1 used 2 seeds and 1 and 3 compactions ($13.38). At 3 compactions it answered 30 of 30 questions with a hint and 30 of 30 without a hint. The limits: 2 seeds, at most 3 compactions, and no verdict. It shows a direction. It does not prove the fix. See [docs/proof/benchmarks/2026-11-24-recall-rule-check.md](docs/proof/benchmarks/2026-11-24-recall-rule-check.md).
+![Recall rule check, 2 seeds, 3 compactions](docs/img/recall-rule.svg)
 
-### What the benchmarks show
+A small check of fix 0.19.1 used 2 seeds and 1 and 3 compactions ($13.38). It has no verdict. The strict rule re-measure (0.19.0, $70.57) is invalid: Claude Code blocked searches. See [docs/proof/benchmarks/2026-11-24-recall-rule-check.md](docs/proof/benchmarks/2026-11-24-recall-rule-check.md).
+
+<details><summary>Numbers</summary>
+
+Seeds 2001 and 2002, 3 compactions, items correct. At 3 compactions, fix 0.19.1 answered 30 of 30 questions with a hint and 30 of 30 without a hint.
+
+| Version | Hint | No hint |
+|---|---|---|
+| Before the rule (proof test) | 30/30 | 26/30 |
+| Strict rule 0.19.0 | 28/30 | 30/30 |
+| Fix 0.19.1 | 30/30 | 30/30 |
+
+Limits: 2 seeds, at most 3 compactions, and no verdict. It shows a direction. It does not prove the fix.
+
+</details>
+
+### What the benchmarks show and do not show
+
+![Shown and not shown yet](docs/img/proved-vs-not-yet.svg)
+
+Limits of the proof test: it is a small benchmark with 4 seeds (2001 to 2004), and it is our own synthetic benchmark. The live mechanism checks currently include failures: see [docs/evidence.md](docs/evidence.md#live-checks-the-proof-run).
+
+<details><summary>The lists in words</summary>
+
+Shown:
 
 - Plain Claude Code loses facts as compactions add up (100%, 80%, 58% at 1, 3 and 10 compactions).
 - Lossless Handoff stopped that loss up to 10 compactions (100%, 100%, 100%). It made things worse on 0 items.
 - The loss is in the details that long tasks need: replaced decisions, exact strings, error codes, order and subagent facts.
-- The mechanism runs on the author's machine. In the 7 days to 2026-11-24 there were 35 compactions. The handoff was delivered 35 of 35 times, and the right agent got it 35 of 35 times. The lossless spot check passed 23 of 34 times and failed 11 times. The author has not investigated the cause of these 11 failures. See [docs/evidence.md](docs/evidence.md#live-checks-the-proof-run). The live mechanism checks currently include failures.
+- The mechanism runs on the author's machine. In the 7 days to 2026-11-24 there were 35 compactions. The handoff was delivered 35 of 35 times, and the right agent got it 35 of 35 times. The lossless spot check passed 23 of 34 times and failed 11 times. The author has not investigated the cause of these 11 failures.
 
-### What the benchmarks do not show yet
+Not shown yet:
 
 - Only 4 seeds, only Sonnet, only up to 10 compactions, and one Claude Code version.
-- It is our own benchmark. No outside benchmark with forced compactions has run yet.
+- It is our own benchmark, code-graded. No outside benchmark with forced compactions has run yet.
+- On questions without a hint (neutral wording, types R D X S E), B scored 95% (76/80). Claude sometimes checks the current files and does not search.
+- A pilot with 2 seeds ran first. It found a benchmark bug: the deny rules blocked the recall command (fixed in PR #51 and PR #52). The proof test uses only new seeds.
 - No study of other people's real work.
 - The 0.19.1 fix has 2 seeds and at most 3 compactions.
+
+</details>
 
 ### What we have not run yet
 

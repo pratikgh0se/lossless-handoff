@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 920 392" width="920" height="392" role="img" aria-labelledby="t d">
+<title id="t">Plain compaction against Lossless Handoff</title><desc id="d">Plain Claude Code: long chat, compaction, short summary, details lost, guess or UNKNOWN. Lossless Handoff: long chat, PreCompact hook writes the handoff, compaction, SessionStart hook injects handoff, decisions list and recall line, Claude runs recall, exact answer.</desc>
+<style>
+text{font-family:system-ui,-apple-system,"Segoe UI",Arial,sans-serif;font-size:13px;font-weight:600}.bg{fill:#ffffff}.panel{fill:#f4f7f8;stroke:#d3dde1;stroke-width:1.5}
+.t{fill:#14232b;font:600 14px system-ui,-apple-system,"Segoe UI",Arial,sans-serif}
+.h{fill:#14232b;font:700 20px system-ui,-apple-system,"Segoe UI",Arial,sans-serif}
+.m{fill:#4d636c;font:13px system-ui,-apple-system,"Segoe UI",Arial,sans-serif}
+.num{fill:#14232b;font:700 13px system-ui,-apple-system,"Segoe UI",Arial,sans-serif}
+.a{fill:#c0392b}.as{fill:#fbe6e2}.b{fill:#0b7a75}.bs{fill:#d8f0ee}
+.ok{fill:#26713a}.oks{fill:#dff1e4}.w{fill:#9a5700}.ws{fill:#fbefd2}
+.sa{stroke:#c0392b}.sb{stroke:#0b7a75}.grid{stroke:#d3dde1;stroke-width:1;fill:none}
+.ln{stroke:#4d636c;stroke-width:2;fill:none}.lw{fill:#ffffff}
+.wa{fill:#ffffff;font:700 13px system-ui,Arial,sans-serif}
+@media (prefers-color-scheme: dark){
+.bg{fill:#0e1a1f}.panel{fill:#162830;stroke:#2b4149}
+.t,.h,.num{fill:#e5eef1}.m{fill:#9db2ba}
+.a{fill:#ff8c78}.as{fill:#3b2420}.b{fill:#41cbc3}.bs{fill:#103230}
+.ok{fill:#72d28c}.oks{fill:#173321}.w{fill:#f2b955}.ws{fill:#3a2d12}
+.sa{stroke:#ff8c78}.sb{stroke:#41cbc3}.grid{stroke:#2b4149}.ln{stroke:#9db2ba}.lw{fill:#0e1a1f}
+.wa{fill:#0e1a1f}}
+</style>
+<rect class="bg" x="0" y="0" width="920" height="392"/>
+<text class="h" x="20" y="32" text-anchor="start">Plain compaction against Lossless Handoff</text><rect class="as" x="20" y="52" width="880" height="110" rx="12"/><text class="a" x="36" y="76" text-anchor="start">Plain Claude Code</text><rect class="panel" x="36" y="92" width="150" height="54" rx="8"/><text class="t" x="111.0" y="119.0" text-anchor="middle">Long chat</text><path class="ln" d="M186 119 H208"/><path class="ln" d="M201 114 L208 119 L201 124"/><rect class="panel" x="208" y="92" width="150" height="54" rx="8"/><text class="t" x="283.0" y="119.0" text-anchor="middle">Compaction</text><path class="ln" d="M358 119 H380"/><path class="ln" d="M373 114 L380 119 L373 124"/><rect class="panel" x="380" y="92" width="150" height="54" rx="8"/><text class="t" x="455.0" y="119.0" text-anchor="middle">Short summary</text><path class="ln" d="M530 119 H552"/><path class="ln" d="M545 114 L552 119 L545 124"/><rect class="panel" x="552" y="92" width="150" height="54" rx="8"/><text class="a" x="627.0" y="119.0" text-anchor="middle">Details lost</text><path class="ln" d="M702 119 H724"/><path class="ln" d="M717 114 L724 119 L717 124"/><rect class="panel" x="724" y="92" width="150" height="54" rx="8"/><text class="a" x="799.0" y="119.0" text-anchor="middle">Guess or UNKNOWN</text><rect class="bs" x="20" y="182" width="880" height="190" rx="12"/><text class="b" x="36" y="206" text-anchor="start">Lossless Handoff</text><rect class="panel" x="36" y="222" width="120" height="54" rx="8"/><text class="t" x="96.0" y="249.0" text-anchor="middle">Long chat</text><path class="ln" d="M156 249 H186"/><path class="ln" d="M179 244 L186 249 L179 254"/><rect class="panel" x="186" y="222" width="200" height="54" rx="8"/><text class="t" x="286.0" y="245.0" text-anchor="middle">PreCompact hook</text><text class="m" x="286.0" y="262.0" text-anchor="middle">writes the handoff</text><path class="ln" d="M386 249 H416"/><path class="ln" d="M409 244 L416 249 L409 254"/><rect class="panel" x="416" y="222" width="120" height="54" rx="8"/><text class="t" x="476.0" y="249.0" text-anchor="middle">Compaction</text><path class="ln" d="M536 249 H566"/><path class="ln" d="M559 244 L566 249 L559 254"/><rect class="panel" x="566" y="222" width="300" height="54" rx="8"/><text class="t" x="716.0" y="245.0" text-anchor="middle">SessionStart hook</text><text class="m" x="716.0" y="262.0" text-anchor="middle">injects handoff, decisions, recall line</text><path class="ln" d="M716 276 V300"/><rect class="panel" x="566" y="306" width="300" height="54" rx="8"/><text class="b" x="716.0" y="333.0" text-anchor="middle">Claude runs recall for a missing value</text><path class="ln" d="M566 333 H436"/><path class="ln" d="M443 328 L436 333 L443 338"/><rect class="panel" x="236" y="306" width="200" height="54" rx="8"/><text class="b" x="336.0" y="333.0" text-anchor="middle">Exact answer</text><text class="m" x="36" y="340" text-anchor="start">Full transcript stays searchable</text>
+</svg>
