@@ -767,7 +767,7 @@ class RecallCommandAllowed(unittest.TestCase):
                 self.assertTrue(runner.bash_denied(cmd, r), (arm, cmd))
 
     def test_recall_forms_not_denied(self):
-        """The hooks copy lives in <base>/lhtools-<run>-sN-<arm>/hooks (no lhbench, no -state): cd, loop and ls forms are not denied; state reads stay denied."""
+        """The hooks copy lives in <base>/lhtools-<run>-sN-<arm>/hooks (no lhbench, no -state): our deny rules do not match the cd, loop and ls forms; state reads stay denied. (Claude Code may still block cd and loops itself in headless mode: see test_native_blocks_are_told_from_our_denials.)"""
         hd = self.BASE + "/lhtools-20261124T094639-proof-recheck-s2001-B/hooks"
         forms = ["python3 %s/recall.py search --fixed WORD" % hd, "cd %s && python3 recall.py search --fixed WORD" % hd,
                  'cd %s && for k in WORD; do python3 recall.py search --fixed "$k" | head -20; done' % hd,
@@ -779,6 +779,19 @@ class RecallCommandAllowed(unittest.TestCase):
                 self.assertFalse(runner.bash_denied(cmd, r), (arm, cmd))
             for cmd in reads:
                 self.assertTrue(runner.bash_denied(cmd, r), (arm, cmd))
+
+    def test_native_blocks_are_told_from_our_denials(self):
+        native = ["cd in '/x/hooks' was blocked. For security, Claude Code may only change directories to the allowed working directories for this session: '/y'",
+                  "A variable in this command can't be checked before it runs"]
+        ours = ["cat from '/x-state/receipts.jsonl' was blocked by a deny rule.", "Permission to use Bash with command cat /x-state/health.jsonl has been denied."]
+        for t in native:
+            self.assertEqual(runner.classify_result(t), "native")
+        for t in ours:
+            self.assertEqual(runner.classify_result(t), "deny")
+        self.assertEqual(runner.classify_result("mode: keyword only | a0a13b19:21 user [word]"), "ran")
+        frecs = [{"message": {"content": [{"type": "tool_use", "name": "Bash", "id": "1", "input": {"command": "ls"}}]}},
+                 {"message": {"content": [{"type": "tool_result", "tool_use_id": "1", "content": "ok"}]}}]
+        self.assertEqual(runner.bash_results(frecs), [("ls", "ok")])
 
     def test_arm_a_keeps_the_broad_deny(self):
         self.assertTrue(runner.bash_denied("python3 %s/hooks/recall.py search x" % self.STATE, self.rules("A")))
