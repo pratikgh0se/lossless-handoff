@@ -1268,3 +1268,21 @@ Why: in the 2026-11-23 proof test, Claude answered "unknown" for exact strings t
 **F81.b Rule line.** The F68.b line becomes exactly: `- recall rule: before you state an earlier number, path, name, command or decision, search for it. Do not answer from memory. If a value is not in your context, or a file no longer holds it, search before you answer "unknown". If the search finds nothing, say so.` It goes in the same places as F68.b (SessionStart `compact`, `startup` and `resume`, and SubagentStart), directly after the recall line. With no marker or with `HANDOFF_RECALL_RULES=0`, the output has no rule line (as in F68.b). The F69.b `instructions` text of the recall MCP server holds this new line too.
 
 **F81.c Release.** Version 0.19.0, hooks 1.21.0. F64 (minimal default install) now lists the recall rule as part of the default install. README install section and `install.sh --help` say that the recall rule is on by default and how to turn it off.
+
+## F83 Recall robustness and a recovery step (2026-11-24)
+
+Why: `cd <hooks dir> && python3 recall.py search ...` searched 0 sessions and looked like an empty result. The F81 rule line had no step for a failed or denied search.
+
+**F83.a Folder fallback.** When `recall.py` runs with no `--cwd`, the current folder is the folder that holds `recall.py`, and `OLDPWD` names an existing folder that is not that folder, recall uses `OLDPWD` as the current folder for the project.
+
+**F83.b Zero-session warning.** When a `search` covers 0 sessions, `recall.py` also prints this line on stdout: `recall.py: no sessions for project <root>. This is the wrong folder, not an empty result. Run: python3 <full path of recall.py> search "<words>" --cwd <project folder>`. The exit code does not change.
+
+**F83.c Recall line.** In the injected recall line, the text `(then: recall.py open <id>; recall.py user --last 20)` becomes `(same full path for: open <id>; user --last 20; do not cd)`.
+
+**F83.d Rule line.** The F81.b line becomes exactly: `- recall rule: if your context does not clearly show an earlier number, path, name, command or decision, run the recall command above before you answer. Copy it exactly: full path, no cd. A failed or denied command is not "not found": run the exact command again. If no search can run, say so.` The F69.b `instructions` text of the recall MCP server holds the same line. Places and switches are as in F81.b.
+
+**F83.e MCP sentence.** The recall line and the rule line mention the MCP tool (`search_earlier_chat`) only when the recall MCP server is registered for the user (the server name that `install.sh --recall-mcp` registers is in the user MCP configuration), not only when the file exists. When it is registered, the rule line ends with ` If Bash is not allowed, call search_earlier_chat.`
+
+**F83.f Docs.** The recall docs name the allow rule `Bash(python3 ~/.claude/hooks/recall.py:*)` (F44.7) and say that it lets the exact recall command run without a prompt in ask mode and in headless runs (`claude -p`). F83 does not change what the installer writes.
+
+**F83.g Release.** Version 0.19.1, hooks 1.21.1.

@@ -78,7 +78,7 @@ HARD_MAX = 9900    # each part's total output (warning + header + content + cont
 INLINE_MAX = 9700  # content target per part
 NAMES_MAX = 150    # the section-name list in a continuation line is cut to this many chars
 MAX_PARTS = 3      # F37.6
-HOOK_VERSION = "1.21.0"
+HOOK_VERSION = "1.21.1"
 
 
 def hooks_home():
@@ -194,7 +194,7 @@ def emit(ctx):
 
 
 RECALL_LINE = ("- recall: earlier chats in this project are searchable word for word: python3 ~/.claude/hooks/recall.py "
-               "search \"<words or regex>\" (then: recall.py open <id>; recall.py user --last 20). Use it before acting on "
+               "search \"<words or regex>\" (same full path for: open <id>; user --last 20; do not cd). Use it before acting on "
                "anything vague here (exact commands, numbers, paths, names, the user's wording) and whenever the user "
                "refers to something said earlier; quote what you find instead of guessing. "
                "If recall and the decisions list disagree, the decisions list and the user's latest words win: "
@@ -229,9 +229,11 @@ def recall_path():
     return None
 
 
-RECALL_RULE_LINE = ("- recall rule: before you state an earlier number, path, name, command or decision, search for it. "
-                    "Do not answer from memory. If a value is not in your context, or a file no longer holds it, "
-                    "search before you answer \"unknown\". If the search finds nothing, say so.")
+RECALL_RULE_LINE = ("- recall rule: if your context does not clearly show an earlier number, path, name, command or decision, "
+                    "run the recall command above before you answer. Copy it exactly: full path, no cd. "
+                    "A failed or denied command is not \"not found\": run the exact command again. "
+                    "If no search can run, say so.")
+RECALL_RULE_MCP = " If Bash is not allowed, call search_earlier_chat."
 RECALL_MCP_SENTENCE = "Or call the search_earlier_chat tool."
 
 
@@ -254,8 +256,19 @@ def recall_rules_on():
 
 
 def recall_mcp_ours():
-    """F69: recall-mcp.py is installed in ~/.claude/hooks."""
-    return os.path.isfile(os.path.join(_hooks_dir(), "recall-mcp.py"))
+    """F83.e: the recall MCP server (name `lossless-recall`, as `install.sh --recall-mcp` registers it) is in the user MCP
+    configuration (`mcpServers` in ~/.claude.json, HOME from the environment). A file in the hooks folder is not enough."""
+    try:
+        with open(os.path.join(os.path.expanduser("~"), ".claude.json"), encoding="utf-8") as f:
+            cfg = json.load(f)
+        return "lossless-recall" in (cfg.get("mcpServers") or {})
+    except (OSError, ValueError, AttributeError):
+        return False
+
+
+def rule_line():
+    """F83.d + F83.e: the rule line, with the MCP sentence at the end when the recall MCP server is registered."""
+    return RECALL_RULE_LINE + (RECALL_RULE_MCP if recall_mcp_ours() else "")
 
 
 def recall_line():
@@ -265,7 +278,7 @@ def recall_line():
     if recall_path():
         return rpath(RECALL_LINE[:-1] + (" " + RECALL_AGENT_SENTENCE if recall_agent_ours() else "")
                      + (" " + RECALL_MCP_SENTENCE if recall_mcp_ours() else "") + "\n"
-                     + (RECALL_RULE_LINE + "\n" if recall_rules_on() else ""))
+                     + (rule_line() + "\n" if recall_rules_on() else ""))
     return ""
 
 
@@ -332,11 +345,11 @@ def decorate(txt):
                 lines[ri] = lines[ri].rstrip() + " " + RECALL_AGENT_SENTENCE
             if mcp and RECALL_MCP_SENTENCE not in lines[ri]:
                 lines[ri] = lines[ri].rstrip() + " " + RECALL_MCP_SENTENCE
-            if rules and RECALL_RULE_LINE not in lines:
-                lines.insert(ri + 1, RECALL_RULE_LINE)
+            if rules and not any(x.startswith(RECALL_RULE_LINE) for x in lines):
+                lines.insert(ri + 1, rule_line())
         if node:
             at = min(1, len(lines)) if ri is None else ri + 1
-            if ri is not None and at < len(lines) and lines[at] == RECALL_RULE_LINE:
+            if ri is not None and at < len(lines) and lines[at].startswith(RECALL_RULE_LINE):
                 at += 1  # the node line goes after the rule line, which follows the recall line
             lines.insert(at, node.rstrip("\n"))
         return "\n".join(lines)

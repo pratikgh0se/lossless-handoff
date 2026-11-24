@@ -81,17 +81,23 @@ Two more opt-in parts help the model search. Neither one forces a search: the mo
 **Strict recall rule (on by default since 0.19.0).** To turn it off, run `./install.sh --no-recall-rules --save-defaults`. The installer writes the empty marker file `~/.claude/hooks/.recall-rules`. While the marker exists, every place that injects the recall line (session start after a compaction, at startup and at resume, and a new subagent) adds this line directly after the recall line:
 
 ```
-- recall rule: before you state an earlier number, path, name, command or decision, search for it. Do not answer from memory. If a value is not in your context, or a file no longer holds it, search before you answer "unknown". If the search finds nothing, say so.
+- recall rule: if your context does not clearly show an earlier number, path, name, command or decision, run the recall command above before you answer. Copy it exactly: full path, no cd. A failed or denied command is not "not found": run the exact command again. If no search can run, say so.
 ```
 
-Set `HANDOFF_RECALL_RULES=0` to switch it off at run time. The output is then the same as without the marker. Each inject row in `receipts.jsonl` has `"recall_rules": true` or `false`.
+When the recall MCP server is registered for the user, the line ends with ` If Bash is not allowed, call search_earlier_chat.` Set `HANDOFF_RECALL_RULES=0` to switch it off at run time. The output is then the same as without the marker. Each inject row in `receipts.jsonl` has `"recall_rules": true` or `false`.
 
 **Recall tool (`./install.sh --recall-mcp`).** The installer copies `recall-mcp.py` and registers it with `claude mcp add --scope user lossless-recall -- python3 ~/.claude/hooks/recall-mcp.py`. It is a local MCP server (stdio only). It has two tools, and Claude Code loads both at the start of a session:
 
 - `search_earlier_chat` with `query` (required), `role` (`user`, `assistant` or `any`, default `any`) and `limit` (1 to 10, default 5). It uses the scope and ranking of `recall.py search` and prints one line for each hit, with secrets masked. With no hits it prints `no matches`.
 - `open_message` with `id` (required, from a hit) and `full` (default false). It prints the same text as `recall.py open <id>`.
 
-A result has at most 12,000 characters. A bad input or an unknown id gives a tool result with `isError: true` and one line of text. When the tool is installed, the recall line ends with `Or call the search_earlier_chat tool.` Each call adds one row (`ts`, `tool`, `hits`, `ms`; no query text) to `recall-mcp.jsonl`. `./uninstall.sh` runs `claude mcp remove lossless-recall --scope user`.
+A result has at most 12,000 characters. A bad input or an unknown id gives a tool result with `isError: true` and one line of text. When the server is registered (the name `lossless-recall` is in `mcpServers` of `~/.claude.json`), the recall line ends with `Or call the search_earlier_chat tool.` A file in the hooks folder is not enough. Each call adds one row (`ts`, `tool`, `hits`, `ms`; no query text) to `recall-mcp.jsonl`. `./uninstall.sh` runs `claude mcp remove lossless-recall --scope user`.
+
+## Wrong folder and permission rule
+
+`recall.py` takes the project from the current folder. If you run it with no `--cwd` from the folder that holds `recall.py` (for example `cd ~/.claude/hooks`), it uses the previous folder (`OLDPWD`) when that folder exists. If a search covers 0 sessions, it prints one more line: `recall.py: no sessions for project <root>. This is the wrong folder, not an empty result. Run: ...`. The exit code does not change. Use the full path and do not `cd`.
+
+The permission allow rule `Bash(python3 ~/.claude/hooks/recall.py:*)` (F44.7) lets the exact recall command run without a prompt in ask mode and in headless runs (`claude -p`). F83 does not change what the installer writes.
 
 ## Re-anchor and claim guard
 
