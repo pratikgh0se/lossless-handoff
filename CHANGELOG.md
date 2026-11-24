@@ -2,6 +2,12 @@
 
 Lossless Handoff, formerly claude-handoff.
 
+## [Unreleased]
+
+### Changed
+
+- Benchmark: new preset `proof-recheck` re-measures arm B on the proof seeds, with no PASS or FAIL. Arm B now gets the `.recall-rules` marker when the checkout has F81.
+
 ## [0.19.0] - 2026-11-23
 
 Recall rule on by default (hooks 1.21.0). New F81 in `docs/spec.md`.

@@ -218,3 +218,59 @@ class Examples(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class Recheck(unittest.TestCase):
+    def test_preset(self):
+        k = runner.KINDS["proof-recheck"]
+        for key in ("window", "n", "conditions", "phrasings", "probe_design", "selfcheck", "model", "seeds", "seed_file"):
+            self.assertEqual(k[key], runner.KINDS["proof"][key])
+        self.assertEqual(k["arms"], "B")
+        self.assertIn("proof-recheck", open(os.path.join(HERE, "run.sh")).read().split("case")[1].split(")")[0])
+
+    def test_dry_run_allows_used_seeds_and_costs_about_70(self):
+        import re
+        p = subprocess.run([sys.executable, os.path.join(HERE, "runner.py"), "run", "proof-recheck", "--dry-run"], capture_output=True, text=True, timeout=120)
+        self.assertEqual(p.returncode, 0, p.stderr[-300:])
+        self.assertIn("kind proof-recheck", p.stdout)
+        total = float(re.search(r"total about \$(\d+)", p.stdout).group(1))
+        self.assertTrue(66 <= total <= 74, total)
+
+    def test_proof_still_refuses_used_seeds_check(self):
+        import inspect
+        self.assertIn('kind == "proof"', inspect.getsource(runner.build_cfg))
+
+    def _rows(self, neutral_ok, cued_ok=1.0):
+        rows = []
+        for s in SEEDS:
+            for typ in proof.RECHECK_TYPES:
+                for i in range(10):
+                    for n in (1, 10):
+                        rows.append(row(s, "B", typ, i, n, i < 10 * cued_ok))
+                        rows.append(row(s, "B", typ, i, n, i < 10 * neutral_ok, phrasing="neutral"))
+                        rows.append(row(s, "A", typ, i, n, False))      # other arms and other types are ignored
+            rows.append(row(s, "B", "C", 0, 1, False))
+        return rows
+
+    def test_recheck_section_without_compare(self):
+        md, out = proof.recheck_section(self._rows(0.9), {"b_recall_rules": True})
+        text = "\n".join(md)
+        self.assertIn("## Recheck", text)
+        self.assertNotIn("PASS", text)
+        self.assertNotIn("FAIL", text)
+        self.assertEqual(out["by_n"][1]["neutral"], (180, 200))
+        self.assertEqual(out["by_n"][10]["cued"], (200, 200))
+        self.assertIn("(90%)", text)
+        self.assertIn("Marker .recall-rules in arm B: yes", text)
+
+    def test_recheck_section_compare_and_paired_difference(self):
+        old = self._rows(0.8)
+        md, out = proof.recheck_section(self._rows(0.9), {"compare": "RUN-OLD"}, old)
+        text = "\n".join(md)
+        self.assertEqual(out["by_n"][1]["neutral_compare"], (160, 200))
+        self.assertIn("RUN-OLD", text)
+        for s in SEEDS:
+            self.assertAlmostEqual(out["per_seed"][s][-2], 10.0)      # neutral, all N
+            self.assertAlmostEqual(out["per_seed"][s][-1], 0.0)       # cued, all N
+        self.assertAlmostEqual(out["mean_seed_diff_neutral"], 10.0)
+        self.assertIn("+10.0", text)

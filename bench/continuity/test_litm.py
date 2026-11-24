@@ -1157,6 +1157,24 @@ class Round4(unittest.TestCase):
         self.assertEqual(old, [(1, "A", "compact"), (1, "A", "nocompact"), (1, "B", "compact"), (1, "B", "nocompact"), (1, "R", "compact"), (1, "R", "nocompact"),
                                (1, "Z", "compact"), (1, "O", "compact")])
 
+    # ---- F81: arm B mirrors the default install
+    def test_arm_b_gets_the_marker_only_with_an_f81_checkout(self):
+        d = tempfile.mkdtemp()
+        try:
+            ctx, cfg = r4_cfg(d)
+            lh = cfg["lh_path"]
+            self.assertFalse(runner.lh_has_f81(lh))
+            self.assertFalse(os.path.isfile(os.path.join(runner.Session(ctx, "s1-B", 1, "B", {}, "compact").hooks_dir(), ".recall-rules")))
+            os.makedirs(os.path.join(lh, "docs"))
+            open(os.path.join(lh, "docs", "spec.md"), "w").write("# Spec\n\n## F81 Recall rule on by default (2026-11-23)\n")
+            self.assertTrue(runner.lh_has_f81(lh))
+            sb, sr, sa = (runner.Session(ctx, "s2-" + a, 2, a, {}, "compact") for a in "BRA")
+            self.assertTrue(os.path.isfile(os.path.join(sb.hooks_dir(), ".recall-rules")))
+            self.assertFalse(os.path.isfile(os.path.join(sr.hooks_dir(), ".recall-rules")))
+            self.assertFalse(os.path.exists(os.path.join(lh, "hooks", ".recall-rules")))
+        finally:
+            shutil.rmtree(d)
+
     # ---- P2: hook isolation
     def test_each_arm_with_hooks_has_a_private_copy_and_hooks_home(self):
         d = tempfile.mkdtemp()
@@ -1167,7 +1185,7 @@ class Round4(unittest.TestCase):
                 hd = s[a].hooks_dir()
                 self.assertEqual(hd, os.path.join(s[a].statedir, "hooks"))
                 self.assertEqual(s[a].overrides["HANDOFF_HOOKS_HOME"], hd)
-                self.assertEqual(os.path.isfile(os.path.join(hd, ".recall-rules")), a == "K")      # F68 marker in K only
+                self.assertEqual(os.path.isfile(os.path.join(hd, ".recall-rules")), a == "K")      # the test checkout has no F81 heading: the marker is in K only
                 hs = s[a].hook_hashes()
                 self.assertIn("postcompact-inject.py", hs)
                 self.assertEqual(hs["postcompact-inject.py"], runner.sha256_file(os.path.join(hd, "postcompact-inject.py")))

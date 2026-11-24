@@ -312,3 +312,80 @@ def section(rows, sessions, cfg, th_all, scripts, draws=None):
     md.append("")
     v["examples"] = {"a_wrong_b_right_total": total, "a_wrong_b_right_shown": len(shown), "b_wrong_a_right": len(ba)}
     return md, v
+
+
+# ---- the recheck section (run.sh proof-recheck): no verdict
+
+RECHECK_TYPES = ("R", "D", "X", "S", "E")      # as Table L2
+
+
+def recheck_cells(rows, arm="B", types=RECHECK_TYPES):
+    """{(seed, n, phrasing): [correct, total]} for one arm, compaction condition, types R D X S E, cued and neutral probes, refused forks left out."""
+    c = {}
+    for r in rows:
+        if r.get("arm") != arm or r.get("condition", "compact") != "compact" or r.get("type") not in types or r.get("refused"):
+            continue
+        ph = r.get("phrasing", "cued")
+        if ph not in ("cued", "neutral"):
+            continue
+        v = c.setdefault((r["seed"], r.get("n_target"), ph), [0, 0])
+        v[0] += 1 if r.get("correct") else 0
+        v[1] += 1
+    return c
+
+
+def _sum(cells, seeds, n, ph):
+    cs = sum(cells.get((s, n, ph), [0, 0])[0] for s in seeds)
+    ts = sum(cells.get((s, n, ph), [0, 0])[1] for s in seeds)
+    return cs, ts
+
+
+def _frac(c, t):
+    return "%d/%d (%s)" % (c, t, _pct(c / t)) if t else "no data"
+
+
+def recheck_section(rows, cfg, other_rows=None):
+    """(markdown lines, dict): the Recheck section of a proof-recheck run. Arm B only, no PASS or FAIL.
+    other_rows: rows of the run named by --compare. Then the same numbers of arm B of that run, and the paired difference per seed (this run minus that run)."""
+    new, old = recheck_cells(rows), recheck_cells(other_rows) if other_rows is not None else None
+    seeds = sorted({k[0] for k in new} | ({k[0] for k in old} if old else set()))
+    ns = sorted({k[1] for k in new} | ({k[1] for k in old} if old else set()))
+    cmp_id = cfg.get("compare")
+    md = ["## Recheck\n",
+          "Arm B only, types %s, compaction condition. This is a re-measure after F81 (recall rule on by default), not a new proof, so there is no verdict. Marker .recall-rules in arm B: %s.\n" % (
+              " ".join(RECHECK_TYPES), "yes" if cfg.get("b_recall_rules") else "no"),
+          "| N | B cued | B neutral |" if not old else "| N | B cued | B cued (%s) | B neutral | B neutral (%s) |" % (cmp_id, cmp_id),
+          "|---|---|---|" if not old else "|---|---|---|---|---|"]
+    out = {"types": list(RECHECK_TYPES), "compare": cmp_id, "seeds": seeds, "by_n": {}, "per_seed": {}}
+    for n in ns:
+        rec = {}
+        row = ["N=%s" % n]
+        for ph in ("cued", "neutral"):
+            rec[ph] = _sum(new, seeds, n, ph)
+            row.append(_frac(*rec[ph]))
+            if old:
+                rec[ph + "_compare"] = _sum(old, seeds, n, ph)
+                row.append(_frac(*rec[ph + "_compare"]))
+        out["by_n"][n] = rec
+        md.append("| " + " | ".join(row) + " |")
+    md.append("")
+    if old:
+        md += ["### Paired difference per seed (this run minus %s, points)\n" % cmp_id,
+               "| Seed | " + " | ".join("N=%s neutral" % n for n in ns) + " | all N neutral | all N cued |", "|---|" + "---|" * (len(ns) + 2)]
+
+        def diff(s, nl, ph):
+            a, b = [sum(x) for x in zip(*[new.get((s, n, ph), [0, 0]) for n in nl])], [sum(x) for x in zip(*[old.get((s, n, ph), [0, 0]) for n in nl])]
+            return None if not a[1] or not b[1] else 100 * (a[0] / a[1] - b[0] / b[1])
+
+        def fmt(d):
+            return "n/a" if d is None else "%+.1f" % d
+        for s in seeds:
+            ds = [diff(s, [n], "neutral") for n in ns] + [diff(s, ns, "neutral"), diff(s, ns, "cued")]
+            out["per_seed"][s] = ds
+            md.append("| %s | %s |" % (s, " | ".join(fmt(d) for d in ds)))
+        pooled = [x for x in (diff(s, ns, "neutral") for s in seeds) if x is not None]
+        out["mean_seed_diff_neutral"] = sum(pooled) / len(pooled) if pooled else None
+        md.append("\nMean of the per-seed differences, all N neutral: %s points. Four seeds are a small sample: read it as a direction, not a proof.\n" % fmt(out["mean_seed_diff_neutral"]))
+    elif cmp_id:
+        md.append("The compare run %s has no rows.\n" % cmp_id)
+    return md, out
