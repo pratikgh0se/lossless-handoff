@@ -30,7 +30,7 @@ Two benchmarks are in this repository. Both are code-graded: no model grades an 
 
 **OOLONG** ([bench/oolong/README.md](../bench/oolong/README.md)) tests two things on large aggregation tasks: the `llm_map` tool (now the separate [llm-map](https://github.com/pratikgh0se/llm-map) project), and that the hooks do no harm. In this harness the context is a file. The report counts compactions of the main session only, and subagents can compact. If the count is 0, the hooks add only their session-start text to the main session. The test shows if plain Claude Code still loses on counting tasks, and if `llm_map` helps. Arm C is Lossless Handoff alone. The option `--llm-map-path` adds llm_map as an extra. The pilot of 2026-11-18 used arm C with llm_map.
 
-One OOLONG run is published ([summary](../bench/oolong/evidence/run-20261118T221353-summary.md)). The harness flagged it for shared-temp use (2.2% of units); on every cleaned task set, Lossless Handoff with llm_map tied plain Claude Code. In that run the main session never compacted, so it does not test the handoff. One small continuity test (the proof test, 4 seeds, 2026-11-23) is published: plain Claude Code scored 58% and Lossless Handoff scored 100% after 10 compactions [C9]. The report is [docs/proof/benchmarks/2026-11-23-proof-test.md](proof/benchmarks/2026-11-23-proof-test.md). It is a small benchmark, so read it as a first measurement. The 2-task pilot files in `bench/oolong/evidence/` are harness evidence only. The full results come after the full evaluation: continuity at 30 compactions, and LoCoMo and OOLONG with forced compactions. LoCoMo is a published benchmark for memory over long conversations.
+One OOLONG run is published ([summary](../bench/oolong/evidence/run-20261118T221353-summary.md)). The harness flagged it for shared-temp use (2.2% of units); on every cleaned task set, Lossless Handoff with llm_map tied plain Claude Code. In that run the main session never compacted, so it does not test the handoff. One small continuity test (the proof test, 4 seeds, 2026-11-23) is published: plain Claude Code scored 58% and Lossless Handoff scored 100% after 10 compactions [C9]. The report is [docs/proof/benchmarks/2026-11-23-proof-test.md](proof/benchmarks/2026-11-23-proof-test.md). It is a small benchmark, so read it as a first measurement. A second small check (2 seeds, 1 and 3 compactions, 2026-11-24) tested the 0.19.1 recall fix: Lossless Handoff answered 30 of 30 questions with a hint and 30 of 30 without a hint at 3 compactions [C10]. It has no verdict and no data at 10 compactions. The report is [docs/proof/benchmarks/2026-11-24-recall-rule-check.md](proof/benchmarks/2026-11-24-recall-rule-check.md). The 2-task pilot files in `bench/oolong/evidence/` are harness evidence only. The full results come after the full evaluation: continuity at 30 compactions, and LoCoMo and OOLONG with forced compactions. LoCoMo is a published benchmark for memory over long conversations.
 
 ## Local proof
 
@@ -90,9 +90,19 @@ The tables above are one-off measurements. From 1.10.0, the install also keeps i
 | `delivered` | the transcript after the boundary holds the injected text [C4] |
 | `decisions_safe` | no decision id present before a decisions update is missing after it, and no superseded id came back [C5] |
 
+**Live numbers of 2026-11-24 (7 days).** The author ran `python3 ~/.claude/hooks/precompact-handoff.py --prove --days 7` on 2026-11-24. The window held 35 receipts (one for each compaction that got a handoff).
+
+| Check | Result |
+|---|---|
+| `delivered` | 35 of 35 |
+| `right_agent` | 35 of 35 |
+| `lossless` | 23 of 34 passed, 11 failed |
+
+The author did not investigate the cause of the 11 `lossless` failures yet. Read this as a mechanism check on one machine, not as a measure of answer quality. The live mechanism checks currently include failures.
+
 **Nightly report.** With `--nightly`, the 04:15 job runs `--reconcile --prove --days 30`. It writes `proof-report.md` (summary line first, then failed checks and skip counts) and `reconcile.json`. When a run has failures, `--check` shows `proof failed: <n> checks` once.
 
-**Claims register.** `hooks/claims.json` lists each public claim (`C1` to `C9`) with its evidence source, window, refresh time and minimum rate. Each `--prove` run evaluates it into `claims-status.json` and `claims-report.md`:
+**Claims register.** `hooks/claims.json` lists each public claim (`C1` to `C10`) with its evidence source, window, refresh time and minimum rate. Each `--prove` run evaluates it into `claims-status.json` and `claims-report.md`:
 
 | Status | Meaning |
 |---|---|
@@ -101,7 +111,7 @@ The tables above are one-off measurements. From 1.10.0, the install also keeps i
 | `stale` | evidence older than its refresh time |
 | `no-data` | no evidence in the window (neither failing nor stale) |
 
-`precompact-handoff.py --claims` prints the table. The claims on this page carry the markers `[C1]` to `[C9]`, which match the register (table at the end of this page). C1 to C6 are live: the hooks compute them from your own transcripts and receipts. C7 (blind quiz), C8 (cost) and C9 (the proof test) are dated one-off studies with a recorded date and a refresh time. They are not live rates. With no file, the command lints `docs/evidence.md` of the repository tree. Before you publish a document that cites claims, run:
+`precompact-handoff.py --claims` prints the table. The claims on this page carry the markers `[C1]` to `[C10]`, which match the register (table at the end of this page). C1 to C6 are live: the hooks compute them from your own transcripts and receipts. C7 (blind quiz), C8 (cost), C9 (the proof test) and C10 (the 0.19.1 small check) are dated one-off studies with a recorded date and a refresh time. They are not live rates. With no file, the command lints `docs/evidence.md` of the repository tree. Before you publish a document that cites claims, run:
 
 ```
 python3 hooks/precompact-handoff.py --claims-lint   # from a clone: lints docs/evidence.md
@@ -129,5 +139,6 @@ Each claim has one marker. The README holds no markers. This page holds all of t
 | [C7] | A blind quiz after compaction scored 98% (65 of 66) with the decisions list plus recall, against 62% (41 of 66) with the v0.4 injection | dated one-off (2026-11-14) |
 | [C8] | About 19% lower cost at a 400k window than at 1M | dated one-off (2026-10-20) |
 | [C9] | In the 4-seed proof test, plain Claude Code scored 58% and Lossless Handoff 100% after 10 compactions (+42 points, 95% interval +27 to +51) | dated one-off (2026-11-23) |
+| [C10] | In a 2-seed check of fix 0.19.1 (1 and 3 compactions), Lossless Handoff answered 30 of 30 questions with a hint and 30 of 30 without a hint at 3 compactions (small sample, no verdict) | dated one-off (2026-11-24) |
 
 These results come from one machine and one heavy user. A quiz or a cost study is a hint, not a promise.

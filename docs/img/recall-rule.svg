@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 300" width="640" height="300" role="img" aria-labelledby="t d">
+<title id="t">Recall rule check</title><desc id="d">Seeds 2001 and 2002, 3 compactions. With a hint: before the rule 30/30, strict rule 0.19.0 28/30, fix 0.19.1 30/30. No hint: 26/30, 30/30, 30/30. Small sample, no verdict.</desc>
+<style>
+text{font-family:system-ui,-apple-system,"Segoe UI",Arial,sans-serif;font-size:13px;font-weight:600}.bg{fill:#ffffff}.panel{fill:#f4f7f8;stroke:#d3dde1;stroke-width:1.5}
+.t{fill:#14232b;font:600 14px system-ui,-apple-system,"Segoe UI",Arial,sans-serif}
+.h{fill:#14232b;font:700 20px system-ui,-apple-system,"Segoe UI",Arial,sans-serif}
+.m{fill:#4d636c;font:13px system-ui,-apple-system,"Segoe UI",Arial,sans-serif}
+.num{fill:#14232b;font:700 13px system-ui,-apple-system,"Segoe UI",Arial,sans-serif}
+.a{fill:#c0392b}.as{fill:#fbe6e2}.b{fill:#0b7a75}.bs{fill:#d8f0ee}
+.ok{fill:#26713a}.oks{fill:#dff1e4}.w{fill:#9a5700}.ws{fill:#fbefd2}
+.sa{stroke:#c0392b}.sb{stroke:#0b7a75}.grid{stroke:#d3dde1;stroke-width:1;fill:none}
+.ln{stroke:#4d636c;stroke-width:2;fill:none}.lw{fill:#ffffff}
+.wa{fill:#ffffff;font:700 13px system-ui,Arial,sans-serif}
+@media (prefers-color-scheme: dark){
+.bg{fill:#0e1a1f}.panel{fill:#162830;stroke:#2b4149}
+.t,.h,.num{fill:#e5eef1}.m{fill:#9db2ba}
+.a{fill:#ff8c78}.as{fill:#3b2420}.b{fill:#41cbc3}.bs{fill:#103230}
+.ok{fill:#72d28c}.oks{fill:#173321}.w{fill:#f2b955}.ws{fill:#3a2d12}
+.sa{stroke:#ff8c78}.sb{stroke:#41cbc3}.grid{stroke:#2b4149}.ln{stroke:#9db2ba}.lw{fill:#0e1a1f}
+.wa{fill:#0e1a1f}}
+</style>
+<rect class="bg" x="0" y="0" width="640" height="300"/>
+<text class="h" x="20" y="32" text-anchor="start">Recall rule check: 2 seeds, 3 compactions, items correct</text><text class="t" x="300" y="62" text-anchor="middle">With a hint</text><text class="t" x="520" y="62" text-anchor="middle">No hint</text><text class="t" x="20" y="108" text-anchor="start">Before the rule (proof test)</text><rect class="bs" x="210" y="80" width="180" height="44" rx="8"/><rect class="b" x="210" y="116" width="180.0" height="8" rx="4"/><text class="num" x="300" y="106" text-anchor="middle">30/30</text><rect class="ws" x="430" y="80" width="180" height="44" rx="8"/><rect class="w" x="430" y="116" width="156.6" height="8" rx="4"/><text class="num" x="520" y="106" text-anchor="middle">26/30</text><text class="t" x="20" y="172" text-anchor="start">Strict rule 0.19.0</text><rect class="ws" x="210" y="144" width="180" height="44" rx="8"/><rect class="w" x="210" y="180" width="167.4" height="8" rx="4"/><text class="num" x="300" y="170" text-anchor="middle">28/30</text><rect class="bs" x="430" y="144" width="180" height="44" rx="8"/><rect class="b" x="430" y="180" width="180.0" height="8" rx="4"/><text class="num" x="520" y="170" text-anchor="middle">30/30</text><text class="t" x="20" y="236" text-anchor="start">Fix 0.19.1</text><rect class="bs" x="210" y="208" width="180" height="44" rx="8"/><rect class="b" x="210" y="244" width="180.0" height="8" rx="4"/><text class="num" x="300" y="234" text-anchor="middle">30/30</text><rect class="bs" x="430" y="208" width="180" height="44" rx="8"/><rect class="b" x="430" y="244" width="180.0" height="8" rx="4"/><text class="num" x="520" y="234" text-anchor="middle">30/30</text><text class="m" x="20" y="284" text-anchor="start">Strict rule 0.19.0 was invalid: Claude Code blocked searches. 2 seeds, at most 3 compactions, no verdict.</text>
+</svg>
