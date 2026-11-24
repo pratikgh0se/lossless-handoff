@@ -8,7 +8,7 @@ This documentation uses ASD-STE100 Simplified Technical English.
 
 Current versions: product 0.19.1 (`install.sh`), hooks 1.21.1 (`HOOK_VERSION` in `hooks/precompact-handoff.py`, `hooks/postcompact-inject.py`, `hooks/auto-recall.py`, `hooks/recall-mcp.py`, `hooks/reanchor.py`, `hooks/claim-guard.py`, `hooks/history-guard.py` and `hooks/action-guard.py`).
 
-![plain Claude Code at 10 compactions: 58%](https://img.shields.io/badge/plain%20at%2010%20compactions-58%25-c0392b) ![Lossless Handoff at 10 compactions: 100%](https://img.shields.io/badge/Lossless%20Handoff-100%25-0b7a75) ![4 seeds, small benchmark](https://img.shields.io/badge/benchmark-4%20seeds-8197a0)
+![plain Claude Code at 10 compactions: 58%](https://img.shields.io/badge/plain%20at%2010%20compactions-58%25-c0392b) ![Lossless Handoff at 10 compactions: 100%](https://img.shields.io/badge/Lossless%20Handoff%20at%2010%20compactions-100%25-0b7a75) ![4 seeds, small benchmark](https://img.shields.io/badge/benchmark-4%20seeds-8197a0)
 
 [![CI](https://github.com/pratikgh0se/lossless-handoff/actions/workflows/ci.yml/badge.svg)](https://github.com/pratikgh0se/lossless-handoff/actions/workflows/ci.yml) [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE) [![Release](https://img.shields.io/github/v/release/pratikgh0se/lossless-handoff)](https://github.com/pratikgh0se/lossless-handoff/releases/latest)
 
@@ -203,7 +203,7 @@ Seen, not proved:
 - The loss is largest for replaced decisions, exact strings, error codes and order (a table made after the run).
 - The mechanism runs on the author's machine. In the 7 days to 2026-11-24 there were 35 compactions with a handoff receipt. The handoff was delivered 35 of 35 times, and the right agent got it 35 of 35 times. The lossless spot check passed 23 of 34 times and failed 11 times. The author has not investigated the cause of these 11 failures.
 
-Not shown yet:
+Limits and not shown yet:
 
 - Only 4 seeds, only Sonnet, only up to 10 compactions, and one Claude Code version.
 - It is our own benchmark, code-graded. No outside benchmark with forced compactions has run yet.
