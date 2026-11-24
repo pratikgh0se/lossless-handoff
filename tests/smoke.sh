@@ -2787,7 +2787,7 @@ rows = [json.loads(l) for l in open(sys.argv[1])]
 assert len(rows) == 1 and set(rows[0]) == {"ts", "session_id", "mode", "fired", "subjects", "anchors", "tokens", "chars", "ms"}, rows
 r = rows[0]; assert r["mode"] == "shadow" and r["fired"] is True and r["subjects"] == 1 and r["anchors"] == 1 and r["tokens"] == 150000 and r["session_id"] == "s1", r
 PY
-  ! grep -q "queue-limit\|75" "$LOG" || fail "F77: text in the log"
+  ! grep -q "queue-limit\|limit is" "$LOG" || fail "F77: text in the log"   # not a bare "75": ts and ms values can hold it
   [ "$(mode_of "$LOG")" = 600 ] || fail "F77: log mode"
   # a fact stated one time, a sibling, a key never seen, a small context: no row
   n0="$(wc -l < "$LOG")"
