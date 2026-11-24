@@ -897,6 +897,9 @@ def cmd_search(a, root):
     lines = [mode_line]
     lines += [fmt_hit(h) for h in shown]
     lines.append("%d hits shown of %d (%d sessions searched)" % (len(shown), len(merged), len(ts)))
+    if not ts:  # F83.b: 0 sessions is the wrong folder, not an empty result
+        lines.append("recall.py: no sessions for project %s. This is the wrong folder, not an empty result. Run: "
+                     "python3 %s search \"%s\" --cwd <project folder>" % (root, os.path.abspath(__file__), a.pattern))
     return lines
 
 
@@ -1994,6 +1997,10 @@ def main(argv):
             emit(cmd_index_all(a))
             return 0
         cwd = os.path.expanduser(a.cwd) if a.cwd else os.getcwd()
+        if not a.cwd:  # F83.a: run from the folder that holds recall.py: the previous folder is the project
+            here, old = os.path.realpath(os.path.dirname(os.path.abspath(__file__))), os.environ.get("OLDPWD") or ""
+            if os.path.realpath(cwd) == here and old and os.path.isdir(old) and os.path.realpath(old) != here:
+                cwd = old
         root = project_root(cwd)
         fn = {"search": cmd_search, "open": cmd_open, "user": cmd_user, "index": cmd_index, "handoffs": cmd_handoffs,
               "map": cmd_map, "describe": cmd_describe, "nodes": cmd_nodes, "history": cmd_history}[a.cmd]

@@ -8,6 +8,18 @@ Lossless Handoff, formerly claude-handoff.
 
 - Benchmark: new preset `proof-recheck` re-measures arm B on the proof seeds, with no PASS or FAIL. Arm B now gets the `.recall-rules` marker when the checkout has F81.
 
+## [0.19.1] - 2026-11-24
+
+Recall robustness (hooks 1.21.1). New F83 in `docs/spec.md`.
+
+### Changed
+
+- `recall.py search` run with no `--cwd` from the hooks folder uses the previous folder (`OLDPWD`) as the project.
+- A search that covers 0 sessions prints a warning line with the full command.
+- The recall line says "same full path ... do not cd". The rule line is new: run the recall command, copy it exactly, run a failed or denied command again, and say so if no search can run.
+- The MCP sentences appear only when the `lossless-recall` server is registered in `~/.claude.json`. The rule line then ends with `If Bash is not allowed, call search_earlier_chat.`
+- Docs name one optional allow rule: `Bash(python3 ~/.claude/hooks/recall.py:*)`. The installer does not write it.
+
 ## [0.19.0] - 2026-11-23
 
 Recall rule on by default (hooks 1.21.0). New F81 in `docs/spec.md`.

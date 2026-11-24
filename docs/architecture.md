@@ -107,7 +107,7 @@ Recall is a command line tool, not an MCP server. It costs about 0 tokens until 
 **1. The recall line.** Part 1 of the decisions list holds this line, right after its heading. The handoff text and the `SubagentStart` block also hold it. The text below is `RECALL_LINE` in `hooks/postcompact-inject.py`:
 
 ```text
-- recall: earlier chats in this project are searchable word for word: python3 ~/.claude/hooks/recall.py search "<words or regex>" (then: recall.py open <id>; recall.py user --last 20). Use it before acting on anything vague here (exact commands, numbers, paths, names, the user's wording) and whenever the user refers to something said earlier; quote what you find instead of guessing. If recall and the decisions list disagree, the decisions list and the user's latest words win: recall shows history, not current rules. If a hit is a tool call that shows `-> result <id>`, open that id to see what the tool returned.
+- recall: earlier chats in this project are searchable word for word: python3 ~/.claude/hooks/recall.py search "<words or regex>" (same full path for: open <id>; user --last 20; do not cd). Use it before acting on anything vague here (exact commands, numbers, paths, names, the user's wording) and whenever the user refers to something said earlier; quote what you find instead of guessing. If recall and the decisions list disagree, the decisions list and the user's latest words win: recall shows history, not current rules. If a hit is a tool call that shows `-> result <id>`, open that id to see what the tool returned.
 ```
 
 **2. The recall subagent sentence.** When `~/.claude/agents/recall.md` is installed and holds the marker line, the hook adds this sentence to the recall line:
@@ -132,7 +132,7 @@ When recall and the decisions list disagree, the decisions list and the latest w
 
 ## Verified facts
 
-These numbers come from the code in this repository (hooks 1.21.0), not from a benchmark run.
+These numbers come from the code in this repository (hooks 1.21.1), not from a benchmark run.
 
 | Fact | Where it is in the code |
 |---|---|
