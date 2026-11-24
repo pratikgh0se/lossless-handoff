@@ -125,6 +125,12 @@ At 10 compactions, plain Claude Code scores 58% and Lossless Handoff scores 100%
 
 Full report: [docs/proof/benchmarks/2026-11-23-proof-test.md](docs/proof/benchmarks/2026-11-23-proof-test.md).
 
+Limits:
+
+- It is a small benchmark: 4 seeds (2001 to 2004).
+- It is our own synthetic benchmark. Code grades it, but we wrote it.
+- It used Sonnet only, at most 10 compactions, and one Claude Code version.
+
 <details><summary>What the test does</summary>
 
 The proof test is a small benchmark with 4 seeds. It plants facts with random answers early in a long scripted session. Filler turns force compactions. Then the runner asks questions and code grades the answers. It ran on 2026-11-23 with Sonnet, a 400k context window and Claude Code 2.1.326. The seeds were new (2001 to 2004). The cost was $149.50. The pass rule was written after the 2-seed pilot and before any proof data, and the run passed it. The older gain rule in the same report needs 20 seeds, and at 4 seeds it gives "small sample: no claim".
@@ -143,7 +149,7 @@ Plain Claude Code keeps the simple things the user said. It loses changes, order
 
 <details><summary>Numbers and two examples</summary>
 
-Items correct at 10 compactions, 4 seeds. R, D, X, S and E count the questions with a hint and without a hint together. C, M and U have questions with a hint only. Source: the section "Added: kind of fact at 10 compactions" in [the report](docs/proof/benchmarks/2026-11-23-proof-test.md#added-kind-of-fact-at-10-compactions).
+Items correct at 10 compactions, 4 seeds. R, D, X, S and E count the questions with a hint and without a hint together. C, M and U have questions with a hint only. Source: the section "Added: kind of fact at 10 compactions" in [the report](docs/proof/benchmarks/2026-11-23-proof-test.md).
 
 | Kind of fact | Where it lived | Plain (A) | Lossless Handoff (B) |
 |---|---|---|---|
@@ -203,7 +209,7 @@ Seen, not proved:
 - The loss is largest for replaced decisions, exact strings, error codes and order (a table made after the run).
 - The mechanism runs on the author's machine. In the 7 days to 2026-11-24 there were 35 compactions with a handoff receipt. The handoff was delivered 35 of 35 times, and the right agent got it 35 of 35 times. The lossless spot check passed 23 of 34 times and failed 11 times. The author has not investigated the cause of these 11 failures.
 
-Limits and not shown yet:
+Not shown yet:
 
 - Only 4 seeds, only Sonnet, only up to 10 compactions, and one Claude Code version.
 - It is our own benchmark, code-graded. No outside benchmark with forced compactions has run yet.
