@@ -120,6 +120,9 @@ KINDS = {
     # Pass rule: thresholds.json, block proof. Cost basis: the pilot rerun 20261123T154241 (about $165 for 4 seeds). The full suite (20 seeds, Wave 2, Opus) is future work.
     "proof": {"model": "sonnet", "window": 400000, "n": [1, 3, 10], "arms": "A,B,O,Z", "seeds": 4, "seed_file": "seeds-proof.txt",
               "conditions": "compact", "phrasings": "cued,neutral,nonliteral", "probe_design": 4, "selfcheck": True, "cost_basis": {"A": 19.59, "B": 16.85}},
+    # The proof recheck (run.sh proof-recheck): arm B only, the same settings as proof, used seeds allowed (a re-measure after F81, not a new proof). No PASS or FAIL.
+    "proof-recheck": {"model": "sonnet", "window": 400000, "n": [1, 3, 10], "arms": "B", "seeds": 4, "seed_file": "seeds-proof.txt",
+                      "conditions": "compact", "phrasings": "cued,neutral,nonliteral", "probe_design": 4, "selfcheck": True, "cost_basis": {"B": 17.39}},      # B per seed: middle of $16.85 (pilot rerun) to $17.93 (proof run)
     "preflight4": {"model": "haiku", "window": 30000, "n": [1], "arms": "A,B,R,K,Z,O", "seeds": 1, "seed_file": "seeds-dev.txt", "types": "R,X",
                    "conditions": "compact,nocompact", "phrasings": "cued,neutral,nonliteral", "probe_design": 4, "nc_window": 120000,
                    "mcp_check": True, "selfcheck": True, "big_check": True},
@@ -336,6 +339,17 @@ class Ctx:
 
 
 # ------------------------------------------------------------------ one claude call
+F81_HEADING = "## F81 Recall rule on by default"
+
+
+def lh_has_f81(lh_path):
+    """True when the checkout at lh_path has the F81 default install (docs/spec.md has the F81 heading): its default install writes .recall-rules."""
+    try:
+        return any(line.startswith(F81_HEADING) for line in open(os.path.join(lh_path, "docs", "spec.md"), encoding="utf-8"))
+    except OSError:
+        return False
+
+
 def lh_settings(hooks_dir, auto_recall=False, reanchor=False, history_guard=False, action_guard=False):
     """Project settings of arm B: the hooks of the default install (install.sh, no --canary).
     Arm R (auto_recall=True) adds the UserPromptSubmit hook that `install.sh --auto-recall` registers (contract F67.a)."""
@@ -429,7 +443,8 @@ class Session:
 
     def hooks_dir(self):
         """Hooks folder of the arm. Every arm with hooks (B, R, K) gets its own copy of the hooks of --lh-path in its state folder, and
-        HANDOFF_HOOKS_HOME (F72) points the hooks to it. Arm K also gets the F68 marker .recall-rules. A live install cannot change a run."""
+        HANDOFF_HOOKS_HOME (F72) points the hooks to it. Arm K also gets the F68 marker .recall-rules.
+        Arm B gets it only when the --lh-path checkout has F81 (recall rule on by default, lh_has_f81), so old checkouts stay reproducible. A live install cannot change a run."""
         src = os.path.join(self.ctx.cfg["lh_path"], "hooks")
         if self.arm not in LH_ARMS:
             return src
@@ -437,7 +452,7 @@ class Session:
         if not os.path.isdir(dst):
             os.makedirs(self.statedir, exist_ok=True)
             shutil.copytree(src, dst, ignore=shutil.ignore_patterns("__pycache__"))
-            if self.arm in RECALL_ARMS:
+            if self.arm in RECALL_ARMS or (self.arm == "B" and lh_has_f81(self.ctx.cfg["lh_path"])):
                 open(os.path.join(dst, ".recall-rules"), "w").close()
             if self.arm == "P":
                 open(os.path.join(dst, ".recall-size-trigger"), "w").close()      # F78: the size trigger of auto-recall
@@ -1536,6 +1551,7 @@ def parse_common(ap):
     ap.add_argument("--levels", help="design 4: comma list of levels (default L1,L2,L3,L4; the L5 escalation: L1,L2,L3,L4,L5 as its own run)")
     ap.add_argument("--seeds", type=int, help="how many seeds to take from the seed list")
     ap.add_argument("--seed-file", help="seed list file (default: seeds-dev.txt for slice, seeds-report.txt for full)")
+    ap.add_argument("--compare", help="proof-recheck: run id of an earlier run (for example 20261123T190206-proof) to show next to arm B of this run")
     ap.add_argument("--lh-path", help="pinned checkout of Lossless Handoff for arm B (default: this repo)")
     ap.add_argument("--files-per-turn", type=int, help="filler files read in one turn (default from the window)")
     ap.add_argument("--o-window", type=int, default=None, help="window of arm O (default 200000)")
@@ -1640,7 +1656,7 @@ def build_cfg(kind, a):
     k = KINDS[kind]
     window = a.window or k["window"]
     seeds = seed_list(kind, a.seeds or k["seeds"], a.seed_file)
-    if kind == "proof":
+    if kind == "proof":      # proof-recheck skips this check: it is a re-measure on used seeds
         bad_seeds = proof.check_seeds(seeds, HERE, want=len(seeds) if a.seeds else 4)
         if bad_seeds:
             raise SystemExit("proof test: the seeds must be new. " + "; ".join(bad_seeds))
@@ -1685,6 +1701,7 @@ def build_cfg(kind, a):
     cfg = {
         "run_id": rid, "kind": kind, "gen_version": gen.GEN_VERSION, "model": a.model or k["model"], "window": window,
         "n": [int(x) for x in a.n.split(",")] if a.n else k["n"], "arms": arms, "types": types, "seeds": seeds,
+        "b_recall_rules": "B" in arms and lh_has_f81(lh), "compare": getattr(a, "compare", None),
         "lh_path": lh, "lh_commit": sh(["git", "rev-parse", "--short", "HEAD"], cwd=lh) + ("+dirty" if dirty else ""),
         "bench_commit": sh(["git", "rev-parse", "--short", "HEAD"], cwd=REPO),
         "files_per_turn": a.files_per_turn or max(1, min(12, round(window * 0.4 / 6000))),
@@ -1741,7 +1758,7 @@ def execute(ctx):
             ctx.state["selfcheck"] = {"ok": ok_, "lines": lines_}
             ctx.save()
             if not ok_:
-                raise Fatal(("proof test stopped before any probe: " if cfg.get("kind") == "proof" else "") + "deny-rule selfcheck failed: " + " | ".join(lines_)[:300])
+                raise Fatal(("proof test stopped before any probe: " if cfg.get("kind") in ("proof", "proof-recheck") else "") + "deny-rule selfcheck failed: " + " | ".join(lines_)[:300])
         if cfg.get("big_check"):
             run_big_check(ctx)
         with concurrent.futures.ThreadPoolExecutor(max_workers=cfg["jobs"]) as ex:

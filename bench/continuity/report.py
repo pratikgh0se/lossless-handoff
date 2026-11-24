@@ -493,6 +493,14 @@ def build(run_id, draws=None):
             md.append("")
             md += d4md
             out["design4"] = d4out
+    if cfg.get("kind") == "proof-recheck":      # no verdict: only the Recheck section, then the usual tables
+        import proof
+        other = None
+        if cfg.get("compare"):
+            other = gates.dedupe_rows(load_jsonl(os.path.join(RESULTS, cfg["compare"], "results.jsonl")))
+        pmd, pout = proof.recheck_section(rows_all, cfg, other)
+        out["recheck"] = pout
+        return out, "\n".join(head[:1] + [""] + pmd + [""] + head[1:] + md) + "\n"
     if cfg.get("kind") == "proof":      # the proof test: the verdict and the side-by-side examples come first
         import proof
         scripts = {}

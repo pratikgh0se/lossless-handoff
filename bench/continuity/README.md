@@ -65,6 +65,7 @@ The proof test is a small, cheap run. It shows that plain Claude Code loses info
 - Preset `proof`: Sonnet, window 400000, arms A, B, O and Z, N = 1, 3 and 10, compaction condition only. There is no no-compaction condition and there are no design-4 chains. The probe types and phrasings are the same as in `litm4-pilot`.
 - Seeds: 2001 to 2004, in `seeds-proof.txt`. `proof.check_seeds` checks every `seeds*.txt` file and the `config.json` of every run in `results/`. If a seed was used before, the run does not start.
 - The run starts with the live selfcheck. If it fails, the run stops with the message "proof test stopped before any probe".
+- Preset `proof-recheck` (`run.sh proof-recheck [--compare <run id>]`): a re-measure after F81, about $70. It runs arm B only on the used proof seeds, skips the new-seed check and prints a "Recheck" section (cued and neutral accuracy, and the paired difference per seed with `--compare`) and no PASS or FAIL. Arm B gets the `.recall-rules` marker only if the `--lh-path` checkout has the F81 heading in `docs/spec.md`; the run config records `b_recall_rules`.
 - `run.sh proof --dry-run` prints the estimate. The basis is the pilot rerun 20261123T154241 (arm A $19.59 and arm B $16.85 for each seed). Arms O and Z come from the estimate. The total is about $165. The default budget is 1.5 times the estimate.
 
 ### Pass rule (thresholds.json, block `proof`)
