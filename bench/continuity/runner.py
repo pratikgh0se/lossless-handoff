@@ -441,6 +441,15 @@ def bash_results(frecs):
     return out
 
 
+def word_found(ss, o, word):
+    """True if a Bash tool RESULT of the fork holds the word. The model does not always copy the output into its reply, so the reply text is only the fallback when there is no transcript."""
+    sid = o.get("session_id")
+    path = ss.transcript(sid) if sid else None
+    if path and os.path.isfile(path):
+        return any(word in t for _c, t in bash_results(read_jsonl(path)))
+    return word in (o.get("result") or "")
+
+
 def classify_result(text):
     """'native' (a Claude Code block that no rule of ours causes), 'deny' (a deny rule or permission of ours) or 'ran'."""
     if any(m in text for m in NATIVE_BLOCKS):
@@ -2011,8 +2020,9 @@ def selfcheck_core(model, lh_path, work_base_arg, echo=False):
         o = ss.call("Run this command with the Bash tool, exactly as written, and copy its output: `%s`. Say DENIED if the tool was denied." % printed, "fork", fork_of=sid)
         res = o.get("result") or ""
         denials = [x for x in (o.get("permission_denials") or []) if isinstance(x, dict) and x.get("tool_name") == "Bash"]
-        good = bool(word in res and not denials)
-        say("arm %s: the printed recall command in a fork: %s (Bash denials: %d; the word was found: %s)" % (arm, "OK" if good else "DENIED OR NOT RUN", len(denials), word in res))
+        found_ = word_found(ss, o, word)
+        good = bool(found_ and not denials)
+        say("arm %s: the printed recall command in a fork: %s (Bash denials: %d; the word was found: %s)" % (arm, "OK" if good else "DENIED OR NOT RUN", len(denials), found_))
         say("  reply:", res.replace("\n", " | ")[:300])
         ok_all = ok_all and good
     # recall-forms: no deny rule of ours blocks a recall form (Claude Code may block cd and loops itself in headless mode), and the reads of state stay denied
@@ -2060,8 +2070,9 @@ def selfcheck_core(model, lh_path, work_base_arg, echo=False):
     o = v.call("Run this command with the Bash tool, exactly as written, and copy its output: `%s`. Say DENIED if the tool was denied." % printed, "fork", fork_of=msid)
     res = o.get("result") or ""
     denials = [x for x in (o.get("permission_denials") or []) if isinstance(x, dict) and x.get("tool_name") == "Bash"]
-    good = bool(word in res and not denials)
-    say("arm B no-compaction view: the printed recall command in a fork: %s (Bash denials: %d; the word was found: %s)" % ("OK" if good else "DENIED OR NOT RUN", len(denials), word in res))
+    found_ = word_found(v, o, word)
+    good = bool(found_ and not denials)
+    say("arm B no-compaction view: the printed recall command in a fork: %s (Bash denials: %d; the word was found: %s)" % ("OK" if good else "DENIED OR NOT RUN", len(denials), found_))
     say("  reply:", res.replace("\n", " | ")[:300])
     ok_all = ok_all and good
     shutil.rmtree(d, ignore_errors=True)

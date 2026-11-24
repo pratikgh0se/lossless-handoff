@@ -793,6 +793,25 @@ class RecallCommandAllowed(unittest.TestCase):
                  {"message": {"content": [{"type": "tool_result", "tool_use_id": "1", "content": "ok"}]}}]
         self.assertEqual(runner.bash_results(frecs), [("ls", "ok")])
 
+    def test_word_found_reads_the_tool_result_not_the_reply(self):
+        import tempfile
+        recs = [{"message": {"content": [{"type": "tool_use", "name": "Bash", "id": "1", "input": {"command": "python3 recall.py search --fixed W"}}]}},
+                {"message": {"content": [{"type": "tool_result", "tool_use_id": "1", "content": "2 hits for RECALLTOK-X"}]}}]
+        with tempfile.TemporaryDirectory() as d:
+            p = os.path.join(d, "s.jsonl")
+            with open(p, "w") as f:
+                f.write("\n".join(json.dumps(r) for r in recs) + "\n")
+
+            class SS:
+                def transcript(self, sid):
+                    return p
+            o = {"session_id": "s", "result": "The command ran without being denied."}
+            self.assertTrue(runner.word_found(SS(), o, "RECALLTOK-X"))
+            self.assertFalse(runner.word_found(SS(), o, "OTHER"))
+            os.remove(p)      # no transcript: the reply is the fallback
+            self.assertFalse(runner.word_found(SS(), o, "RECALLTOK-X"))
+            self.assertTrue(runner.word_found(SS(), {"session_id": "s", "result": "see RECALLTOK-X"}, "RECALLTOK-X"))
+
     def test_arm_a_keeps_the_broad_deny(self):
         self.assertTrue(runner.bash_denied("python3 %s/hooks/recall.py search x" % self.STATE, self.rules("A")))
         self.assertIn("Bash(*-state*)", self.rules("A"))
