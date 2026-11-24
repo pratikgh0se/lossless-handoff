@@ -75,7 +75,7 @@ python3 - "$H" <<'PY'
 import hashlib, json, sys
 h = sys.argv[1]
 m = json.load(open(h + "/.handoff-manifest.json"))
-assert m["version"] == "1.21.1" and m["installed_at"], m
+assert m["version"] == "1.21.2" and m["installed_at"], m
 pkg = ["lossless_handoff/%s.py" % n for n in "__init__ transcript summary ledger handoff runtime redaction pipeline reconcile prove claims".split()]
 assert sorted(m["files"]) == sorted(["claims.json", "handoff-nudge.py", "postcompact-inject.py", "precompact-handoff.py", "recall.py"] + pkg), m
 for n, want in m["files"].items():
@@ -924,8 +924,8 @@ PY
   [ ! -e "$F/precompact-handoff.py" ] || fail "F66.a: uninstall did not finish its other work"
   rm "$F/llm_map.py" "$SK"; rmdir "$(dirname "$SK")"; o="$("$ROOT/uninstall.sh")"; ! grep -q "llm-map: kept" <<<"$o" || fail "F66.a: kept line without llm-map files"
   # F66.d versions
-  [ "$("$ROOT/install.sh" --version)" = "Lossless Handoff 0.19.1" ] || fail "F66.d: product version"
-  [ "$(grep -c '^HOOK_VERSION = "1.21.1"$' "$ROOT/hooks/precompact-handoff.py" "$ROOT/hooks/postcompact-inject.py" | grep -c ':1$')" = 2 ] || fail "F66.d: HOOK_VERSION"
+  [ "$("$ROOT/install.sh" --version)" = "Lossless Handoff 0.19.2" ] || fail "F66.d: product version"
+  [ "$(grep -c '^HOOK_VERSION = "1.21.2"$' "$ROOT/hooks/precompact-handoff.py" "$ROOT/hooks/postcompact-inject.py" | grep -c ':1$')" = 2 ] || fail "F66.d: HOOK_VERSION"
   # F66.c: README holds no claim markers; evidence page does; claims-lint default path
   ! grep -qE '\[C[1-9]\]' "$ROOT/README.md" && ! grep -qiE '^#+ .*proof|\*\*proof' "$ROOT/README.md" || fail "F66.c: README holds Proof or claim markers"
   grep -qE '\[C1\]' "$ROOT/docs/evidence.md" || fail "F66.c: docs/evidence.md has no markers"
@@ -972,7 +972,7 @@ rows = {json.loads(x)["sid"]: json.loads(x) for x in open(sys.argv[1]) if x.stri
 a, b = rows["f56a"], rows["f56b"]
 assert a["excerpt_chars"] > 0 and a["excerpt_dropped"] == 0, a
 assert b["excerpt_dropped"] > 0 and 0 < b["excerpt_chars"] <= 120000, b
-assert a["hook_version"] == "1.21.1"
+assert a["hook_version"] == "1.21.2"
 PY
   p="$(python3 "$ROOT/hooks/precompact-handoff.py" --prove --days 1; echo "rc=$?")"
   grep -qE "^excerpt cut: 1 of 2 compactions, median dropped [0-9]+ chars$" <<<"$p" || fail "F56.b: prove line: $p"
@@ -1138,7 +1138,7 @@ PY
 import json, sys
 rows = [json.loads(x) for x in open(sys.argv[1]) if x.strip()]
 r = [x for x in rows if x.get("event") == "subagent_start"][-1]
-assert r["rules"] == 2 and r["chars"] > 0 and r["hook_version"] == "1.21.1" and r["agent_type"] == "general-purpose", r
+assert r["rules"] == 2 and r["chars"] > 0 and r["hook_version"] == "1.21.2" and r["agent_type"] == "general-purpose", r
 PY
   # AC 262: no handoff text, no agent notes
   printf '# Handoff\n- cwd: %s\nLATESTTOKEN\n' "$PROJ" > "$STF/s58-latest.md"; printf 'AGENTTOKEN\n' > "$STF/s58-agent.md"
@@ -1912,7 +1912,7 @@ PY
   CMD="python3 $F/auto-recall.py"
   echo '{"model": "opus"}' > "$FS"
   grep -q -- "--auto-recall" <<<"$("$ROOT/install.sh" --help)" || fail "F67.a: --help lacks --auto-recall"
-  [ "$(grep -c '^HOOK_VERSION = "1.21.1"$' "$ROOT/hooks/auto-recall.py")" = 1 ] || fail "F67.e: auto-recall HOOK_VERSION"
+  [ "$(grep -c '^HOOK_VERSION = "1.21.2"$' "$ROOT/hooks/auto-recall.py")" = 1 ] || fail "F67.e: auto-recall HOOK_VERSION"
   # default install: not installed, not registered
   "$ROOT/install.sh" >/dev/null
   [ ! -e "$F/auto-recall.py" ] && ! grep -q "auto-recall" "$FS" && ! grep -q "auto-recall" "$F/.handoff-manifest.json" || fail "F67.a: default install holds auto-recall"
@@ -2077,9 +2077,9 @@ assert "(same full path for: open <id>; user --last 20; do not cd)" in a.RECALL_
 assert a.RECALL_RULE_LINE == '- recall rule: if your context does not clearly show an earlier number, path, name, command or decision, run the recall command above before you answer. Copy it exactly: full path, no cd. A failed or denied command is not "not found": run the exact command again. If no search can run, say so.', a.RECALL_RULE_LINE
 assert m.RULE == a.RECALL_RULE_LINE and m.INSTRUCTIONS.startswith(m.RULE)
 PY
-  # F83.g: every HOOK_VERSION constant is 1.21.1
-  ! grep -rn --include='*.py' -E '^HOOK_VERSION = "' "$ROOT/hooks" | grep -v '"1.21.1"' | grep -q . || fail "F83.g: a HOOK_VERSION is not 1.21.1"
-  [ "$(grep -rc --include='*.py' -E '^HOOK_VERSION = "1\.21\.1"$' "$ROOT/hooks" | grep -vc ':0$')" -ge 9 ] || fail "F83.g: fewer than 9 hooks at 1.21.1"
+  # F83.g: every HOOK_VERSION constant is 1.21.2
+  ! grep -rn --include='*.py' -E '^HOOK_VERSION = "' "$ROOT/hooks" | grep -v '"1.21.2"' | grep -q . || fail "F83.g: a HOOK_VERSION is not 1.21.2"
+  [ "$(grep -rc --include='*.py' -E '^HOOK_VERSION = "1\.21\.2"$' "$ROOT/hooks" | grep -vc ':0$')" -ge 9 ] || fail "F83.g: fewer than 9 hooks at 1.21.2"
   # F83.c: the PreCompact recall line (summary.py) holds the new text, the same as the inject line
   python3 - "$ROOT/hooks" <<'PY'
 import importlib.util, sys
@@ -2123,7 +2123,7 @@ SH
   [ ! -e "$F/recall-mcp.py" ] && ! grep -q "recall-mcp" "$F/.handoff-manifest.json" && [ ! -s "$FAKE_CLAUDE_LOG" ] || fail "F69: default install holds recall-mcp or called claude"
   ! grep -q "recall-mcp" <<<"$(PATH="$D/fakebin:$PATH" "$ROOT/install.sh" --dry-run)" || fail "F69: default dry-run mentions recall-mcp"
   grep -q -- "--recall-mcp" <<<"$("$ROOT/install.sh" --help)" || fail "F69: --help lacks --recall-mcp"
-  [ "$(grep -c '^HOOK_VERSION = "1.21.1"$' "$ROOT/hooks/recall-mcp.py")" = 1 ] || fail "F69: HOOK_VERSION"
+  [ "$(grep -c '^HOOK_VERSION = "1.21.2"$' "$ROOT/hooks/recall-mcp.py")" = 1 ] || fail "F69: HOOK_VERSION"
   # dry-run lists the file and the command; runs nothing
   o="$(PATH="$D/fakebin:$PATH" "$ROOT/install.sh" --recall-mcp --dry-run)"
   grep -q "install hook: .*/recall-mcp.py" <<<"$o" && grep -qF "claude mcp add --scope user lossless-recall -- $MC" <<<"$o" || fail "F69: dry-run: $o"
@@ -2236,7 +2236,7 @@ out, raw = run([
 by = {o.get("id"): o for o in out}
 assert [o.get("id") for o in out].count(2) == 1 and 99 not in by
 init = by[1]["result"]
-assert init["protocolVersion"] == "2025-06-18" and init["serverInfo"] == {"name": "lossless-recall", "version": "1.21.1"}, init
+assert init["protocolVersion"] == "2025-06-18" and init["serverInfo"] == {"name": "lossless-recall", "version": "1.21.2"}, init
 ins = init["instructions"]
 assert len(ins) < 4096 and "recall rule: if your context does not clearly show an earlier number, path, name, command or decision, run the recall command above before you answer. Copy it exactly: full path, no cd. A failed or denied command is not \"not found\": run the exact command again. If no search can run, say so." in ins and "search_earlier_chat" in ins, ins
 assert by[2]["result"] == {}
@@ -2299,7 +2299,7 @@ def tr(name, tokens):
 tr("t30k", 29985); tr("t60k", 59985); tr("t120k", 119985); tr("t20k", 19985)
 PY
   ra() { python3 -c 'import json,sys; print(json.dumps({"session_id":sys.argv[1],"transcript_path":sys.argv[2],"cwd":sys.argv[3],"hook_event_name":"PostToolUse","tool_name":"Bash"}))' "$1" "$D/$2.jsonl" "$W" | python3 "$HK"; }
-  [ "$(grep -c '^HOOK_VERSION = "1.21.1"$' "$HK")" = 1 ] || fail "F70: HOOK_VERSION"
+  [ "$(grep -c '^HOOK_VERSION = "1.21.2"$' "$HK")" = 1 ] || fail "F70: HOOK_VERSION"
   # below the interval: nothing, no state file
   [ -z "$(ra s1 t30k)" ] && [ ! -e "$HANDOFF_STATE_DIR/reanchor-s1.json" ] || fail "F70: output below 50,000"
   # at 60,000: exactly one JSON object, exact shape and first line, the rules block, the recall line is not required to exist here
@@ -2351,7 +2351,7 @@ PY
   set -e
   D="$T/f71"; mkdir -p "$D"; export HOME="$D/home"; mkdir -p "$HOME/.claude"
   export HANDOFF_STATE_DIR="$D/state"; HK="$ROOT/hooks/claim-guard.py"; LOG="$HANDOFF_STATE_DIR/claim-guard.jsonl"; unset HANDOFF_CLAIM_GUARD
-  [ "$(grep -c '^HOOK_VERSION = "1.21.1"$' "$HK")" = 1 ] || fail "F71: HOOK_VERSION"
+  [ "$(grep -c '^HOOK_VERSION = "1.21.2"$' "$HK")" = 1 ] || fail "F71: HOOK_VERSION"
   python3 - "$D" <<'PY'
 import json, sys
 d = sys.argv[1]
@@ -2807,7 +2807,7 @@ PY
   git -C "$W" init -q; : > "$W2/queue-limit"
   HG="$ROOT/hooks/history-guard.py"; AG="$ROOT/hooks/action-guard.py"; AR="$ROOT/hooks/auto-recall.py"
   for f in history-guard.py action-guard.py auto-recall.py guard_common.py; do
-    [ "$(grep -c '^HOOK_VERSION = "1.21.1"$' "$ROOT/hooks/$f")" = 1 ] || fail "F77: HOOK_VERSION of $f"
+    [ "$(grep -c '^HOOK_VERSION = "1.21.2"$' "$ROOT/hooks/$f")" = 1 ] || fail "F77: HOOK_VERSION of $f"
   done
   python3 - "$HOME" "$W" "$D" <<'PY'
 import json, os, re, sys
@@ -3249,6 +3249,48 @@ PY
   [ "$(grep -c '^- .*chain-key-q' <<<"$o")" = 14 ] && grep -q DECIDEDVAL <<<"$o" && ! grep -q omitted <<<"$o" || fail "F75: 14-mention chain not whole in auto-recall: $o"
   ok "F73-F75 amendments: real keys get the slots, current session by id, PEM redaction, whole-token ranking before the cut"
 )
+
+# F57.b: the lossless check matches both recall label forms (main receipt and subagent receipt both pass)
+LBH="$T/home-lbl"; LB="$T/lbl"; mkdir -p "$LBH/.claude" "$LB/hooks" "$LB/state"
+cp -R "$ROOT/hooks/precompact-handoff.py" "$ROOT/hooks/lossless_handoff" "$ROOT/hooks/recall.py" "$LB/hooks/"
+python3 - "$LBH" "$LB" <<'PY' || fail "F57.b: setup"
+import json, os, subprocess, sys
+home, lb = sys.argv[1], sys.argv[2]
+proj = os.path.join(home, "proj"); os.makedirs(proj)
+subprocess.run(["git", "-C", proj, "init", "-q"], check=True)
+proj = os.path.realpath(proj)
+sid = "aaaaaaaa-1111-2222-3333-444444444444"; aid = "ag12345678abcdef"
+pdir = os.path.join(home, ".claude", "projects", proj.replace("/", "-")); os.makedirs(os.path.join(pdir, sid, "subagents"))
+def rows(tag, side):
+    out = []
+    for i in range(6):
+        t = "user" if i % 2 == 0 else "assistant"
+        text = "%s message number %d with enough words to be sampled" % (tag, i)
+        r = {"type": t, "uuid": "%s%d" % (tag, i), "timestamp": "2026-11-18T10:00:%02d.000Z" % i, "cwd": proj,
+             "message": {"role": t, "content": text if t == "user" else [{"type": "text", "text": text}]}}
+        if side:
+            r["isSidechain"] = True; r["agentId"] = aid
+        out.append(r)
+    out.append({"type": "system", "subtype": "compact_boundary", "timestamp": "2026-11-18T10:30:00.000Z", "cwd": proj,
+                "compactMetadata": {"trigger": "auto", "preTokens": 300000}})
+    return out
+mp = os.path.join(pdir, sid + ".jsonl"); sp = os.path.join(pdir, sid, "subagents", "agent-%s.jsonl" % aid)
+for path, tag, side in ((mp, "MAINLBL", False), (sp, "SUBLBL", True)):
+    open(path, "w").write("".join(json.dumps(r) + "\n" for r in rows(tag, side)))
+def rc(tp, a, k):
+    return {"ts": "2026-11-18T11:00:0%dZ" % (1 if a else 0), "sid": sid[:8], "agent_id": a, "key": k, "transcript": tp,
+            "boundary_ts": "2026-11-18T10:30:00.000Z", "kind": "normal", "handoff_sha256": "x", "part1_sha256": "x", "part1_head": "x"}
+open(os.path.join(lb, "state", "receipts.jsonl"), "w").write(json.dumps(rc(mp, None, "k-main")) + "\n" + json.dumps(rc(sp, aid, "k-sub")) + "\n")
+PY
+HOME="$LBH" HANDOFF_LEDGER=0 HANDOFF_STATE_DIR="$LB/state" python3 "$LB/hooks/precompact-handoff.py" --prove --days 3650 >/dev/null || fail "F57.b: --prove failed"
+python3 - "$LB/state/proofs.jsonl" <<'PY' || fail "F57.b: the lossless check did not pass for a main and a subagent receipt"
+import json, sys
+rows = [json.loads(x) for x in open(sys.argv[1])]
+assert len(rows) == 2, rows
+for r in rows:
+    assert r["checks"]["lossless"] == "pass", (r["agent_id"], r["checks"], r["details"])
+PY
+ok "F57.b: the lossless check matches both recall label forms"
 
 "$ROOT/uninstall.sh" >"$T/un.out"
 python3 - "$S" "$T/original.json" <<'PY'

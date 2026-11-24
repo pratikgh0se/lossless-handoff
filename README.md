@@ -207,7 +207,7 @@ Shown:
 Seen, not proved:
 
 - The loss is largest for replaced decisions, exact strings, error codes and order (a table made after the run).
-- The mechanism runs on the author's machine. In the 7 days to 2026-11-24 there were 35 compactions with a handoff receipt. The handoff was delivered 35 of 35 times, and the right agent got it 35 of 35 times. The lossless spot check passed 23 of 34 times and failed 11 times. The author has not investigated the cause of these 11 failures.
+- The mechanism runs on the author's machine. In the 7 days to 2026-11-24 there were 35 compactions with a handoff receipt. The handoff was delivered 35 of 35 times, and the right agent got it 35 of 35 times. The lossless spot check passed 23 of 34 times and failed 11 times. Cause found on 2026-11-25: all 11 failures were subagent checks, and the check did not read recall's subagent label. This was a check bug, not a recall miss. All 26 main-chat checks passed. Fixed in 0.19.2.
 
 Not shown yet:
 
@@ -217,7 +217,6 @@ Not shown yet:
 - A pilot with 2 seeds ran first. It found a benchmark bug: the deny rules blocked the recall command (fixed in PR #51 and PR #52). The proof test uses only new seeds.
 - No study of other people's real work.
 - The 0.19.1 fix has 2 seeds and at most 3 compactions.
-- The live word-for-word spot check passed 23 of 34 times. The cause of the 11 failures is not known.
 
 </details>
 

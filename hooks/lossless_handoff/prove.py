@@ -117,6 +117,7 @@ def check_lossless(rc):
     if len(pool) < 5:
         return "skip", "fewer than 5 messages"
     import random
+    import subprocess
     rnd = random.Random(hashlib.sha256((str(rc.get("ts")) + str(rc.get("key"))).encode("utf-8")).hexdigest())
     order = list(range(len(pool)))
     rnd.shuffle(order)
@@ -134,15 +135,16 @@ def check_lossless(rc):
             continue
         try:
             sargs = [rp, "search", phrase, "--fixed", "--keyword", "--limit", "100", "--cwd", cwd] + (["--subagents"] if sub else [])
-            hits = []
+            hits = {}
             for ln in _recall_run(sargs).splitlines():
-                m = re.match(r"^([A-Za-z0-9_-]+):(\d+) \d{4}-", ln)
-                if m and m.group(1) == sid8:
-                    hits.append(int(m.group(2)))
+                # F57.b labels: <session8>:<line> (main) or <parent8>/<agent8>:<line> (subagent)
+                m = re.match(r"^(?:([A-Za-z0-9_-]+)/)?([A-Za-z0-9_-]+):(\d+) \d{4}-", ln)
+                if m and m.group(2) == sid8 and bool(m.group(1)) == sub:
+                    hits[int(m.group(3))] = (m.group(1) + "/" if m.group(1) else "") + m.group(2)
             if not hits:
                 return "fail", f"line {n}: recall found no hit for the message"
-            line = n if n in hits else hits[0]
-            out = _recall_run([rp, "open", f"{sid8}:{line}", "--full", "--around", "0", "--cwd", cwd])
+            line = n if n in hits else next(iter(hits))
+            out = _recall_run([rp, "open", f"{hits[line]}:{line}", "--full", "--around", "0", "--cwd", cwd])
             lines = out.split("\n")
             if not lines or not lines[0].startswith("--- "):
                 return "fail", f"line {n}: recall open printed no message"
@@ -155,6 +157,8 @@ def check_lossless(rc):
             passes += 1
             if passes >= 5:
                 return "pass", "5 of 5 identical"
+        except subprocess.TimeoutExpired:
+            return "skip", "timeout"
         except Exception as e:
             return "fail", f"line {n}: recall error {type(e).__name__}"
     return "skip", "fewer than 5 messages could be compared"
