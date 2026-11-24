@@ -2077,6 +2077,26 @@ assert "(same full path for: open <id>; user --last 20; do not cd)" in a.RECALL_
 assert a.RECALL_RULE_LINE == '- recall rule: if your context does not clearly show an earlier number, path, name, command or decision, run the recall command above before you answer. Copy it exactly: full path, no cd. A failed or denied command is not "not found": run the exact command again. If no search can run, say so.', a.RECALL_RULE_LINE
 assert m.RULE == a.RECALL_RULE_LINE and m.INSTRUCTIONS.startswith(m.RULE)
 PY
+  # F83.g: every HOOK_VERSION constant is 1.21.1
+  ! grep -rn --include='*.py' -E '^HOOK_VERSION = "' "$ROOT/hooks" | grep -v '"1.21.1"' | grep -q . || fail "F83.g: a HOOK_VERSION is not 1.21.1"
+  [ "$(grep -rc --include='*.py' -E '^HOOK_VERSION = "1\.21\.1"$' "$ROOT/hooks" | grep -vc ':0$')" -ge 9 ] || fail "F83.g: fewer than 9 hooks at 1.21.1"
+  # F83.c: the PreCompact recall line (summary.py) holds the new text, the same as the inject line
+  python3 - "$ROOT/hooks" <<'PY'
+import importlib.util, sys
+sys.path.insert(0, sys.argv[1])
+from lossless_handoff import summary
+sp = importlib.util.spec_from_file_location("pci2", sys.argv[1] + "/postcompact-inject.py"); a = importlib.util.module_from_spec(sp); sp.loader.exec_module(a)
+assert summary.RECALL_LINE == a.RECALL_LINE and "(same full path for: open <id>; user --last 20; do not cd)" in summary.RECALL_LINE
+PY
+  ! grep -rn "then: recall.py" "$ROOT/hooks" --include='*.py' | grep -q . || fail "F83.c: old recall line text left in hooks"
+  # the MCP tool still says "no matches" for a project with 0 sessions
+  python3 - "$ROOT/hooks" "$E" <<'PY'
+import importlib.util, os, sys
+os.environ["CLAUDE_PROJECT_DIR"] = sys.argv[2]; os.chdir(sys.argv[2])
+sp = importlib.util.spec_from_file_location("rm3", sys.argv[1] + "/recall-mcp.py"); m = importlib.util.module_from_spec(sp); sp.loader.exec_module(m)
+out, n = m.tool_search({"query": "zzqq"})
+assert out == "no matches" and n == 0, (out, n)
+PY
   ok "F83: OLDPWD fallback, zero-session warning, recall line, rule line"
 )
 

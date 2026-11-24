@@ -137,6 +137,7 @@ def tool_search(args):
             lines = mod.cmd_search(a, root)
         finally:
             mod.CURRENT_CUTOFF = None
+    lines = [x for x in lines if not x.startswith("recall.py: no sessions for project ")]  # F83.b warning is for recall.py stdout only
     hits = [x for x in lines[1:-1] if x]  # drop the mode line and the count line
     if not hits:
         return "no matches", 0
