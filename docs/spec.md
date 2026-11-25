@@ -1287,3 +1287,31 @@ Why: `cd <hooks dir> && python3 recall.py search ...` searched 0 sessions and lo
 **F83.f Docs.** The recall docs name the allow rule `Bash(python3 ~/.claude/hooks/recall.py:*)` (F44.7) and say that it lets the exact recall command run without a prompt in ask mode and in headless runs (`claude -p`). F83 does not change what the installer writes.
 
 **F83.g Release.** Version 0.19.1, hooks 1.21.1.
+
+## F84 Batch recall calls (2026-11-25)
+
+Why: one recall call did one thing. Claude then wrote a loop or a shell variable, and Claude Code blocks such a command in headless mode and asks for permission in interactive mode. In the 0.19.1 check, 3 searches were blocked.
+
+**F84.a Open several ids.** `open <id> [<id> ...]` accepts 1 to 10 ids. More than 10 ids gives exit 2 and `recall.py: at most 10 ids in one call`. With 2 or more ids, the default of `--around` is 0. An explicit `--around K` applies to each id. `--from` is valid with one id only (else exit 2). The blocks print in argument order. A repeated id prints one time. Recall removes repeated ids first. The number of ids is the number after this step, but the limit of 10 counts the ids as given. With `--full`, the caps of F44.12 stay. For an id that is malformed, unknown or ambiguous, recall prints on stdout the line `recall.py: no message for <id> (<reason>)` and continues. The exit code is 0 when 1 or more ids printed a message, and 2 when none did. When none did, recall also prints the F84.c usage line on stderr. With 2 or more ids, the cap of each message body is `max(1000, 10000 // <number of messages to print>)` characters without `--full`. The cut marker of F44.12(a) stays. When the total output cap removes whole ids, the last line is `[not shown: <id> <id> ...; run open again with these ids]`. With one id, the output is the same as before, byte for byte.
+
+**F84.b Search several patterns.** `search <pattern> [<pattern> ...]` accepts 1 to 5 patterns. More than 5 gives exit 2 and `recall.py: at most 5 patterns in one call`. Each pattern is one search with the same flags. With 2 or more patterns: the mode line prints one time, first. Then, for each pattern in argument order, recall prints the line `== <pattern>`, the hit lines and the count line of that pattern. `--limit` applies to each pattern, and its default is 8. The project scope is resolved one time. The F83.b warning prints one time, last. When the total output cap removes whole patterns, the last line is `[not shown: "<pattern>" ...; run search again with these patterns]`. With one pattern, the output is the same as before, byte for byte.
+
+**F84.c Usage help on an error.** After each exit-2 error line, recall prints on stderr one more line: `usage: python3 <full path of recall.py> search "<words>" ["<words>" ...] | open <id> [<id> ...] | user --last 20`.
+
+**F84.d Recall line.** In the injected recall line, the text `(same full path for: open <id>; user --last 20; do not cd)` becomes `(same full path for: open <id> [<id> ...]; user --last 20. One call takes several patterns or several ids. Do not use cd, a loop or a shell variable)`. The rule line of F83.d does not change. The F69.b text of the recall MCP server uses the same new text. The file `agents/recall.md` says that one call takes several ids or patterns.
+
+**F84.e Docs.** `docs/recall.md` and the README show one example of each batch call. The README version line names 0.20.0 and hooks 1.22.0.
+
+**F84.f Acceptance.**
+1. `open A B C` on a fixture prints 3 blocks in that order, each with its heading, and exits 0. `open A` gives the same bytes as hooks 1.21.2.
+2. `open A zzzzzzzz:5 B` prints block A, the line `recall.py: no message for zzzzzzzz:5 (...)`, then block B, and exits 0. `open zzzzzzzz:5 yyyyyyyy:6` exits 2.
+3. `open` with 11 ids exits 2 with the F84.a text. `open A B --from 0` exits 2.
+4. With 10 ids of 5,000-character messages, each body is cut at 1,000 characters with the F44.12(a) marker, and the total is 12,000 characters or less.
+5. `search foo bar` prints one mode line, then `== foo` with its hits and count line, then `== bar` with its hits and count line. `search foo` gives the same bytes as hooks 1.21.2.
+6. `search` with 6 patterns exits 2 with the F84.b text. With 2 patterns and no `--limit`, each pattern shows 8 hits at most.
+7. In a folder with 0 sessions, `search foo bar` prints the F83.b warning one time.
+8. `search` with no pattern exits 2, and stderr ends with the F84.c usage line.
+9. All four injection points (PreCompact handoff, `--ledger --part 1`, SessionStart, SubagentStart) hold the F84.d text. Part 1 stays below 10,000 characters with a 180-entry ledger.
+10. `HOOK_VERSION` is 1.22.0 in all hook files. `install.sh` VERSION is 0.20.0.
+```
+

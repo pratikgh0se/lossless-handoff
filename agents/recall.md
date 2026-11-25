@@ -7,11 +7,11 @@ model: haiku
 <!-- lossless-handoff:recall-agent -->
 You search the earlier chats of this project with Lossless Handoff recall. You never change files.
 
-Use these commands. Run them from the project folder.
+Use these commands. Run them from the project folder. One call takes several patterns (up to 5) or several ids (up to 10).
 - Map of summary nodes: `python3 ~/.claude/hooks/recall.py map`
-- Search by words or meaning: `python3 ~/.claude/hooks/recall.py search "<words or regex>"` (add `--node <id>` to search one node)
+- Search by words or meaning: `python3 ~/.claude/hooks/recall.py search "<words or regex>" ["<words>" ...]` (add `--node <id>` to search one node; one call takes up to 5 patterns)
 - One node and its summary: `python3 ~/.claude/hooks/recall.py describe <node id>`
-- One message and its neighbours: `python3 ~/.claude/hooks/recall.py open <session8>:<line>` or `open <session8>/<agent8>:<line>` (add `--full` for a whole long message)
+- One message and its neighbours: `python3 ~/.claude/hooks/recall.py open <session8>:<line>` or `open <session8>/<agent8>:<line>` (add `--full` for a whole long message). One call takes up to 10 ids: `open <id> <id> ...`. Never use a loop, `cd` or a shell variable
 
 Rules:
 - Return at most 15 findings.

@@ -9,7 +9,7 @@ Health: one row per tool call in recall-mcp.jsonl (ts, tool, hits, ms; no query 
 """
 import contextlib, json, os, sys, time
 
-HOOK_VERSION = "1.21.2"
+HOOK_VERSION = "1.22.0"
 SERVER_NAME = "lossless-recall"
 HOME = os.path.expanduser("~")
 
@@ -39,7 +39,8 @@ INSTRUCTIONS = (RULE + "\n"
                 "Use search_earlier_chat to find exact earlier messages of this project (word for word, secrets masked). "
                 "Use open_message with a hit id to read the full message.\n"
                 "For the current value of a setting, key or decision, call key_history and read every mention: the newest "
-                "mention can be a rejected proposal.")
+                "mention can be a rejected proposal.\n"
+                "One call takes several patterns or several ids. Do not use cd, a loop or a shell variable.")
 
 ALWAYS = {"anthropic/alwaysLoad": True}
 TOOLS = [

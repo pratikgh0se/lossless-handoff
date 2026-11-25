@@ -53,7 +53,7 @@ The bare words `before`, `earlier`, `remember`, `did i`, `did we` and `what was 
 ```
 Lossless Handoff auto-recall: earlier messages that match your words. Verify them before you rely on them.
 - <id> <YYYY-MM-DD HH:MM> <role>: <snippet>
-Open one in full: python3 ~/.claude/hooks/recall.py open <id>
+Open one in full: python3 ~/.claude/hooks/recall.py open <id> [<id> ...]
 ```
 
 **Limits.**
@@ -123,6 +123,8 @@ The guards share one cooldown, so one change is not shown twice. A key that was 
 
 ```
 python3 ~/.claude/hooks/recall.py search "zebra-mode"          # words, regex or meaning (hybrid)
+python3 ~/.claude/hooks/recall.py search "zebra" "cache key"   # F84: 1 to 5 patterns in one call; output is one block per pattern, `--limit` default 8 each
+python3 ~/.claude/hooks/recall.py open 1a2b3c4d:57 1a2b3c4d:90 # F84: 1 to 10 ids in one call; `--around` default 0 with 2 or more ids
 python3 ~/.claude/hooks/recall.py search "why we dropped the cache" --meaning
 python3 ~/.claude/hooks/recall.py search "deploy.sh" --keyword --fixed --role user
 python3 ~/.claude/hooks/recall.py open abcd1234:57             # a hit plus 2 messages each side (--around K, --full)
@@ -146,6 +148,8 @@ python3 ~/.claude/hooks/recall.py nodes --backfill       # add nodes for all tra
 Each `search` hit ends with `[node <id>]`, or `[node live]` when it is after the last compaction. After a compaction, the injected context has one line that names the newest node. `--prove` checks that every `compact_boundary` has one node and that the line ranges leave no gap or overlap.
 
 **Recall subagent.** The installer writes `~/.claude/agents/recall.md`. It is a small agent (model `haiku`, tools `Bash` and `Read`) that runs `map`, `search`, `describe` and `open`. It returns at most 15 short quotes with message ids and node ids. When the file is installed, the injected recall line tells the main agent to use it for wide lookups, so long recalled text stays out of the main context. The line also tells the main agent to search directly for one exact fact. Nothing stops the main agent from running `recall.py open` itself. [How Claude decides to use recall](architecture.md#how-claude-decides-to-use-recall) explains the details.
+
+**Batch calls (0.20.0, F84).** One call takes several patterns or several ids, so Claude does not need a loop or a shell variable (Claude Code blocks these in headless mode and asks in interactive mode). `search <pattern> [<pattern> ...]` takes 1 to 5 patterns and prints the mode line once, then `== <pattern>`, its hits and its count line for each pattern. `--limit` applies to each pattern (default 8 with 2 or more patterns, 20 with one). `open <id> [<id> ...]` takes 1 to 10 ids. With 2 or more ids, `--around` defaults to 0 and each message body is cut at `max(1000, 10000 // messages)` characters. A bad id prints `recall.py: no message for <id> (<reason>)` and the call goes on. The exit code is 0 if any id printed a message. `--from` needs one id. If the output cap removes whole ids or patterns, the last line is `[not shown: ...]`. An exit-2 error also prints a `usage:` line on stderr. One id or one pattern gives the same output as before.
 
 Every command accepts `--cwd DIR` (default: the current folder). `search` also takes `--session SID8|all`, `--limit N` and `--no-subagents`. Search, `open` and the meaning index include the work of subagents by default. A subagent hit has the id `<sid8>/<agent8>:<line>` and the tag `[agent <agent8>]`. It shows what a subagent saw or did, not what you typed. `--no-subagents` leaves them out. The old `--subagents` flag is still accepted and does nothing. `user` still reads only the main chats, because the user turns of a subagent are prompts from the main agent. In a plain pattern (letters, digits, spaces, `-`, `_`, `.`), a space, `-` and `_` match each other, so `ledger key` finds `ledger-key`. `--fixed` keeps the match exact (hooks 1.13.1). A hit line from a tool call ends with ` -> result <id>` when the tool returned a result later in the same chat. Run `open <id>` to read what the tool returned. `--keyword` is words only, and `--meaning` is the embedding index only. Output is limited to 12,000 characters. Before it prints or embeds text, recall replaces secrets with `[REDACTED:<kind>]` (see [Limitations](limitations.md#limitations) and `SECURITY.md` for the kinds). `open <id> --full` returns up to 40,000 characters. A longer message ends with a line that gives the exact `--from <N>` to continue with.
 

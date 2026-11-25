@@ -33,6 +33,8 @@ OUT_CAP = 12000
 CHUNK_MAX, MIN_CHUNK, BATCH, MEANING_TOP = 1500, 20, 32, 50
 QUERY_TIMEOUT, INDEX_TIMEOUT = 30, 60  # F44.12(b): cold model load needs > 5 s
 CUT_MARK = "[output cut at 12,000 chars; narrow the search]"
+USAGE_LINE = 'usage: python3 %s search "<words>" ["<words>" ...] | open <id> [<id> ...] | user --last 20'  # F84.c
+MAX_PATTERNS, MULTI_LIMIT, MAX_IDS = 5, 8, 10  # F84
 OPEN_FULL_CAP = 45000  # F44.12(a): total stdout cap for `open --full`
 MSG_CAP_FULL = 40000
 
@@ -838,11 +840,58 @@ def tag_nodes(shown, root):
 
 
 def cmd_search(a, root):
-    limit = max(1, min(a.limit, 100))
+    pats = a.patterns
+    if not pats:
+        raise UsageError("search needs a pattern")
+    if len(pats) > MAX_PATTERNS:
+        raise UsageError("at most %d patterns in one call" % MAX_PATTERNS)  # F84.b
+    multi = len(pats) > 1
+    limit = a.limit if a.limit is not None else (MULTI_LIMIT if multi else 20)  # F84.b: default 8 per pattern
+    limit = max(1, min(limit, 100))
     if a.keyword and a.meaning:
         raise UsageError("--keyword and --meaning are exclusive")
+    node = None
+    if a.node:  # F54.c: only hits inside one leaf's line range
+        node = find_node(root, a.node)
+        if node.get("agent"):
+            a.subagents = True  # a node of a subagent transcript is always searchable
+    ts = select_session(in_scope_transcripts(root, a.subagents), a.session)  # F84.b: scope resolved one time
+    if node:
+        ts = [t for t in ts if os.path.realpath(t.path) == os.path.realpath(node["transcript"])]
+    blocks, mode_line = [], None
+    for pat in pats:
+        a.pattern = pat
+        a.root = root
+        ml, body = _search_one(a, ts, node, pat, limit)
+        if mode_line is None:
+            mode_line = ml
+        blocks.append((pat, body))
+    warn = []
+    if not ts:  # F83.b: 0 sessions is the wrong folder, not an empty result
+        warn.append("recall.py: no sessions for project %s. This is the wrong folder, not an empty result. Run: "
+                    "python3 %s search \"%s\" --cwd <project folder>" % (root, os.path.abspath(__file__), pats[0]))
+    if not multi:
+        return [mode_line] + blocks[0][1] + warn
+    out = [mode_line]
+    shown = 0
+    for i, (pat, body) in enumerate(blocks):
+        block = ["== %s" % pat] + body
+        rest = [p for p, _b in blocks[i + 1:]]
+        tail = ["[not shown: %s; run search again with these patterns]" % " ".join('"%s"' % p for p in rest)] if rest else []
+        if i > 0 and len("\n".join(out + block + warn + tail)) > OUT_CAP:
+            break
+        out += block
+        shown = i + 1
+    out += warn
+    rest = [p for p, _b in blocks[shown:]]
+    if rest:  # F84.b: the output cap removed whole patterns
+        out.append("[not shown: %s; run search again with these patterns]" % " ".join('"%s"' % p for p in rest))
+    return out
+
+
+def _search_one(a, ts, node, pattern, limit):
+    """One pattern of cmd_search -> (mode line, hit lines + count line)."""
     fixed = a.fixed
-    pattern = a.pattern
     if not fixed:
         pattern = loose_pattern(pattern)  # F59.a
     try:
@@ -852,14 +901,7 @@ def cmd_search(a, root):
             raise UsageError("bad pattern: %s" % e)
         fixed = True  # F44.9: not a valid regex -> fixed string for the keyword part
         rx = re.compile(re.escape(pattern), re.I)
-    node = None
-    if a.node:  # F54.c: only hits inside one leaf's line range
-        node = find_node(root, a.node)
-        if node.get("agent"):
-            a.subagents = True  # a node of a subagent transcript is always searchable
-    ts = select_session(in_scope_transcripts(root, a.subagents), a.session)
-    if node:
-        ts = [t for t in ts if os.path.realpath(t.path) == os.path.realpath(node["transcript"])]
+    root = a.root
 
     mode_line, mhits, off_reason = None, [], None
     if a.keyword:
@@ -894,13 +936,9 @@ def cmd_search(a, root):
     fill_meaning_snippets(shown, ts)
     add_result_pointers(shown, ts, rx)
     tag_nodes(shown, root)
-    lines = [mode_line]
-    lines += [fmt_hit(h) for h in shown]
+    lines = [fmt_hit(h) for h in shown]
     lines.append("%d hits shown of %d (%d sessions searched)" % (len(shown), len(merged), len(ts)))
-    if not ts:  # F83.b: 0 sessions is the wrong folder, not an empty result
-        lines.append("recall.py: no sessions for project %s. This is the wrong folder, not an empty result. Run: "
-                     "python3 %s search \"%s\" --cwd <project folder>" % (root, os.path.abspath(__file__), a.pattern))
-    return lines
+    return mode_line, lines
 
 
 # ---------------------------------------------------------------- meaning search (F44.9)
@@ -1781,10 +1819,10 @@ def cmd_describe(a, root):
 
 # ---------------------------------------------------------------- open / user
 
-def cap_body(text, full, mid=None, start=0):
+def cap_body(text, full, mid=None, start=0, cap=None):
     """Body text capped at 4,000 chars (40,000 with full), starting at char `start`. A cut body ends with a marker
     naming the next offset (F44.12(a))."""
-    cap = MSG_CAP_FULL if full else 4000
+    cap = cap or (MSG_CAP_FULL if full else 4000)
     seg = text[start:start + cap]
     end = start + len(seg)
     if end >= len(text):
@@ -1807,15 +1845,14 @@ def heading(t, n, rec, role):
     return "--- %s:%d %s %s" % (t.label, n, fmt_ts(rec.get("timestamp")), role)
 
 
-def cmd_open(a, root):
-    m = re.match(r"^([A-Za-z0-9_-]+)(?:/([A-Za-z0-9_-]+))?:(\d+)$", a.id)
+def _open_locate(ident, around, root, ts):
+    """-> (transcript, messages, position of the id in messages). Raises UsageError for a bad id."""
+    m = re.match(r"^([A-Za-z0-9_-]+)(?:/([A-Za-z0-9_-]+))?:(\d+)$", ident)
     if not m:
         raise UsageError("id must look like <sid8>:<line> or <sid8>/<agent8>:<line>")
     sid, agent, line = m.group(1), m.group(2), int(m.group(3))
-    if a.around < 0:
+    if around < 0:
         raise UsageError("--around must be >= 0")
-    around = min(a.around, 10)
-    ts = in_scope_transcripts(root, True)
     # prefer main transcripts over subagent ones for the same prefix
     if agent:  # F57.b
         match = [t for t in ts if t.sub and t.parent.startswith(sid) and t.agent.startswith(agent)]
@@ -1834,20 +1871,75 @@ def cmd_open(a, root):
     pos = next((i for i, x in enumerate(msgs) if x[0] == line), None)
     if pos is None:
         raise UsageError("no message at %s:%d" % (sid, line))
-    out = []
-    if a.from_ is not None:
-        if a.from_ < 0:
-            raise UsageError("--from must be >= 0")
-        n, rec, role, text = msgs[pos]
-        text = redact(text)
-        mid = "%s:%d" % (t.label, n)
-        seg_end = min(len(text), a.from_ + MSG_CAP_FULL)
-        out.append("%s [chars %d-%d of %d]" % (heading(t, n, rec, role), min(a.from_, len(text)), seg_end, len(text)))
-        out.append(cap_body(text, True, mid, a.from_))
+    return t, msgs, pos
+
+
+def cmd_open(a, root):
+    raw = a.ids
+    if not raw:
+        raise UsageError("open needs an id")
+    if len(raw) > MAX_IDS:
+        raise UsageError("at most %d ids in one call" % MAX_IDS)  # F84.a
+    ids = list(dict.fromkeys(raw))  # a repeated id prints one time
+    multi = len(ids) > 1
+    if multi and a.from_ is not None:
+        raise UsageError("--from is valid with one id only")
+    around = a.around if a.around is not None else (0 if multi else 2)
+    if around < 0:
+        raise UsageError("--around must be >= 0")
+    around = min(around, 10)
+    ts = in_scope_transcripts(root, True)
+    if not multi:
+        t, msgs, pos = _open_locate(ids[0], around, root, ts)
+        out = []
+        if a.from_ is not None:
+            if a.from_ < 0:
+                raise UsageError("--from must be >= 0")
+            n, rec, role, text = msgs[pos]
+            text = redact(text)
+            mid = "%s:%d" % (t.label, n)
+            seg_end = min(len(text), a.from_ + MSG_CAP_FULL)
+            out.append("%s [chars %d-%d of %d]" % (heading(t, n, rec, role), min(a.from_, len(text)), seg_end, len(text)))
+            out.append(cap_body(text, True, mid, a.from_))
+            return out
+        for n, rec, role, text in msgs[max(0, pos - around):pos + around + 1]:
+            out.append(heading(t, n, rec, role))
+            out.append(cap_body(redact(text), a.full, "%s:%d" % (t.label, n)))
         return out
-    for n, rec, role, text in msgs[max(0, pos - around):pos + around + 1]:
-        out.append(heading(t, n, rec, role))
-        out.append(cap_body(redact(text), a.full, "%s:%d" % (t.label, n)))
+    found = []  # (id, [(t, n, rec, role, text)] or error text)
+    for ident in ids:
+        try:
+            t, msgs, pos = _open_locate(ident, around, root, ts)
+            found.append((ident, [(t,) + x for x in msgs[max(0, pos - around):pos + around + 1]], None))
+        except UsageError as e:
+            found.append((ident, [], str(e)))
+    total = sum(len(f[1]) for f in found)
+    if not total:  # F84.a: no id printed a message: exit 2 and the F84.c usage line on stderr
+        a.exit_code = 2
+        sys.stderr.write(USAGE_LINE % os.path.abspath(__file__) + "\n")
+    cap = None if a.full else max(1000, 10000 // max(1, total))
+    blocks = []
+    for ident, ms, err in found:
+        if err is not None:
+            blocks.append((ident, ["recall.py: no message for %s (%s)" % (ident, err)]))
+            continue
+        b = []
+        for t, n, rec, role, text in ms:
+            b.append(heading(t, n, rec, role))
+            b.append(cap_body(redact(text), a.full, "%s:%d" % (t.label, n), 0, cap))
+        blocks.append((ident, b))
+    limit = OPEN_FULL_CAP if a.full else OUT_CAP
+    out, shown = [], 0
+    for i, (ident, b) in enumerate(blocks):
+        rest = [x for x, _b in blocks[i + 1:]]
+        tail = ["[not shown: %s; run open again with these ids]" % " ".join(rest)] if rest else []
+        if i > 0 and len("\n".join(out + b + tail)) > limit:
+            break
+        out += b
+        shown = i + 1
+    rest = [x for x, _b in blocks[shown:]]
+    if rest:
+        out.append("[not shown: %s; run open again with these ids]" % " ".join(rest))
     return out
 
 
@@ -1932,11 +2024,11 @@ def build_parser():
         p.add_argument("--cwd", default=None)
 
     p = sub.add_parser("search")
-    p.add_argument("pattern")
+    p.add_argument("patterns", nargs="*")  # F84.b: 1 to 5 patterns; the count is checked in cmd_search
     p.add_argument("--fixed", action="store_true")
     p.add_argument("--role", choices=["user", "assistant", "tool", "any"], default="any")
     p.add_argument("--session", default="all")
-    p.add_argument("--limit", type=int, default=20)
+    p.add_argument("--limit", type=int, default=None)
     p.add_argument("--subagents", action="store_true")  # F57.a: accepted, changes nothing
     p.add_argument("--no-subagents", dest="no_subagents", action="store_true")
     p.add_argument("--keyword", action="store_true")
@@ -1949,8 +2041,8 @@ def build_parser():
     p.add_argument("--all", action="store_true")
     common(p)
     p = sub.add_parser("open")
-    p.add_argument("id")
-    p.add_argument("--around", type=int, default=2)
+    p.add_argument("ids", nargs="*")  # F84.a: 1 to 10 ids
+    p.add_argument("--around", type=int, default=None)  # default 2 for one id, 0 for several
     p.add_argument("--full", action="store_true")
     p.add_argument("--from", dest="from_", type=int, default=None)
     common(p)
@@ -2006,9 +2098,10 @@ def main(argv):
               "map": cmd_map, "describe": cmd_describe, "nodes": cmd_nodes, "history": cmd_history}[a.cmd]
         big = a.cmd == "open" and (a.full or a.from_ is not None)
         emit(fn(a, root), 10 ** 9 if a.cmd == "history" and a.all else OPEN_FULL_CAP if big else OUT_CAP)
-        return 0
+        return getattr(a, "exit_code", 0)
     except UsageError as e:
         sys.stderr.write("recall.py: %s\n" % e)
+        sys.stderr.write(USAGE_LINE % os.path.abspath(__file__) + "\n")  # F84.c
         return 2
     except NotFound as e:  # F54.c: `no node <id>`, exit 1
         sys.stdout.write("%s\n" % e)
