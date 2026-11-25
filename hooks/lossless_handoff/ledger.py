@@ -32,8 +32,8 @@ LEDGER_PROMPT = ("Stdin has the CURRENT LEDGER, then NEW CONVERSATION since it w
                  "one-off already acted on, output \"RESOLVE D<n>: <reason>\". "
                  # F89.d
                  "Never RESOLVE a rule on your own judgement. Only when a user message in the NEW CONVERSATION ends a "
-                 "rule (it is over, done, or no longer applies), output \"RESOLVE D<n>: <reason> | user: \\\"<exact words "
-                 "of the user>\\\"\". Example: RESOLVE D2: date passed | user: \"D2 has ended\". When two active entries contradict "
+                 "rule (it is over, done, or no longer applies), output \"RESOLVE D<n>: <reason> | user: \"<exact words "
+                 "of the user>\"\". Example: RESOLVE D2: date passed | user: \"D2 has ended\". When two active entries contradict "
                  "each other, SUPERSEDE the older one. For untagged existing entries you may output "
                  "\"KIND D<n> rule|decision|task\" (at most 40).")
 MAINT_PROMPT = ("Stdin has a project's decisions LEDGER (one entry per line). Output ONLY maintenance lines, one per "
@@ -250,7 +250,7 @@ KIND_RE = re.compile(r"^KIND D(\d+) (rule|decision|task)$")
 KIND_LIMIT = 40  # F42.2: KIND lines applied per merge
 
 
-RULE_RESOLVE_RE = re.compile(r'^(.+?) \| user: "(.+)"$')  # F89.a
+RULE_RESOLVE_RE = re.compile(r'^(.+?) \| user: \\?"(.+?)\\?"$')  # F89.a; tolerates a quote sent as \"...\"
 QUOTE_MIN, QUOTE_MAX = 8, 300  # F89.a
 
 
@@ -306,7 +306,7 @@ def apply_changes(prev, out_text, allow_new=True, kind_limit=KIND_LIMIT, stats=N
             um = RULE_RESOLVE_RE.match(m.group(2).strip())
             if not um:
                 continue  # F42.2 form without `| user:`: ignored for a rule
-            why, quote = um.group(1).strip(), um.group(2).strip()
+            why, quote = um.group(1).strip(), um.group(2).replace('\\"', '"').strip()
             if not user_texts or not why or not rule_quote_ok(quote, user_texts) or " | was: " in why + quote:
                 rst["rule_resolve_rejected"] += 1
                 continue

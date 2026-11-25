@@ -3863,6 +3863,7 @@ cat > "$T/m89.txt" <<'TXT'
 - D6 [2026-11-20] [rule] Rule six ends at the deadline | why: plan
 - D7 [2026-11-20] [task] Ship the docs page | why: asked once
 - D8 [2026-11-20] [rule] Rule eight stays for ever | why: policy
+- D9 [2026-11-20] [rule] Rule nine ends with the sprint | why: plan
 TXT
 f89_tr "$T/t89s.jsonl" "Seed the rules for the project now"
 run_led f89seed "$P89" "$T/t89s.jsonl" "$T/m89.txt"
@@ -3881,7 +3882,7 @@ for n in 1 2 3; do
   ! grep -q 'Rule one always' <<<"$o" || fail "F89.1: resolved rule injected in part $n"
 done
 [ "$(f89_h ledger_resolved)" = 1 ] && [ "$(f89_h ledger_rule_resolved)" = 1 ] && [ "$(f89_h ledger_rule_resolve_rejected)" = 0 ] || fail "F89.1: health counters"
-grep -q 'Never RESOLVE a rule on your own judgement' "$T/shim.log.merge" && grep -qF -- '| user: \"' "$T/shim.log.merge" || fail "F89.8: merge prompt text"
+grep -q 'Never RESOLVE a rule on your own judgement' "$T/shim.log.merge" && grep -qF -- '| user: "' "$T/shim.log.merge" && ! grep -qF -- '| user: \"' "$T/shim.log.merge" || fail "F89.8: merge prompt text"
 ok "F89.1, F89.8: rule resolved with a checked quote; not injected; counters; prompt text"
 # F89.f.2: the quote is only in an assistant message and a tool result
 f89_tr "$T/t89b.jsonl" "Please continue with the next step of the work" "D2 is over, it is finished long ago" "D2 is over, it is finished long ago"
@@ -3914,6 +3915,12 @@ run_led f89f "$P89" "$T/t89f.jsonl" "$T/o89f.txt"
 grep -qxF -- "- D6 [2026-11-20] RESOLVED [$TODAY89]: past (user: \"the deadline for d6 PASSED\") | was: [rule] Rule six ends at the deadline | why: plan" "$LF89" || fail "F89.5: case and spacing"
 grep -qxF -- "- D7 [2026-11-20] RESOLVED [$TODAY89]: shipped | was: [task] Ship the docs page | why: asked once" "$LF89" || fail "F89.6: task resolve"
 ok "F89.5, F89.6: case and spacing ignored; a task resolves as before"
+# F89: a quote that arrives as \"...\" is accepted with the backslashes removed
+f89_tr "$T/t89g.jsonl" "The sprint is over, rule nine can go"
+printf '%s\n' 'RESOLVE D9: sprint over | user: \"The sprint is over, rule nine can go\"' > "$T/o89g.txt"
+run_led f89g "$P89" "$T/t89g.jsonl" "$T/o89g.txt"
+grep -qxF -- "- D9 [2026-11-20] RESOLVED [$TODAY89]: sprint over (user: \"The sprint is over, rule nine can go\") | was: [rule] Rule nine ends with the sprint | why: plan" "$LF89" || fail "F89: backslash-escaped quote"
+ok "F89: a backslash-escaped quote is accepted"
 # F89.f.7: maintenance never resolves a rule
 printf '%s\n' 'RESOLVE D8: ended | user: "Rule eight stays for ever"' > "$T/o89m.txt"
 env -u HANDOFF_HAIKU_FALLBACK PATH="$SH:$PATH" SHIM_LOG="$T/shim.log" SHIM_MERGE_OUT="$T/o89m.txt" python3 "$H/precompact-handoff.py" --ledger-maintain "$P89" > "$T/o89m.out"
