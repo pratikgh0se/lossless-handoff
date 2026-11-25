@@ -1,6 +1,6 @@
 # Architecture
 
-This page shows every part of Lossless Handoff, the Claude Code event that calls each part, and the files each part reads and writes. It describes product 0.15.0 and hooks 1.17.0.
+This page shows every part of Lossless Handoff, the Claude Code event that calls each part, and the files each part reads and writes. It describes product 0.20.1 and hooks 1.17.0.
 
 ![Architecture of Lossless Handoff](architecture.svg)
 

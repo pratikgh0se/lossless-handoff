@@ -8,7 +8,9 @@ This documentation uses ASD-STE100 Simplified Technical English.
 
 Current versions: product 0.20.2 (`install.sh`), hooks 1.22.2 (`HOOK_VERSION` in `hooks/precompact-handoff.py`, `hooks/postcompact-inject.py`, `hooks/auto-recall.py`, `hooks/recall-mcp.py`, `hooks/reanchor.py`, `hooks/claim-guard.py`, `hooks/history-guard.py` and `hooks/action-guard.py`).
 
-![plain Claude Code at 10 compactions: 58%](https://img.shields.io/badge/plain%20at%2010%20compactions-58%25-c0392b) ![Lossless Handoff at 10 compactions: 100%](https://img.shields.io/badge/Lossless%20Handoff%20at%2010%20compactions-100%25-0b7a75) ![4 seeds, small benchmark](https://img.shields.io/badge/benchmark-4%20seeds-8197a0)
+![blocked baseline: plain Claude Code at 10 compactions: 58%](https://img.shields.io/badge/blocked%20baseline%3A%20plain%20at%2010%20compactions-58%25-c0392b) ![Lossless Handoff at 10 compactions: 100%](https://img.shields.io/badge/Lossless%20Handoff%20at%2010%20compactions-100%25-0b7a75) ![4 seeds, small benchmark](https://img.shields.io/badge/benchmark-4%20seeds-8197a0)
+
+Note on the badges: plain Claude Code was blocked from reading its own chat files in this test. Real Claude Code can read them. A fair re-test is planned.
 
 [![CI](https://github.com/pratikgh0se/lossless-handoff/actions/workflows/ci.yml/badge.svg)](https://github.com/pratikgh0se/lossless-handoff/actions/workflows/ci.yml) [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE) [![Release](https://img.shields.io/github/v/release/pratikgh0se/lossless-handoff)](https://github.com/pratikgh0se/lossless-handoff/releases/latest)
 
@@ -116,7 +118,9 @@ The parts, the events and the files are in [docs/architecture.md](docs/architect
 
 ![Accuracy after 1, 3 and 10 compactions](docs/img/accuracy.svg)
 
-At 10 compactions, plain Claude Code scores 58% and Lossless Handoff scores 100%. The gain is +42 points (95% interval +27 to +51), over 4 seeds. The test measured 1, 3 and 10 compactions only. It did not measure 2 or 5 compactions.
+Plain Claude Code was blocked from reading its own chat files in this test; real Claude Code can read them. A fair re-test is planned. The size of the real gap is unknown.
+
+At 10 compactions, plain Claude Code (blocked from its chat files) scores 58% and Lossless Handoff scores 100%. The gain is +42 points (95% interval +27 to +51), over 4 seeds. The test measured 1, 3 and 10 compactions only. It did not measure 2 or 5 compactions.
 
 | Arm | 1 compaction | 3 compactions | 10 compactions |
 |---|---|---|---|
@@ -127,6 +131,7 @@ Full report: [docs/proof/benchmarks/2026-11-23-proof-test.md](docs/proof/benchma
 
 Limits:
 
+- Plain Claude Code was blocked from reading its own chat files in this test; real Claude Code can read them. A fair re-test is planned. The runner denies `~/.claude/projects/**` for every arm (`deny_rules` in `bench/continuity/runner.py`). The Lossless Handoff recall tool reads those files inside Python. The source files for types S and E are deleted after one read (`bench/continuity/gen.py`). At 10 compactions, plain Claude Code gave 42 wrong answers with a hint outside type U, and it had tried a lookup in 40 of those 42. So the 58% against 100% gap overstates the real gap. The size of the real gap is unknown.
 - It is a small benchmark: 4 seeds (2001 to 2004).
 - It is our own synthetic benchmark. Code grades it, but we wrote it.
 - It used Sonnet only, at most 10 compactions, and one Claude Code version.
@@ -201,7 +206,7 @@ Limits of the proof test: it is a small benchmark with 4 seeds (2001 to 2004), a
 
 Shown:
 
-- Plain Claude Code loses facts as compactions add up (100%, 80%, 58% at 1, 3 and 10 compactions).
+- Plain Claude Code, blocked from reading its own chat files in this test, loses facts as compactions add up (100%, 80%, 58% at 1, 3 and 10 compactions). Real Claude Code can read those files. A fair re-test is planned.
 - On the questions with a hint, Lossless Handoff stopped that loss up to 10 compactions (100%, 100%, 100%), with 0 items where it was wrong and plain Claude Code was right. Without a hint it scored 93% at 3 compactions and 95% at 10, and at 3 compactions there were 2 such items.
 
 Seen, not proved:

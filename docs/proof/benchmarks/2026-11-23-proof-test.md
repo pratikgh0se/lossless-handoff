@@ -16,6 +16,8 @@ This page is the report of one benchmark run. It is the file `summary.md` of the
 
 Placeholders: `<repo>` is the folder of the repository on the machine that ran the test. `<tmp>` is the temporary folder of that machine.
 
+**Limit added on 2026-11-25:** plain Claude Code (arm A) was blocked from reading its own chat files in this run. The runner denies `~/.claude/projects/**` for every arm (`deny_rules` in `bench/continuity/runner.py`). The Lossless Handoff recall tool reads those files inside Python. The source files for types S and E are deleted after one read (`bench/continuity/gen.py`). At 10 compactions, arm A gave 42 wrong answers with a hint outside type U, and it had tried a lookup in 40 of those 42. Real Claude Code can read its chat files, so the gap between arm A and arm B overstates the real gap. The size of the real gap is unknown. A fair re-test is planned: arm A may read the files, and the files stay.
+
 ---
 
 # Continuity benchmark: run 20261123T190206-proof

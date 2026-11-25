@@ -15,6 +15,10 @@ Safety fixes (hooks 1.22.2). Spec: F87 in `docs/spec.md`.
 - F87.c: the installer sets mode 0700 on the state folder and the folders below it; hooks create state folders with mode 0700; `--check` reports a state folder that is open to other users.
 - F87.d: each receipt row has `health_ts`. A handoff that a receipt shows as already served for more than 60 seconds is handled as old: recovery first, then the `HANDOFF DEGRADED` line.
 
+### Docs
+
+- Qualify the 58% against 100% benchmark numbers: plain Claude Code was blocked from reading its own chat files in that test. A fair re-test is planned. Fix the product version in `docs/architecture.md`.
+
 ### Rollback
 
 Run `git checkout v0.20.1` and `./install.sh` again. Folder modes stay 0700; no data changes.
