@@ -87,6 +87,7 @@ The model writes `<sid>-agent.md` itself with the Write tool. No hook sees that 
 
 | File in `hooks/lossless_handoff/` | What it holds |
 |---|---|
+| `grammar.py` | The one parser for a decisions list line (G1) and a recall hit id (G2), used by `ledger.py`, `prove.py`, `recall.py` and `postcompact-inject.py` |
 | `transcript.py` | Settings, transcript parsing, the git facts |
 | `summary.py` | The agent file, the fresh summary call, the recall text |
 | `ledger.py` | The decisions list: read, merge, maintain, repair |

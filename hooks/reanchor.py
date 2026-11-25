@@ -16,7 +16,7 @@ try:
 except ImportError:  # no flock: no lock (parallel calls may inject twice)
     fcntl = None
 
-HOOK_VERSION = "1.23.1"
+HOOK_VERSION = "1.24.0"
 HOME = os.path.expanduser("~")
 
 

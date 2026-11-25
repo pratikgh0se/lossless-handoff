@@ -78,7 +78,7 @@ HARD_MAX = 9900    # each part's total output (warning + header + content + cont
 INLINE_MAX = 9700  # content target per part
 NAMES_MAX = 150    # the section-name list in a continuation line is cut to this many chars
 MAX_PARTS = 3      # F37.6
-HOOK_VERSION = "1.23.1"
+HOOK_VERSION = "1.24.0"
 
 
 def hooks_home():
@@ -360,7 +360,9 @@ def decorate(txt):
 
 def ledger_part_head(k, path):
     return (f"Project decisions for this repo (part {k} of the ledger; standing rules first, then decisions, then "
-            f"tasks, newest first within each; full ledger: {path}). Standing unless the user says otherwise:\n"
+            f"tasks, newest first within each; full ledger: {path}). Standing unless the user says otherwise:"
+            + (" This list is written by the hooks; do not edit decisions.md yourself." if k == 1 else "")  # F90.d: same line
+            + "\n"
             + (recall_line() if k == 1 else ""))
 
 
@@ -376,8 +378,122 @@ def more_entries_line(k):
                  f"python3 ~/.claude/hooks/recall.py decisions \"<words>\")")
 
 
-ACT_LINE_RE = re.compile(r"^- D(\d+) \[\d{4}-\d{2}-\d{2}\] (.+) \| why: .+$")
-LOOSE_ACT_RE = re.compile(r"^- D(\d+) \[\d{4}-\d{2}-\d{2}\] (.+)$")  # F44.11(e): active-looking line, `| why:` optional
+# F90.b: the G1 and G2 parsers are in hooks/lossless_handoff/grammar.py. This hook loads that file by path. If the
+# file is missing, it runs a copy of it (GRAMMAR_SRC); a smoke check proves that the copy is byte-identical to the file.
+GRAMMAR_SRC = r'''# Shared grammars (F90): G1 decisions-list line, G2 recall hit id. One parser for each format.
+# Part of hooks/precompact-handoff.py (the entry file). Loaded by lossless_handoff/__init__.py into the
+# namespace of the entry file. postcompact-inject.py and recall.py load this file by path as a module, and keep a
+# byte-identical fallback copy (GRAMMAR_SRC) that a smoke check compares with this file (F90.b).
+# This file must not hold three single quotes in a row, and must import only `re` (the entry file has it).
+import re
+
+_DATE = r"\d{4}-\d{2}-\d{2}"
+_RES_RE = re.compile(r"^- D(\d+) \[(%s)\] RESOLVED \[(%s)\]: (.+?) \| was: (.+)$" % (_DATE, _DATE))
+_SUP_RE = re.compile(r"^- D(\d+) \[(%s)\] SUPERSEDED by D(\d+) \[(%s)\]: (.+?) \| because: (.+)$" % (_DATE, _DATE))
+_ACT_RE = re.compile(r"^- D(\d+) \[(%s)\] (.+?) \| why: (.+)$" % _DATE)
+_LOOSE_RE = re.compile(r"^- D(\d+) \[(%s)\] (.+)$" % _DATE)
+_TAG_RE = re.compile(r"^\[(rule|decision|task)\] ")
+_CAPS_RE = re.compile(r"^(?:SUPERSEDED|RESOLVED|[A-Z]{2,}(?: \[|:| \d{4}-\d{2}-\d{2}))")  # RETIRED [..], DONE: or DONE 2026-11-15: is not active text (F90.a)
+_ID_RE = re.compile(r"^- D(\d+) ")
+_RID_RE = re.compile(r"^([A-Za-z0-9_-]+)(?:/([A-Za-z0-9_-]+))?:(\d+)$")
+_HIT_TAIL_RE = re.compile(r"^\d{4}-")
+
+
+def parse_decision(line):
+    """G1: one decisions-list line -> a dict, or None for a malformed line. The dict has `form`: skip (header, blank
+    or comment line), act, nowhy (legacy active line with no `| why:`, F44.11(e)), sup or res; and `id`, `date`, `line`.
+    act and nowhy also have `text` (with its tag) and `tag` (rule|decision|task|None); act has `why`; sup has `by`,
+    `bdate`, `text` (old text) and `why` (the because text); res has `rdate`, `reason` and `was`."""
+    s = (line or "").rstrip("\r\n").strip()
+    if not s or s.startswith("#") or s.startswith("<!--"):
+        return {"form": "skip", "line": s}
+    m = _RES_RE.match(s)
+    if m:
+        d = {"form": "res", "id": int(m.group(1)), "date": m.group(2), "rdate": m.group(3), "reason": m.group(4), "was": m.group(5)}
+    else:
+        m = _SUP_RE.match(s)
+        if m:
+            d = {"form": "sup", "id": int(m.group(1)), "date": m.group(2), "by": int(m.group(3)), "bdate": m.group(4),
+                 "text": m.group(5), "why": m.group(6)}
+        else:
+            m = _ACT_RE.match(s)
+            form = "act"
+            if not m:
+                m = _LOOSE_RE.match(s)
+                form = "nowhy"
+            if not m:
+                return None
+            text = m.group(3)
+            tm = _TAG_RE.match(text)
+            if _CAPS_RE.match(text[tm.end():] if tm else text):
+                return None
+            d = {"form": form, "id": int(m.group(1)), "date": m.group(2), "text": text, "tag": tm.group(1) if tm else None,
+                 "why": m.group(4) if form == "act" else None}
+    if d["id"] < 1:
+        return None
+    d["line"] = s
+    return d
+
+
+def scan_decisions(text):
+    """G1: a decisions list -> [(line number from 1, raw line, parse_decision result)]."""
+    return [(n, raw, parse_decision(raw)) for n, raw in enumerate((text or "").splitlines(), 1)]
+
+
+def malformed_decisions(text):
+    """G1: [(line number from 1, raw line)] of the malformed lines of a decisions list."""
+    return [(n, raw) for n, raw, p in scan_decisions(text) if p is None]
+
+
+def decision_line_id(line):
+    """The id n of a line that starts with `- D<n> `, else None. For a line kept as it is (F90.c)."""
+    m = _ID_RE.match((line or "").strip())
+    return int(m.group(1)) if m else None
+
+
+def parse_recall_id(s):
+    """G2: `<sid8>:<line>` or `<sid8>/<agent8>:<line>` -> (sid, agent or None, line), or None. The parts are the
+    characters of a session or agent id (a prefix of any length is read, as `recall.py open` always did)."""
+    m = _RID_RE.match(s or "")
+    if not m or int(m.group(3)) < 1:
+        return None
+    return m.group(1), m.group(2), int(m.group(3))
+
+
+def parse_recall_hit(ln):
+    """G2: one search-output line `<id> <timestamp> ...` -> (sid, agent or None, line), or None."""
+    head, _, rest = (ln or "").partition(" ")
+    r = parse_recall_id(head)
+    return r if r and _HIT_TAIL_RE.match(rest) else None
+'''
+_GRAMMAR = []
+
+
+def grammar():
+    """The F90 grammar module: the file hooks/lossless_handoff/grammar.py, else a module made from GRAMMAR_SRC."""
+    if _GRAMMAR:
+        return _GRAMMAR[0]
+    import importlib.util
+    mod = None
+    here = os.path.dirname(os.path.abspath(__file__))
+    for base in (here, os.path.dirname(os.path.realpath(__file__))):
+        p = os.path.join(base, "lossless_handoff", "grammar.py")
+        if os.path.isfile(p):
+            try:
+                spec = importlib.util.spec_from_file_location("lh_grammar", p)
+                mod = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(mod)
+                break
+            except Exception:
+                mod = None
+    if mod is None:
+        import types
+        mod = types.ModuleType("lh_grammar")
+        exec(compile(GRAMMAR_SRC, "grammar.py", "exec"), mod.__dict__)
+    _GRAMMAR.append(mod)
+    return mod
+
+
 KIND_ORDER = {"rule": 0, "decision": 1, "task": 2}
 
 
@@ -387,23 +503,19 @@ def parse_ledger_file(path):
     act, other, nowhy = {}, set(), []
     with open(path, encoding="utf-8", errors="replace") as f:
         for ln in f.read().splitlines():
-            ln = ln.strip()
-            m = re.match(r"^- D(\d+) \[\d{4}-\d{2}-\d{2}\] (SUPERSEDED by D\d+ \[\d{4}-\d{2}-\d{2}\]: .+ \| because: .+|RESOLVED \[\d{4}-\d{2}-\d{2}\]: .+ \| was: .+)$", ln)
-            if m and int(m.group(1)) >= 1:
-                other.add(int(m.group(1)))
+            d = grammar().parse_decision(ln)  # F90: G1; a malformed line gives None and is never injected
+            if not d or d["form"] == "skip":
                 continue
-            m = ACT_LINE_RE.match(ln)
-            if not m:  # F44.11(e): inject an active line that lacks `| why:`; log its id
-                lm = LOOSE_ACT_RE.match(ln)
-                if lm and int(lm.group(1)) >= 1 and not re.match(r"^(SUPERSEDED by |RESOLVED \[)", lm.group(2)):
-                    m = lm
-                    if int(lm.group(1)) not in act and int(lm.group(1)) not in other:
-                        nowhy.append(int(lm.group(1)))
-            if m and int(m.group(1)) >= 1 and int(m.group(1)) not in act and int(m.group(1)) not in other:
-                text = m.group(2)
-                tm = re.match(r"^\[(rule|decision|task)\] (.*)$", text)
-                act[int(m.group(1))] = {"id": int(m.group(1)), "kind": tm.group(1) if tm else "decision",
-                                        "line": ln, "text": tm.group(2) if tm else text}
+            i = d["id"]
+            if d["form"] in ("sup", "res"):
+                other.add(i)
+                continue
+            if i in act or i in other:
+                continue
+            if d["form"] == "nowhy":  # F44.11(e): inject an active line that lacks `| why:`; log its id
+                nowhy.append(i)
+            text = d["text"][len(d["tag"]) + 3:] if d["tag"] else d["text"]
+            act[i] = {"id": i, "kind": d["tag"] or "decision", "line": d["line"], "text": text}
     if nowhy and PART == 1:  # one log line per entry, from the part-1 call only (parts 2-3 re-read the same file)
         for i in nowhy:
             if i in act:
@@ -909,7 +1021,7 @@ def decisions_stats(path):
         room = sum(HARD_MAX - len(ledger_part_head(k, path)) - 1 for k in range(1, MAX_PARTS + 1))
         chars = sum(len(e["line"]) + 1 for e in rules)
         text = "\n".join(plan_ledger(ents, path))
-        shown = set(int(x) for x in re.findall(r"(?m)^- D(\d+) \[", text))
+        shown = set(i for i in (grammar().decision_line_id(x) for x in text.split("\n")) if i)
         lines = set(text.split("\n"))
         full = sum(1 for e in rules if e["line"] in lines)
         return {"rules": len(rules), "chars": chars, "room": room, "pct": int(100 * chars / room),
@@ -1111,6 +1223,18 @@ def check_mode(verbose=False):
         if dstat["index_only"]:
             data.append(f"decisions list: {dstat['index_only']} rules are index lines only")
     mark("decisions list has room")
+    bad_lines = []  # F90.c: malformed lines of the decisions list of this project (a data problem, F86.a)
+    try:
+        lp = ledger_path_for(os.getcwd())
+        if os.path.isfile(lp):
+            with open(lp, encoding="utf-8", errors="replace") as f:
+                bad_lines = grammar().malformed_decisions(f.read())
+    except Exception as e:
+        log_error(e)
+    if bad_lines:
+        data.append(f"decisions list: {len(bad_lines)} malformed lines (first: line {bad_lines[0][0]}); "
+                    "fix them to a known form (docs/decisions-list.md)")
+    mark("decisions list lines are in a known form")
     inst_t, data_t = list(problems), list(data)
     _CLEAN_ST[0], _CLEAN_ST[1] = st, managed
     if verbose:
@@ -1123,9 +1247,21 @@ def check_mode(verbose=False):
             sys.stdout.write(f"info: decisions list: {dstat['rules']} rules, {dstat['chars']} of {dstat['room']} "
                              f"characters of full-text room ({dstat['pct']}%); {dstat['active']} active entries; "
                              f"{dstat['unlisted']} not listed\n")
+        if bad_lines:  # F90.c: the first 3, cut to 120 characters, after redact()
+            try:
+                import importlib.util
+                _s = importlib.util.spec_from_file_location("lh_recall_redact", recall_path())
+                _m = importlib.util.module_from_spec(_s)
+                _s.loader.exec_module(_m)
+                _red = _m.redact
+            except Exception:
+                _red = None
+            for n, raw in bad_lines[:3]:
+                shown = _red(raw.strip())[:120] if _red else "(text hidden: recall.py did not load)"
+                sys.stdout.write(f"info: malformed line {n}: {shown}\n")
         try:
             import importlib.util
-            spec = importlib.util.spec_from_file_location("lh_recall_check", os.path.join(hooks_dir, "recall.py"))
+            spec = importlib.util.spec_from_file_location("lh_recall_check",os.path.join(hooks_dir, "recall.py"))
             rm = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(rm)
             root = rm.project_root(os.getcwd())

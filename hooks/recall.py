@@ -199,8 +199,11 @@ def redacted_snippet(text, s, e, ctx=120):
 
 # ---------------------------------------------------------------- transcripts
 
-def strip_reminders(t):
-    return REMINDER_RE.sub("", t).strip()
+def strip_reminders(t, exact=False):
+    s = REMINDER_RE.sub("", t)
+    if exact and s == t:  # F90 I1: `open` keeps text without a reminder byte for byte, trailing whitespace included
+        return t
+    return s.strip()
 
 
 def typed_ok(t):
@@ -218,8 +221,8 @@ def result_text(c):
     return ""
 
 
-def segments(rec):
-    """F44.3: record -> list of (role, text); role in user|assistant|tool."""
+def segments(rec, exact=False):
+    """F44.3: record -> list of (role, text); role in user|assistant|tool. `exact` (open only): no strip of text that holds no reminder."""
     typ = rec.get("type")
     if typ not in ("user", "assistant"):
         return []
@@ -242,12 +245,12 @@ def segments(rec):
                     typed.append(b["text"])
                 elif b.get("type") == "tool_result":
                     tools.append(result_text(b.get("content")))
-        t = strip_reminders("\n".join(typed))
+        t = strip_reminders("\n".join(typed), exact)
         if typed_ok(t):
             out.append(("user", t))
         for x in tools:
-            x = strip_reminders(x)
-            if x:
+            x = strip_reminders(x, exact)
+            if x.strip():
                 out.append(("tool", x))
         return out
     # assistant
@@ -267,8 +270,8 @@ def segments(rec):
                 except Exception:
                     s = str(inp)
                 tools.append("%s %s" % (b.get("name") or "tool", s))
-    t = strip_reminders("\n".join(texts))
-    if t:
+    t = strip_reminders("\n".join(texts), exact)
+    if t.strip():
         out.append(("assistant", t))
     for x in tools:
         out.append(("tool", x))
@@ -1913,7 +1916,7 @@ def cap_body(text, full, mid=None, start=0, cap=None):
 
 
 def rec_message(rec):
-    segs = segments(rec)
+    segs = segments(rec, True)
     if not segs:
         return None
     role = segs[0][0]
@@ -1929,10 +1932,10 @@ def heading(t, n, rec, role):
 
 def _open_locate(ident, around, root, ts):
     """-> (transcript, messages, position of the id in messages). Raises UsageError for a bad id."""
-    m = re.match(r"^([A-Za-z0-9_-]+)(?:/([A-Za-z0-9_-]+))?:(\d+)$", ident)
-    if not m:
+    g2 = grammar().parse_recall_id(ident)  # F90: G2
+    if not g2:
         raise UsageError("id must look like <sid8>:<line> or <sid8>/<agent8>:<line>")
-    sid, agent, line = m.group(1), m.group(2), int(m.group(3))
+    sid, agent, line = g2
     if around < 0:
         raise UsageError("--around must be >= 0")
     # prefer main transcripts over subagent ones for the same prefix
@@ -2092,9 +2095,122 @@ def cmd_handoffs(a, root):
 
 # ---------------------------------------------------------------- decisions (F88.a)
 
-_ACT_RE = re.compile(r"^- D(\d+) \[\d{4}-\d{2}-\d{2}\] (.+)$")
-_CLOSED_RE = re.compile(r"^- D(\d+) \[\d{4}-\d{2}-\d{2}\] (SUPERSEDED by D\d+ \[\d{4}-\d{2}-\d{2}\]: .+ \| because: .+|"
-                        r"RESOLVED \[\d{4}-\d{2}-\d{2}\]: .+ \| was: .+)$")
+# F90.b: the G1 and G2 parsers are in hooks/lossless_handoff/grammar.py. This hook loads that file by path. If the
+# file is missing, it runs a copy of it (GRAMMAR_SRC); a smoke check proves that the copy is byte-identical to the file.
+GRAMMAR_SRC = r'''# Shared grammars (F90): G1 decisions-list line, G2 recall hit id. One parser for each format.
+# Part of hooks/precompact-handoff.py (the entry file). Loaded by lossless_handoff/__init__.py into the
+# namespace of the entry file. postcompact-inject.py and recall.py load this file by path as a module, and keep a
+# byte-identical fallback copy (GRAMMAR_SRC) that a smoke check compares with this file (F90.b).
+# This file must not hold three single quotes in a row, and must import only `re` (the entry file has it).
+import re
+
+_DATE = r"\d{4}-\d{2}-\d{2}"
+_RES_RE = re.compile(r"^- D(\d+) \[(%s)\] RESOLVED \[(%s)\]: (.+?) \| was: (.+)$" % (_DATE, _DATE))
+_SUP_RE = re.compile(r"^- D(\d+) \[(%s)\] SUPERSEDED by D(\d+) \[(%s)\]: (.+?) \| because: (.+)$" % (_DATE, _DATE))
+_ACT_RE = re.compile(r"^- D(\d+) \[(%s)\] (.+?) \| why: (.+)$" % _DATE)
+_LOOSE_RE = re.compile(r"^- D(\d+) \[(%s)\] (.+)$" % _DATE)
+_TAG_RE = re.compile(r"^\[(rule|decision|task)\] ")
+_CAPS_RE = re.compile(r"^(?:SUPERSEDED|RESOLVED|[A-Z]{2,}(?: \[|:| \d{4}-\d{2}-\d{2}))")  # RETIRED [..], DONE: or DONE 2026-11-15: is not active text (F90.a)
+_ID_RE = re.compile(r"^- D(\d+) ")
+_RID_RE = re.compile(r"^([A-Za-z0-9_-]+)(?:/([A-Za-z0-9_-]+))?:(\d+)$")
+_HIT_TAIL_RE = re.compile(r"^\d{4}-")
+
+
+def parse_decision(line):
+    """G1: one decisions-list line -> a dict, or None for a malformed line. The dict has `form`: skip (header, blank
+    or comment line), act, nowhy (legacy active line with no `| why:`, F44.11(e)), sup or res; and `id`, `date`, `line`.
+    act and nowhy also have `text` (with its tag) and `tag` (rule|decision|task|None); act has `why`; sup has `by`,
+    `bdate`, `text` (old text) and `why` (the because text); res has `rdate`, `reason` and `was`."""
+    s = (line or "").rstrip("\r\n").strip()
+    if not s or s.startswith("#") or s.startswith("<!--"):
+        return {"form": "skip", "line": s}
+    m = _RES_RE.match(s)
+    if m:
+        d = {"form": "res", "id": int(m.group(1)), "date": m.group(2), "rdate": m.group(3), "reason": m.group(4), "was": m.group(5)}
+    else:
+        m = _SUP_RE.match(s)
+        if m:
+            d = {"form": "sup", "id": int(m.group(1)), "date": m.group(2), "by": int(m.group(3)), "bdate": m.group(4),
+                 "text": m.group(5), "why": m.group(6)}
+        else:
+            m = _ACT_RE.match(s)
+            form = "act"
+            if not m:
+                m = _LOOSE_RE.match(s)
+                form = "nowhy"
+            if not m:
+                return None
+            text = m.group(3)
+            tm = _TAG_RE.match(text)
+            if _CAPS_RE.match(text[tm.end():] if tm else text):
+                return None
+            d = {"form": form, "id": int(m.group(1)), "date": m.group(2), "text": text, "tag": tm.group(1) if tm else None,
+                 "why": m.group(4) if form == "act" else None}
+    if d["id"] < 1:
+        return None
+    d["line"] = s
+    return d
+
+
+def scan_decisions(text):
+    """G1: a decisions list -> [(line number from 1, raw line, parse_decision result)]."""
+    return [(n, raw, parse_decision(raw)) for n, raw in enumerate((text or "").splitlines(), 1)]
+
+
+def malformed_decisions(text):
+    """G1: [(line number from 1, raw line)] of the malformed lines of a decisions list."""
+    return [(n, raw) for n, raw, p in scan_decisions(text) if p is None]
+
+
+def decision_line_id(line):
+    """The id n of a line that starts with `- D<n> `, else None. For a line kept as it is (F90.c)."""
+    m = _ID_RE.match((line or "").strip())
+    return int(m.group(1)) if m else None
+
+
+def parse_recall_id(s):
+    """G2: `<sid8>:<line>` or `<sid8>/<agent8>:<line>` -> (sid, agent or None, line), or None. The parts are the
+    characters of a session or agent id (a prefix of any length is read, as `recall.py open` always did)."""
+    m = _RID_RE.match(s or "")
+    if not m or int(m.group(3)) < 1:
+        return None
+    return m.group(1), m.group(2), int(m.group(3))
+
+
+def parse_recall_hit(ln):
+    """G2: one search-output line `<id> <timestamp> ...` -> (sid, agent or None, line), or None."""
+    head, _, rest = (ln or "").partition(" ")
+    r = parse_recall_id(head)
+    return r if r and _HIT_TAIL_RE.match(rest) else None
+'''
+_GRAMMAR = []
+
+
+def grammar():
+    """The F90 grammar module: the file hooks/lossless_handoff/grammar.py, else a module made from GRAMMAR_SRC."""
+    if _GRAMMAR:
+        return _GRAMMAR[0]
+    import importlib.util
+    mod = None
+    here = os.path.dirname(os.path.abspath(__file__))
+    for base in (here, os.path.dirname(os.path.realpath(__file__))):
+        p = os.path.join(base, "lossless_handoff", "grammar.py")
+        if os.path.isfile(p):
+            try:
+                spec = importlib.util.spec_from_file_location("lh_grammar", p)
+                mod = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(mod)
+                break
+            except Exception:
+                mod = None
+    if mod is None:
+        import types
+        mod = types.ModuleType("lh_grammar")
+        exec(compile(GRAMMAR_SRC, "grammar.py", "exec"), mod.__dict__)
+    _GRAMMAR.append(mod)
+    return mod
+
+
 _KIND_ORDER = {"rule": 0, "decision": 1, "task": 2}
 
 
@@ -2104,18 +2220,14 @@ def read_decisions(path):
     act, closed = {}, {}
     with open(path, encoding="utf-8", errors="replace") as f:
         for ln in f.read().splitlines():
-            ln = ln.strip()
-            m = _CLOSED_RE.match(ln)
-            if m and int(m.group(1)) >= 1:
-                closed.setdefault(int(m.group(1)), {"id": int(m.group(1)), "kind": "closed", "line": ln})
+            d = grammar().parse_decision(ln)  # F90: malformed lines are skipped, never read as active
+            if not d or d["form"] == "skip":
                 continue
-            m = _ACT_RE.match(ln)
-            if not m or int(m.group(1)) < 1 or re.match(r"^(SUPERSEDED by |RESOLVED \[)", m.group(2)):
-                continue
-            i = int(m.group(1))
-            tm = re.match(r"^\[(rule|decision|task)\] ", m.group(2))
-            if i not in act:
-                act[i] = {"id": i, "kind": tm.group(1) if tm else "decision", "line": ln}
+            i = d["id"]
+            if d["form"] in ("sup", "res"):
+                closed.setdefault(i, {"id": i, "kind": "closed", "line": d["line"]})
+            elif i not in act:
+                act[i] = {"id": i, "kind": d["tag"] or "decision", "line": d["line"]}
     ents = sorted((e for e in act.values() if e["id"] not in closed), key=lambda e: (_KIND_ORDER[e["kind"]], -e["id"]))
     return ents, sorted(closed.values(), key=lambda e: -e["id"])
 
