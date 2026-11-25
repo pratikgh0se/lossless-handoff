@@ -3,7 +3,7 @@ folder of the hook file. It holds the subject, evidence, cooldown and state rule
 Stdlib only. Nothing here prints; the hooks print."""
 import hashlib, json, os, re, time
 
-HOOK_VERSION = "1.23.0"
+HOOK_VERSION = "1.23.1"
 HOME = os.path.expanduser("~")
 BUDGET_S = 3.0
 MAX_ANCHORS, MAX_SUBJECTS = 60, 4

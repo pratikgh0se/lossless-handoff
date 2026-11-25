@@ -51,7 +51,7 @@ def main():
         return
     info = {"agent_file": "absent", "stale_sections": [], "fallback": "skipped", "errors": [], "truncated": False,
             "ledger": "none" if ledger_enabled() else "disabled", "ledger_active": 0, "ledger_superseded": 0,
-            "ledger_resolved": 0, "ledger_restored": 0, "ledger_chars": 0, "ledger_error": ""}
+            "ledger_resolved": 0, "ledger_rule_resolved": 0, "ledger_rule_resolve_rejected": 0, "ledger_restored": 0, "ledger_chars": 0, "ledger_error": ""}
     if av is not None:
         info["no_ledger"] = True
         info["ledger"] = "skipped"
@@ -134,6 +134,8 @@ def write_health(d, sid, info, body, status_override=None, sidecar=True, reasons
         "ledger_active": info.get("ledger_active", 0),
         "ledger_superseded": info.get("ledger_superseded", 0),
         "ledger_resolved": info.get("ledger_resolved", 0),
+        "ledger_rule_resolved": info.get("ledger_rule_resolved", 0),
+        "ledger_rule_resolve_rejected": info.get("ledger_rule_resolve_rejected", 0),
         "ledger_restored": info.get("ledger_restored", 0),
         "ledger_chars": info.get("ledger_chars", 0),
         "ledger_error": info.get("ledger_error", ""),
