@@ -3608,8 +3608,8 @@ PY
   S9="$H9/.local/state/claude-handoffs"; echo x >"$S9/projects/x/decisions.md"; echo x >"$S9/recall/index.log"; echo x >"$S9/health.jsonl"
   chmod 755 "$S9" "$S9/projects" "$S9/projects/x" "$S9/recall"; chmod 644 "$S9/projects/x/decisions.md" "$S9/recall/index.log" "$S9/health.jsonl"
   HOME="$H9" "$ROOT/install.sh" --no-nightly >/dev/null || fail "F87.9: install failed"
-  for p in "$S9" "$S9/projects/x" "$S9/recall"; do [ "$(stat -f %Lp "$p" 2>/dev/null || stat -c %a "$p")" = 700 ] || fail "F87.9: mode of $p"; done
-  for p in "$S9/projects/x/decisions.md" "$S9/recall/index.log" "$S9/health.jsonl"; do [ "$(stat -f %Lp "$p" 2>/dev/null || stat -c %a "$p")" = 600 ] || fail "F87.9: mode of $p"; done
+  for p in "$S9" "$S9/projects/x" "$S9/recall"; do [ "$(stat -c %a "$p" 2>/dev/null || stat -f %Lp "$p")" = 700 ] || fail "F87.9: mode of $p"; done
+  for p in "$S9/projects/x/decisions.md" "$S9/recall/index.log" "$S9/health.jsonl"; do [ "$(stat -c %a "$p" 2>/dev/null || stat -f %Lp "$p")" = 600 ] || fail "F87.9: mode of $p"; done
   # F87.e.10: --check reports a folder that is open to other users
   C9() { HOME="$H9" HANDOFF_STATE_DIR="$S9" python3 "$H9/.claude/hooks/postcompact-inject.py" --check 2>&1 || true; }
   chmod 755 "$S9"; o="$(C9)"
@@ -3619,7 +3619,7 @@ PY
   # hooks that create a state folder use mode 0700
   rm -rf "$D/newstate"
   printf '{"session_id":"s87n","cwd":"%s"}' "$PB" | HANDOFF_STATE_DIR="$D/newstate" python3 "$ROOT/hooks/postcompact-inject.py" --part 1 >/dev/null || true
-  [ ! -d "$D/newstate" ] || [ "$(stat -f %Lp "$D/newstate" 2>/dev/null || stat -c %a "$D/newstate")" = 700 ] || fail "F87.c: hook created the state folder with a wide mode"
+  [ ! -d "$D/newstate" ] || [ "$(stat -c %a "$D/newstate" 2>/dev/null || stat -f %Lp "$D/newstate")" = 700 ] || fail "F87.c: hook created the state folder with a wide mode"
   ok "F87.c: installer sets 0700 and 0600, --check reports an open state folder, hooks create 0700"
 
   # F87.e.11 to 14: a handoff serves one compaction
