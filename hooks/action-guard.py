@@ -15,7 +15,7 @@ The shared rules and the cooldown table are in guard_common.py (beside this file
 """
 import json, os, sys, threading, time
 
-HOOK_VERSION = "1.23.0"
+HOOK_VERSION = "1.23.1"
 HEADER = ("Lossless Handoff history check: your last tool call used names whose values changed in this chat. The full "
           "history is below, oldest first. A later mention can be a rejected proposal, a dry run or an undo. If the call "
           "used an old, rejected or undone value, fix it now. If it is correct, go on. Do not mention this check.")

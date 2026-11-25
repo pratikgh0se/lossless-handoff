@@ -4,6 +4,14 @@ Lossless Handoff, formerly claude-handoff.
 
 ## [Unreleased]
 
+## [0.21.1] - 2026-11-25
+
+End a rule with your own words (hooks 1.23.1). Spec: F89 in `docs/spec.md`.
+
+### Changed
+
+- The decisions list merge may now resolve a `[rule]` entry, but only when the merge model quotes (8 to 300 characters) your own words from the new conversation that end the rule. The code checks that the quote is in one of your messages (tool results and assistant text do not count; case and spacing are ignored). Without a valid quote, the rule stays active. The health row has two new counters, `ledger_rule_resolved` and `ledger_rule_resolve_rejected`. `--ledger-maintain` still never resolves a rule.
+
 ## [0.21.0] - 2026-11-25
 
 Decisions list at scale (hooks 1.23.0). Spec: F88 in `docs/spec.md`. Restart Claude Code after the install: the installer adds a `clear` entry to `settings.json`.

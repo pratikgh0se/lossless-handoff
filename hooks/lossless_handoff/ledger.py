@@ -29,7 +29,11 @@ LEDGER_PROMPT = ("Stdin has the CURRENT LEDGER, then NEW CONVERSATION since it w
                  "preferences as [rule] entries the moment the user states them (for example how many agents run in "
                  "parallel, priority order, who writes tests, how to ask the user questions), with the concrete "
                  "numbers. One-off approvals and status updates are [task]. When an active [task] is done or was a "
-                 "one-off already acted on, output \"RESOLVE D<n>: <reason>\". When two active entries contradict "
+                 "one-off already acted on, output \"RESOLVE D<n>: <reason>\". "
+                 # F89.d
+                 "Never RESOLVE a rule on your own judgement. Only when a user message in the NEW CONVERSATION ends a "
+                 "rule (it is over, done, or no longer applies), output \"RESOLVE D<n>: <reason> | user: \\\"<exact words "
+                 "of the user>\\\"\". Example: RESOLVE D2: date passed | user: \"D2 has ended\". When two active entries contradict "
                  "each other, SUPERSEDE the older one. For untagged existing entries you may output "
                  "\"KIND D<n> rule|decision|task\" (at most 40).")
 MAINT_PROMPT = ("Stdin has a project's decisions LEDGER (one entry per line). Output ONLY maintenance lines, one per "
@@ -166,10 +170,11 @@ def read_text(path):
         return ""
 
 
-def merge_items(path, since_ms):
+def merge_items(path, since_ms, users=None):
     """F39.3 + F40.2 merge input: ([item text], ts string of the newest item sent or None). Items are taken
     OLDEST first up to MERGE_INPUT_CAP chars (whole items), so a backlog is caught up over several
-    compactions. Never raises."""
+    compactions. F89.b: if `users` is a list, the text of each USER message sent (role user, not tool results,
+    not ANSWER lines) is appended to it, for the rule-RESOLVE quote check. Never raises."""
     units, asks, last_asst = [], {}, ""  # unit: (text, ms, ts_s)
     try:
         fh = open(path, encoding="utf-8", errors="replace")
@@ -210,24 +215,27 @@ def merge_items(path, since_ms):
                                     ln = f"ANSWER {ts_s or '?'}: {one_line(q, 200)} -> {one_line(a, 200)}"
                                     if isinstance(note, str) and note.strip():
                                         ln += f" (notes: {one_line(note, 200)})"
-                                    units.append((ln, ms, ts_s))
+                                    units.append((ln, ms, ts_s, None))
                         continue
                     tx = text_of(c).strip()
                     if genuine(tx):
                         if newer:
-                            u = f"USER {ts_s or '?'}: " + trunc(tx, 4000)
+                            utx = trunc(tx, 4000)
+                            u = f"USER {ts_s or '?'}: " + utx
                             if last_asst:
                                 u = "ASSISTANT: " + last_asst[-1500:] + "\n\n" + u
-                            units.append((u, ms, ts_s))
+                            units.append((u, ms, ts_s, utx))
                         last_asst = ""
             except Exception:
                 continue
     sent, total, newest = [], 0, None
-    for text, ms, ts_s in units:
+    for text, ms, ts_s, utx in units:
         add = len(text) + (2 if sent else 0)
         if sent and total + add > MERGE_INPUT_CAP:
             break
         sent.append(text)
+        if users is not None and utx:
+            users.append(utx)
         total += add
         if ms is not None and (newest is None or ms >= newest[0]):
             newest = (ms, ts_s)
@@ -242,11 +250,29 @@ KIND_RE = re.compile(r"^KIND D(\d+) (rule|decision|task)$")
 KIND_LIMIT = 40  # F42.2: KIND lines applied per merge
 
 
-def apply_changes(prev, out_text, allow_new=True, kind_limit=KIND_LIMIT, stats=None):
-    """F40.1 + F42.2: apply the model's ADD / KIND / RESOLVE / SUPERSEDE lines to the previous entries.
+RULE_RESOLVE_RE = re.compile(r'^(.+?) \| user: "(.+)"$')  # F89.a
+QUOTE_MIN, QUOTE_MAX = 8, 300  # F89.a
+
+
+def _quote_norm(s):
+    return re.sub(r"\s+", " ", s or "").strip().lower()
+
+
+def rule_quote_ok(quote, user_texts):
+    """F89.b: the quote is 8 to 300 characters and, with whitespace collapsed and case ignored, a substring of
+    one user message text. When in doubt: False (the rule stays active)."""
+    q = _quote_norm(quote)
+    if len(q) < QUOTE_MIN or len((quote or "").strip()) > QUOTE_MAX:
+        return False
+    return any(q in _quote_norm(t) for t in user_texts or [])
+
+
+def apply_changes(prev, out_text, allow_new=True, kind_limit=KIND_LIMIT, stats=None, user_texts=None):
+    """F40.1 + F42.2 + F89: apply the model's ADD / KIND / RESOLVE / SUPERSEDE lines to the previous entries.
     Returns (entries, n_changes); entries is a new dict, `prev` is untouched. Invalid lines are ignored.
     Never removes an entry. allow_new=False (maintenance) ignores new entries; kind_limit None = no limit.
-    `stats` (dict) receives counts add/kind/resolved/superseded."""
+    `user_texts` (F89.b): the user messages of the new conversation; None or empty (maintenance) = a rule is
+    never resolved. `stats` (dict) receives counts add/kind/resolved/superseded/rule_resolved/rule_resolve_rejected."""
     res = dict(prev)
     st = {"add": 0, "kind": 0, "resolved": 0, "superseded": 0}
     prev_max = max(prev) if prev else 0
@@ -270,11 +296,29 @@ def apply_changes(prev, out_text, allow_new=True, kind_limit=KIND_LIMIT, stats=N
         if e:
             res[i] = e
             st["kind"] += 1
-    for ln in lines:  # F42.2 RESOLVE: only an active task or untagged entry; a rule is never resolved
+    rst = {"rule_resolved": 0, "rule_resolve_rejected": 0}  # F89: not part of the change count
+    for ln in lines:  # F42.2 RESOLVE: an active task or untagged entry; F89: a rule only with a checked user quote
         m = RESOLVE_RE.match(ln)
         if not m:
             continue
         i, why = int(m.group(1)), m.group(2).strip()
+        if i in res and res[i]["kind"] == "act" and res[i].get("tag") == "rule":
+            um = RULE_RESOLVE_RE.match(m.group(2).strip())
+            if not um:
+                continue  # F42.2 form without `| user:`: ignored for a rule
+            why, quote = um.group(1).strip(), um.group(2).strip()
+            if not user_texts or not why or not rule_quote_ok(quote, user_texts) or " | was: " in why + quote:
+                rst["rule_resolve_rejected"] += 1
+                continue
+            pm = re.match(r"^(- D\d+ \[\d{4}-\d{2}-\d{2}\]) (.+)$", res[i]["line"])
+            e = parse_entry(f"{pm.group(1)} RESOLVED [{today}]: {why} (user: \"{quote}\") | was: {pm.group(2)}") if pm else None
+            if e and e["kind"] == "res" and e["id"] == i:
+                res[i] = e
+                st["resolved"] += 1
+                rst["rule_resolved"] += 1
+            else:
+                rst["rule_resolve_rejected"] += 1
+            continue
         if i not in res or res[i]["kind"] != "act" or res[i].get("tag") not in (None, "task") or not why:
             continue
         pm = re.match(r"^(- D\d+ \[\d{4}-\d{2}-\d{2}\]) (.+)$", res[i]["line"])
@@ -300,6 +344,7 @@ def apply_changes(prev, out_text, allow_new=True, kind_limit=KIND_LIMIT, stats=N
             st["superseded"] += 1
     if stats is not None:
         stats.update(st)
+        stats.update(rst)
     return res, sum(st.values())
 
 
@@ -398,7 +443,8 @@ def ledger_merge(sid, tp, root, led, timeout):
             last_ts = state["lastEntryTs"]  # old state file: the project value is valid only for its own session
         _snap(led, "before", prev)  # F47.a: evidence for the decisions_safe proof
         _snap(led, "after", prev)
-        items, newest = merge_items(tp, ts_ms(last_ts) if last_ts else None)
+        users = []  # F89.b: user messages of the new conversation, for the rule-RESOLVE quote check
+        items, newest = merge_items(tp, ts_ms(last_ts) if last_ts else None, users)
         if not items:
             led["status"] = "unchanged"
             return
@@ -409,7 +455,9 @@ def ledger_merge(sid, tp, root, led, timeout):
         if err or out is None:
             led["status"], led["error"] = "failed", ledger_error_of(err)
             return
-        res, changes = apply_changes(prev, out)
+        mst = {}
+        res, changes = apply_changes(prev, out, stats=mst, user_texts=users)
+        led["rule_resolved"], led["rule_resolve_rejected"] = mst.get("rule_resolved", 0), mst.get("rule_resolve_rejected", 0)
         if changes:
             if prev_text.strip():
                 ts = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")

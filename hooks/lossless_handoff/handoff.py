@@ -163,6 +163,8 @@ def build(d, info, mode=None):
             led["status"], led["error"] = "failed", "timeout"
     info["ledger"] = led["status"]
     info["ledger_restored"] = led["restored"]
+    info["ledger_rule_resolved"] = led.get("rule_resolved", 0)  # F89
+    info["ledger_rule_resolve_rejected"] = led.get("rule_resolve_rejected", 0)
     if "ids_before" in led:  # F47.a: only when the ledger was actually read for a merge
         info["ledger_ids"] = {"ledger_ids_before": led["ids_before"], "ledger_ids_after": led.get("ids_after", led["ids_before"]),
                               "superseded_before": led.get("sup_before", []), "superseded_after": led.get("sup_after", [])}
