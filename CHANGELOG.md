@@ -4,6 +4,10 @@ Lossless Handoff, formerly claude-handoff.
 
 ## [Unreleased]
 
+### Docs
+
+- Qualify the 58% against 100% benchmark numbers: plain Claude Code was blocked from reading its own chat files in that test. A fair re-test is planned. Fix the product version in `docs/architecture.md`.
+
 ## [0.20.1] - 2026-11-25
 
 Faster recall on large projects and a check that gives correct advice (hooks 1.22.1). Spec: F85 and F86 in `docs/spec.md`.

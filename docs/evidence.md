@@ -141,4 +141,6 @@ Each claim has one marker. The README holds no markers. This page holds all of t
 | [C9] | In the 4-seed proof test, plain Claude Code scored 58% and Lossless Handoff 100% after 10 compactions (+42 points, 95% interval +27 to +51) | dated one-off (2026-11-23) |
 | [C10] | In a 2-seed check of fix 0.19.1 (1 and 3 compactions), Lossless Handoff answered 30 of 30 questions with a hint and 30 of 30 without a hint at 3 compactions (small sample, no verdict) | dated one-off (2026-11-24) |
 
+Limit of C9: plain Claude Code (arm A) was blocked from reading its own chat files in the proof test. The runner denies `~/.claude/projects/**` for every arm (`deny_rules` in `bench/continuity/runner.py`). The Lossless Handoff recall tool reads those files inside Python. The source files for types S and E are deleted after one read (`bench/continuity/gen.py`). At 10 compactions, arm A gave 42 wrong answers with a hint outside type U, and it had tried a lookup in 40 of those 42. Real Claude Code can read its chat files, so the 58% against 100% gap overstates the real gap. The size of the real gap is unknown. A fair re-test is planned: arm A may read the files, and the files stay.
+
 These results come from one machine and one heavy user. A quiz or a cost study is a hint, not a promise.
