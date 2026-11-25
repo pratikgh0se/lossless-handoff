@@ -1455,7 +1455,8 @@ Why: a cold review (2026-11-25) found that the tests pin exact text (39% of the 
 **F90.a Grammars.** These are contract formats. Each producer writes only these forms, and each consumer reads them through one shared parser.
 - G1 Decisions line. A line of a decisions list is exactly one of:
   - active: `- D<n> [<date>] [<tag>] <text> | why: <why>`, where `<tag>` is `rule`, `decision` or `task`;
-  - active untagged (older lists): `- D<n> [<date>] <text> | why: <why>`, where `<text>` does not start with a word in capitals followed by ` [` or `:` (so `RETIRED [..]` or `DONE:` is not untagged text);
+  - active untagged (older lists): `- D<n> [<date>] <text> | why: <why>`.
+  For every active form (tagged, untagged, no why), `<text>` (after the tag, if any) must not start with `SUPERSEDED` or `RESOLVED`, and must not start with a word of 2 or more capitals followed by ` [`, `:` or ` YYYY-MM-DD` (so `RETIRED [..]`, `DONE:`, `DONE 2026-11-15:` and a broken `SUPERSEDED by D5 (...)` line are malformed, while `README is ...` or `OOLONG runs ...` stay valid). Amended 2026-11-25: real lists held 3 superseded lines and 1 task line in non-standard forms that were injected as active;
   - active with no why (legacy, F44.11(e)): `- D<n> [<date>] [<tag>] <text>` or `- D<n> [<date>] <text>` with no ` | why: ` part, under the same rule for `<text>` as the untagged form. It stays valid: it is injected as an active entry and logged as `nowhy`, as F44.11(e) and its acceptance item 162 state;
   - superseded: `- D<n> [<date>] SUPERSEDED by D<m> [<date>]: <old text> | because: <reason>`;
   - resolved: `- D<n> [<date>] RESOLVED [<date>]: <reason> | was: <old text>`;
