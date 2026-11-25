@@ -4,6 +4,21 @@ Lossless Handoff, formerly claude-handoff.
 
 ## [Unreleased]
 
+## [0.20.0] - 2026-11-25
+
+Batch recall calls (hooks 1.22.0). Spec: F84 in `docs/spec.md`.
+
+### Added
+
+- `recall.py open <id> [<id> ...]` takes 1 to 10 ids and `recall.py search <pattern> [<pattern> ...]` takes 1 to 5 patterns in one call. A loop or a shell variable is not needed, and Claude Code blocks these in headless mode.
+- An exit-2 error of `recall.py` prints one `usage:` line on stderr.
+
+### Changed
+
+- The recall line (PreCompact handoff, `--ledger --part 1`, SessionStart, SubagentStart), the recall MCP `instructions` and `agents/recall.md` say that one call takes several patterns or ids.
+- One id or one pattern gives the same output as before.
+- README version line fixed (it named 0.19.1 and 1.21.1).
+
 ## [0.19.2] - 2026-11-25
 
 Lossless check fix (hooks 1.21.2). Amendment (a) in the proof section of `docs/spec.md`.
