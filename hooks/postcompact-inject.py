@@ -78,7 +78,7 @@ HARD_MAX = 9900    # each part's total output (warning + header + content + cont
 INLINE_MAX = 9700  # content target per part
 NAMES_MAX = 150    # the section-name list in a continuation line is cut to this many chars
 MAX_PARTS = 3      # F37.6
-HOOK_VERSION = "1.22.0"
+HOOK_VERSION = "1.22.1"
 
 
 def hooks_home():
@@ -834,12 +834,38 @@ def effective_cleanup_days(user, managed):
     return raw
 
 
-def check_mode():
-    """F45.d: one line `HANDOFF CHECK: ...` when the install is wrong, nothing when it is fine."""
+RECALL_ALLOW_RULE = "Bash(python3 ~/.claude/hooks/recall.py:*)"
+
+
+def check_mode(verbose=False):
+    """F45.d, F86: one line `HANDOFF CHECK: ...` when something is wrong, nothing when all is fine. F86.a: install
+    problems get the installer advice, data problems do not. `verbose` (F86.b) prints one line for each check."""
     import hashlib
     home = os.path.expanduser("~")
     hooks_dir = hooks_home() or os.path.join(home, ".claude", "hooks")
-    problems = []
+    allp = []  # (class, text): class "i" is an install problem, "d" a data problem
+    checks = []  # (name, [problem texts]) in order
+    seen = [0]
+
+    class _Probs:
+        def __init__(self, cls):
+            self.cls = cls
+
+        def append(self, text):
+            allp.append((self.cls, text))
+
+        def __iter__(self):
+            return iter([t for c, t in allp if c == self.cls])
+
+        def clear(self):
+            allp[:] = [x for x in allp if x[0] != self.cls]
+            seen[0] = min(seen[0], len(allp))
+
+    problems, data = _Probs("i"), _Probs("d")
+
+    def mark(name):
+        checks.append((name, [t for _c, t in allp[seen[0]:]]))
+        seen[0] = len(allp)
     try:
         with open(os.path.join(home, ".claude", "settings.json"), encoding="utf-8") as f:
             st = json.load(f)
@@ -863,6 +889,7 @@ def check_mode():
         managed = None
     if st is None and managed is not None and not os.path.exists(os.path.join(home, ".claude", "settings.json")):
         problems.clear()  # no user settings file at all, but the managed file is there: not a problem
+    mark("settings readable")
 
     def runs(event, script, need_compact):
         for src in (st, managed):
@@ -879,16 +906,32 @@ def check_mode():
     if st is not None or managed is not None:
         if not runs("PreCompact", "precompact-handoff.py", False):
             problems.append("no PreCompact hook runs precompact-handoff.py")
+        mark("PreCompact hook wired")
         if not runs("SessionStart", "postcompact-inject.py", True):
             problems.append("no SessionStart compact hook runs postcompact-inject.py")
+        mark("SessionStart hook wired")
     pre, post = os.path.join(hooks_dir, "precompact-handoff.py"), os.path.join(hooks_dir, "postcompact-inject.py")
     for fp in (pre, post):
         if not os.path.isfile(fp):
             problems.append(f"hook file missing: {os.path.basename(fp)}")
+    mark("hook files present")
     if os.path.isfile(pre) and os.path.isfile(post):
         a, b = _vers(pre), _vers(post)
         if a != b:
             problems.append(f"version mismatch (precompact-handoff.py {a}, postcompact-inject.py {b})")
+    mark("hook versions match")
+    if not os.path.isfile(os.path.join(hooks_dir, "recall.py")):  # F86.a
+        problems.append("recall.py missing")
+    mark("recall.py present")
+    if st is not None or managed is not None:  # F86.a: the allow rule that lets Claude run recall without a prompt
+        def _allows(src):
+            try:
+                return RECALL_ALLOW_RULE in ((src.get("permissions") or {}).get("allow") or [])
+            except Exception:
+                return False
+        if not (_allows(st) or _allows(managed)):
+            problems.append(f"allow rule {RECALL_ALLOW_RULE} missing")
+        mark("recall allow rule")
     try:
         mp = os.path.join(hooks_dir, ".handoff-manifest.json")
         if os.path.isfile(mp):
@@ -905,6 +948,7 @@ def check_mode():
                         problems.append(f"{name} differs from the installed manifest")
     except Exception as e:
         log_error(e)
+    mark("files match the manifest")
     rp = os.path.join(HANDOFFS_DIR, "reconcile.json")
     try:
         rj = read_json(rp)
@@ -915,16 +959,18 @@ def check_mode():
                              "see precompact-handoff.py --reconcile\n")
         if rj:
             mi, kl = rj.get("missed_interactive") or 0, rj.get("killed") or 0
-            if (mi > 0 or kl > 0) and str(rj.get("ts") or "") > str(rj.get("noticed_ts") or ""):
-                problems.append(f"{mi if mi > 0 else kl} compactions without a handoff in the last "
-                                f"{rj.get('days', 7)} days; see precompact-handoff.py --reconcile")
-                rj["noticed_ts"] = utc_now()
-                tmp = f"{rp}.tmp{os.getpid()}"
-                with open(tmp, "w", encoding="utf-8") as f:
-                    json.dump(rj, f)
-                os.replace(tmp, rp)
+            if (mi > 0 or kl > 0) and (verbose or str(rj.get("ts") or "") > str(rj.get("noticed_ts") or "")):
+                data.append(f"{mi if mi > 0 else kl} compactions without a handoff in the last "
+                            f"{rj.get('days', 7)} days; see precompact-handoff.py --reconcile")
+                if not verbose:
+                    rj["noticed_ts"] = utc_now()
+                    tmp = f"{rp}.tmp{os.getpid()}"
+                    with open(tmp, "w", encoding="utf-8") as f:
+                        json.dump(rj, f)
+                    os.replace(tmp, rp)
     except Exception as e:
         log_error(e)
+    mark("no compaction without a handoff")
     try:  # F47.c: a proof run with failures, shown once
         prows = []
         with open(os.path.join(HANDOFFS_DIR, "proofs.jsonl"), encoding="utf-8", errors="replace") as f:
@@ -939,31 +985,69 @@ def check_mode():
             newest = max(r["ts"] for r in prows)
             pnp = os.path.join(HANDOFFS_DIR, "proof-notice.json")
             pn = read_json(pnp) or {}
-            if newest > str(pn.get("noticed_ts") or ""):
+            if verbose or newest > str(pn.get("noticed_ts") or ""):
                 nf = sum(1 for r in prows if r["ts"] == newest for v in (r.get("checks") or {}).values() if v == "fail")
                 if nf > 0:
-                    problems.append(f"proof failed: {nf} checks; see proof-report.md")
-                write_json_atomic(pnp, {"noticed_ts": newest})
+                    data.append(f"proof failed: {nf} checks; see proof-report.md")
+                if not verbose:
+                    write_json_atomic(pnp, {"noticed_ts": newest})
     except FileNotFoundError:
         pass
     except Exception as e:
         log_error(e)
+    mark("latest proof run has no failed check")
     try:  # F48.d: failing or stale claims, shown once per change of the set
         cs = read_json(os.path.join(HANDOFFS_DIR, "claims-status.json"))
         if cs:
             bad = sorted(c.get("id") for c in (cs.get("claims") or []) if isinstance(c, dict) and c.get("status") in ("fail", "stale"))
             cnp = os.path.join(HANDOFFS_DIR, "claims-notice.json")
             cn = read_json(cnp) or {}
-            if bad != (cn.get("set") if isinstance(cn.get("set"), list) else []):
+            if verbose or bad != (cn.get("set") if isinstance(cn.get("set"), list) else []):
                 if bad:
-                    problems.append(f"claims: {len(bad)} failing or stale; see claims-report.md")
-                write_json_atomic(cnp, {"set": bad})
+                    data.append(f"claims: {len(bad)} failing or stale; see claims-report.md")
+                if not verbose:
+                    write_json_atomic(cnp, {"set": bad})
     except Exception as e:
         log_error(e)
-    if problems:
-        sys.stdout.write("HANDOFF CHECK: " + "; ".join(problems) + ". Run the installer again, then restart Claude Code.\n")
+    mark("no failing or stale claim")
+    inst_t, data_t = list(problems), list(data)
+    _CLEAN_ST[0], _CLEAN_ST[1] = st, managed
+    if verbose:
+        cleanup_line()  # F52.b, before the last line
+    if verbose:  # F86.b
+        for name, texts in checks:
+            sys.stdout.write(("problem: " + "; ".join(texts) if texts else "ok: " + name) + "\n")
+        sys.stdout.write("info: recall rule %s\n" % ("on" if recall_rules_on() else "off"))
+        try:
+            import importlib.util
+            spec = importlib.util.spec_from_file_location("lh_recall_check", os.path.join(hooks_dir, "recall.py"))
+            rm = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(rm)
+            root = rm.project_root(os.getcwd())
+            sys.stdout.write("info: recall covers %d sessions for %s\n" % (len(rm.in_scope_transcripts(root, True)), root))
+        except Exception:
+            sys.stdout.write("info: recall covers unknown sessions (recall.py did not load)\n")
+        import shutil
+        sys.stdout.write("info: claude on PATH: %s\n" % ("yes" if shutil.which("claude") else "no"))
+    line = None
+    if inst_t and data_t:  # F86.a
+        line = ("HANDOFF CHECK: " + "; ".join(inst_t) + ". Run the installer again, then restart Claude Code. Also: "
+                + "; ".join(data_t) + ".")
+    elif inst_t:
+        line = "HANDOFF CHECK: " + "; ".join(inst_t) + ". Run the installer again, then restart Claude Code."
+    elif data_t:
+        line = "HANDOFF CHECK: " + "; ".join(data_t) + "."
+    if line:
+        sys.stdout.write(line + "\n")
+    elif verbose:
+        sys.stdout.write("HANDOFF CHECK: all ok (%d checks)\n" % len(checks))
+    if not verbose:
+        cleanup_line()
+
+
+def cleanup_line():
     try:  # F52.b: Claude Code deletes old transcripts; recall needs them
-        days = effective_cleanup_days(st, managed)
+        days = effective_cleanup_days(_CLEAN_ST[0], _CLEAN_ST[1])
         if days < 90:
             sys.stdout.write(f"HANDOFF CHECK: Claude Code deletes chat transcripts after {days} days (cleanupPeriodDays), "
                              "so recall loses older messages. Set \"cleanupPeriodDays\": 365 in ~/.claude/settings.json, "
@@ -972,9 +1056,12 @@ def check_mode():
         log_error(e)
 
 
+_CLEAN_ST = [None, None]
+
+
 if "--check" in sys.argv[1:]:
     try:
-        check_mode()
+        check_mode("--verbose" in sys.argv[1:])
     except BaseException as _e:
         if not isinstance(_e, (SystemExit, KeyboardInterrupt)):
             log_error(_e)

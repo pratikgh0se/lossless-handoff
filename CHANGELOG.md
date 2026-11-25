@@ -4,6 +4,21 @@ Lossless Handoff, formerly claude-handoff.
 
 ## [Unreleased]
 
+## [0.20.1] - 2026-11-25
+
+Faster recall on large projects and a check that gives correct advice (hooks 1.22.1). Spec: F85 and F86 in `docs/spec.md`.
+
+### Changed
+
+- Recall parses only the candidate lines that `rg` names and finds its own tool calls with the same `rg` pass. A keyword search on a 4,064-session project takes 9.7 s instead of 19.3 s (warm scope cache). Output is byte-identical.
+- The lossless check of `--prove` searches one transcript (`--session`) with a 60 s limit per recall call (`HANDOFF_PROVE_RECALL_TIMEOUT` changes it).
+- `--check` separates install problems (installer advice) from data problems (no installer advice). It tests the recall file and the recall allow rule.
+
+### Added
+
+- `RECALL_STATS=1` prints a counter line on stderr.
+- `--check --verbose` prints one line for each check and ends with a summary. The installer prints this command as its last line.
+
 ## [0.20.0] - 2026-11-25
 
 Batch recall calls (hooks 1.22.0). Spec: F84 in `docs/spec.md`.

@@ -6,7 +6,7 @@
 
 This documentation uses ASD-STE100 Simplified Technical English.
 
-Current versions: product 0.20.0 (`install.sh`), hooks 1.22.0 (`HOOK_VERSION` in `hooks/precompact-handoff.py`, `hooks/postcompact-inject.py`, `hooks/auto-recall.py`, `hooks/recall-mcp.py`, `hooks/reanchor.py`, `hooks/claim-guard.py`, `hooks/history-guard.py` and `hooks/action-guard.py`).
+Current versions: product 0.20.1 (`install.sh`), hooks 1.22.1 (`HOOK_VERSION` in `hooks/precompact-handoff.py`, `hooks/postcompact-inject.py`, `hooks/auto-recall.py`, `hooks/recall-mcp.py`, `hooks/reanchor.py`, `hooks/claim-guard.py`, `hooks/history-guard.py` and `hooks/action-guard.py`).
 
 ![plain Claude Code at 10 compactions: 58%](https://img.shields.io/badge/plain%20at%2010%20compactions-58%25-c0392b) ![Lossless Handoff at 10 compactions: 100%](https://img.shields.io/badge/Lossless%20Handoff%20at%2010%20compactions-100%25-0b7a75) ![4 seeds, small benchmark](https://img.shields.io/badge/benchmark-4%20seeds-8197a0)
 
@@ -231,7 +231,7 @@ To run the proof test again, use `bench/continuity/run.sh proof`. Add `--dry-run
 ## Limitations
 
 - **One heavy user so far.** All numbers come from the author's machine. Nobody has tested whether it helps other workflows.
-- **Handoffs can be cut.** 20% of handoffs (43 of 217) hit the 14,000-character size cap and were truncated.
+- **Handoffs can be cut.** Main chats: 27% of handoffs (75 of 283, 2026-10-16 to 2026-11-25, `health.jsonl`) hit the 14,000-character size cap and were truncated. Subagents: 0 of 42 (2026-11-17 to 2026-11-24). Only the auto-extracted fact sections are cut first.
 - **Misses still happen.** 4 of 192 main compactions in the 30-day reconcile had no handoff. The hooks make misses fewer and show them. They do not promise zero.
 - **Redaction is pattern-based.** A secret in a shape that the hooks do not know is not masked.
 - **Platform.** The nightly jobs (opt-in) are macOS LaunchAgents. On Linux you add the printed cron lines yourself. Windows is not supported.

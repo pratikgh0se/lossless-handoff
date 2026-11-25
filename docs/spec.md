@@ -570,7 +570,7 @@ Every subcommand caps total stdout at 12,000 chars (then prints `[output cut at 
 
 **F44.4 Redaction.** Before printing, replace with `[redacted]`: strings matching `sk-[A-Za-z0-9_-]{16,}`, `ghp_[A-Za-z0-9]{20,}`, `github_pat_[A-Za-z0-9_]{20,}`, `AKIA[0-9A-Z]{16}`, `xox[abp]-[A-Za-z0-9-]{10,}`, and the value after `password=`/`token=`/`secret=` up to whitespace. Matching runs on the unredacted text.
 
-**F44.5 Speed.** On a project with 3.6 GB of transcripts, `search` with a literal word returns in under 10 s on the user's machine with `rg` (prefilter with `rg -n` then parse only matching lines). No index of message text is built.
+**F44.5 Speed.** On a project with 3.6 GB of transcripts, `search` with a literal word returns in under 10 s on the user's machine with `rg` (prefilter with `rg -n` then parse only matching lines). No index of message text is built. Measured 2026-11-25 (F85, warm scope cache, `--keyword`, "factory lane"): 19.3 s before and 9.7 s after, on 4,064 sessions.
 
 **F44.6 The rule line (injected).** Both injection points carry one line, identical text:
 `- recall: earlier chats in this project are searchable word for word: python3 ~/.claude/hooks/recall.py search "<regex>" (then: recall.py open <id>; recall.py user --last 20). Use it before acting on anything vague here (exact commands, numbers, paths, names, the user's wording) and whenever the user refers to something said earlier; quote what you find instead of guessing.`
