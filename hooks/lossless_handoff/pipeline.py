@@ -33,7 +33,7 @@ def main():
         d, sid, found = av
         if not found:
             try:
-                os.makedirs(HANDOFFS_DIR, exist_ok=True)
+                os.makedirs(HANDOFFS_DIR, mode=0o700, exist_ok=True)
             except Exception:
                 pass
             sub = {"agent_file": "absent", "stale_sections": [], "fallback": "skipped",
@@ -42,7 +42,7 @@ def main():
             return
     elif is_subagent(d):  # F42.5 (kept for inputs that mark a subagent only by a /subagents/ transcript path): health line only; no dump, no latest, no ledger merge, no sidecar, no cleanup
         try:
-            os.makedirs(HANDOFFS_DIR, exist_ok=True)
+            os.makedirs(HANDOFFS_DIR, mode=0o700, exist_ok=True)
         except Exception:
             pass
         sub = {"agent_file": "absent", "stale_sections": [], "fallback": "skipped", "errors": [], "truncated": False,
@@ -58,7 +58,7 @@ def main():
     body = ""
     try:
         try:
-            os.makedirs(HANDOFFS_DIR, exist_ok=True)
+            os.makedirs(HANDOFFS_DIR, mode=0o700, exist_ok=True)
         except Exception:
             pass
         try:  # F45.a: pending marker first, then the deterministic handoff, both before any model call
@@ -221,7 +221,7 @@ def recover():
         d["trigger"] = "recovered"
         if av is not None:
             d["agent_id"], d["agent_type"] = av[0].get("agent_id"), av[0].get("agent_type")
-        os.makedirs(HANDOFFS_DIR, exist_ok=True)
+        os.makedirs(HANDOFFS_DIR, mode=0o700, exist_ok=True)
         info = {"agent_file": "absent", "stale_sections": [], "fallback": "skipped", "errors": [], "truncated": False,
                 "ledger": "skipped"}
         body = build(d, info, mode="recover")

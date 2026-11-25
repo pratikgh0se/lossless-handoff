@@ -219,7 +219,7 @@ def reconcile(days=7):
     for s in sorted([s for s in subs if s["missed"]], key=lambda s: s["last_boundary"], reverse=True):
         _out(f"missed {s['missed']} {s['sid']} agent {s['agent_id']} {s['project']} {s['last_boundary']}")
     try:
-        os.makedirs(HANDOFFS_DIR, exist_ok=True)
+        os.makedirs(HANDOFFS_DIR, mode=0o700, exist_ok=True)
         rp = os.path.join(HANDOFFS_DIR, "reconcile.json")
         out = {"ts": datetime.datetime.fromtimestamp(now, datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
                "days": days, "compactions": tot["boundaries"], "handoffs": tot["handoffs"],

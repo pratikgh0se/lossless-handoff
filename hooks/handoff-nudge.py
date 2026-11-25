@@ -293,7 +293,7 @@ def main():
     if changed or meta.get("ctxTokens") != t:
         meta.update({"v": 1, "sessionId": sid, "window": w, "windowSource": wsrc, "ctxTokens": t})
         try:
-            os.makedirs(HANDOFFS_DIR, exist_ok=True)
+            os.makedirs(HANDOFFS_DIR, mode=0o700, exist_ok=True)
             tmp = meta_path + ".tmp"
             with open(tmp, "w", encoding="utf-8") as f:
                 json.dump(meta, f)

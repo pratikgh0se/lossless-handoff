@@ -10,7 +10,7 @@ Off switch: HANDOFF_AUTO_RECALL=0. The health log (auto-recall.jsonl) holds no p
 """
 import json, os, re, sys, threading, time
 
-HOOK_VERSION = "1.22.1"
+HOOK_VERSION = "1.22.2"
 HOME = os.path.expanduser("~")
 
 
@@ -128,7 +128,7 @@ def write_health(hits, timed_out):
             return
         _state["logged"] = True
     try:
-        os.makedirs(STATE_DIR, exist_ok=True)
+        os.makedirs(STATE_DIR, mode=0o700, exist_ok=True)
         fd = os.open(os.path.join(STATE_DIR, "auto-recall.jsonl"), os.O_APPEND | os.O_CREAT | os.O_WRONLY, 0o600)
         try:
             os.fchmod(fd, 0o600)  # an existing log with looser rights is tightened

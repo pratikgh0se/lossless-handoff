@@ -2,7 +2,7 @@
 # Lossless Handoff installer (formerly claude-handoff): copies the hooks and merges them into ~/.claude/settings.json.
 set -euo pipefail
 
-VERSION="0.20.1"
+VERSION="0.20.2"
 usage() {
   cat <<EOF
 Lossless Handoff $VERSION (formerly claude-handoff)
@@ -12,8 +12,8 @@ merges them into ~/.claude/settings.json, installs the recall subagent (~/.claud
 file of that name that is not ours is there), keeps the decisions list, writes the recall rule marker
 (F81: the recall rule is on by default; turn it off with --no-recall-rules --save-defaults, or HANDOFF_RECALL_RULES=0),
 and starts a first recall index.
-Hooks 1.22.1 keep the chat store: handoff files live 365 days, and --keep-transcripts raises Claude Code's transcript retention.
-Hooks 1.22.1 also mask secrets in every file they write (see SECURITY.md).
+Hooks 1.22.2 keep the chat store: handoff files live 365 days, and --keep-transcripts raises Claude Code's transcript retention.
+Hooks 1.22.2 also mask secrets in every file they write (see SECURITY.md).
 The default does NOT set CLAUDE_CODE_AUTO_COMPACT_WINDOW, pull a model, or install nightly jobs.
 Add them with the opt-in flags below. A rerun never removes, turns off or changes a part that is already installed
 (window value, meaning search, nightly jobs): a --no-* flag only skips adding it. Use ./uninstall.sh to remove parts.
@@ -887,6 +887,9 @@ if [ -d "$STATE_DIR" ]; then say "state dir exists: $STATE_DIR"; else
 if [ -d "$STATE_DIR" ]; then
   say "set existing state files to mode 0600 (not managed-settings.json)"
   [ "$DRY" = 1 ] || find "$STATE_DIR" -type f ! -name managed-settings.json -exec chmod 600 {} + 2>/dev/null || true
+  # F87.c: the state folder and each folder below it are private too (mode 0700). File modes stay as above.
+  say "set the state folder and the folders below it to mode 0700"
+  [ "$DRY" = 1 ] || find "$STATE_DIR" -type d -exec chmod 700 {} + 2>/dev/null || true
 fi
 
 # 3. semantic search model (opt-in: --semantic)

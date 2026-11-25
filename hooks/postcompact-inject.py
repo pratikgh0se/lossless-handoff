@@ -78,7 +78,7 @@ HARD_MAX = 9900    # each part's total output (warning + header + content + cont
 INLINE_MAX = 9700  # content target per part
 NAMES_MAX = 150    # the section-name list in a continuation line is cut to this many chars
 MAX_PARTS = 3      # F37.6
-HOOK_VERSION = "1.22.1"
+HOOK_VERSION = "1.22.2"
 
 
 def hooks_home():
@@ -101,7 +101,7 @@ def log_error(exc):
     try:
         import traceback
         path = os.path.join(HANDOFFS_DIR, "hooks-error.jsonl")
-        os.makedirs(HANDOFFS_DIR, exist_ok=True)
+        os.makedirs(HANDOFFS_DIR, mode=0o700, exist_ok=True)
         try:
             if os.path.getsize(path) > 1000000:
                 os.replace(path, path + ".1")
@@ -566,7 +566,7 @@ def subagent_health(d, rules, chars):
     """F58.d: one health.jsonl row. These rows are skipped by --prove and --reconcile. Never raises."""
     try:
         at = d.get("agent_type")
-        os.makedirs(HANDOFFS_DIR, exist_ok=True)
+        os.makedirs(HANDOFFS_DIR, mode=0o700, exist_ok=True)
         path = os.path.join(HANDOFFS_DIR, "health.jsonl")
         with open(path, "a", encoding="utf-8") as f:
             f.write(json.dumps({"ts": utc_now(), "event": "subagent_start", "hook": "inject",
@@ -772,7 +772,10 @@ def write_receipt(d, key, kind, text):
             bts = None
         with open(os.path.join(HANDOFFS_DIR, f"{key}-latest.md"), "rb") as f:
             hsha = hashlib.sha256(f.read()).hexdigest()
+        hs = read_json(os.path.join(HANDOFFS_DIR, f"{key}-last-health.json"))  # F87.d: which health record this row used
+        hts = hs.get("ts") if hs and isinstance(hs.get("ts"), str) else None
         row = {"ts": utc_now(), "sid": psid[:8], "agent_id": aid, "key": key, "transcript": tp, "boundary_ts": bts,
+               "health_ts": hts,
                "kind": kind, "handoff_sha256": hsha, "part1_sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(),
                "part1_head": text[:300], "recall_rules": bool(recall_rules_on())}
         with open(os.path.join(HANDOFFS_DIR, "receipts.jsonl"), "a", encoding="utf-8") as f:
@@ -780,6 +783,35 @@ def write_receipt(d, key, kind, text):
     except BaseException as e:
         if not isinstance(e, KeyboardInterrupt):
             log_error(e)
+
+
+def handoff_used(key, health_ts):
+    """F87.d: True when receipts.jsonl (last 256 KiB) holds a row with the same key and health_ts and a ts more than
+    60 s old: this handoff already served a compaction. A row without health_ts never matches. Never raises."""
+    try:
+        if not isinstance(health_ts, str) or not health_ts:
+            return False
+        with open(os.path.join(HANDOFFS_DIR, "receipts.jsonl"), "rb") as f:
+            f.seek(0, 2)
+            n = f.tell()
+            f.seek(max(0, n - 262144))
+            data = f.read().decode("utf-8", errors="replace")
+        for ln in data.splitlines():
+            try:
+                r = json.loads(ln)
+            except Exception:
+                continue
+            if not (isinstance(r, dict) and r.get("key") == key and r.get("health_ts") == health_ts):
+                continue
+            try:
+                t = datetime.datetime.strptime(r["ts"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=datetime.timezone.utc)
+            except Exception:
+                continue
+            if time.time() - t.timestamp() > 60:
+                return True
+    except Exception:
+        pass
+    return False
 
 
 def try_recover(d, sid):
@@ -932,6 +964,13 @@ def check_mode(verbose=False):
         if not (_allows(st) or _allows(managed)):
             problems.append(f"allow rule {RECALL_ALLOW_RULE} missing")
         mark("recall allow rule")
+    for _sd in (HANDOFFS_DIR, os.path.join(HANDOFFS_DIR, "projects")):  # F87.c: chat text is stored here
+        try:
+            if os.path.isdir(_sd) and os.stat(_sd).st_mode & 0o077:
+                problems.append(f"state folder is open to other users: {_sd}")
+        except OSError:
+            pass
+    mark("state folders private")
     try:
         mp = os.path.join(hooks_dir, ".handoff-manifest.json")
         if os.path.isfile(mp):
@@ -1119,9 +1158,11 @@ try:
             # F45.b: parts run in parallel, so parts 2 and 3 decide from the state at their start
             if S and S.get("trigger") == "recovered" and age_ok_s(S.get("ts"), 60) and PART in (2, 3):
                 raise SystemExit(0)
-            need = not txt or S is None or not isinstance(S.get("ts"), str) or not age_ok(S["ts"])
+            # F87.d: a handoff that a receipt shows as already served is handled as a record older than 15 minutes
+            used = bool(txt and S is not None and handoff_used(sid, S.get("ts")))
+            need = not txt or S is None or not isinstance(S.get("ts"), str) or not age_ok(S["ts"]) or used
             precomputed = False
-            if need and txt and S is not None and isinstance(S.get("ts"), str) and belongs_to_compaction(d, S["ts"]):
+            if need and not used and txt and S is not None and isinstance(S.get("ts"), str) and belongs_to_compaction(d, S["ts"]):
                 need, precomputed = False, True  # F51: prepared at T0, applied later; the kept messages cover T0..now
                 _NOTE[0] = ("Note: this compaction was prepared at " + S["ts"][:10] + " " + S["ts"][11:19]
                             + "Z; the messages after that time are kept word for word after the summary.\n")
@@ -1147,7 +1188,7 @@ try:
                         errs = S.get("errors") or []
                         if not codes:
                             codes = ["no_health"]
-                    if not precomputed and not age_ok(S["ts"]):
+                    if not precomputed and (used or not age_ok(S["ts"])):
                         codes.append("handoff_old")
                 first = ("HANDOFF DEGRADED: " + warning_text(codes, errs)
                          + ". Verify the handoff against the transcript before acting.\n") if codes else ""

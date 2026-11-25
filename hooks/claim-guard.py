@@ -12,7 +12,7 @@ The log has no reply text and no prompt text. Never fails: any error means exit 
 """
 import json, os, re, sys, time
 
-HOOK_VERSION = "1.22.1"
+HOOK_VERSION = "1.22.2"
 HOME = os.path.expanduser("~")
 STATE_DIR = (os.environ.get("HANDOFF_STATE_DIR") or "").strip() or os.path.join(HOME, ".local", "state", "claude-handoffs")
 CUES = ["as we decided", "we decided", "as you said", "you said", "we agreed", "as agreed", "as discussed",
@@ -127,7 +127,7 @@ def main():
                     return  # already blocked once in this user turn
         except Exception:
             pass
-    os.makedirs(STATE_DIR, exist_ok=True)
+    os.makedirs(STATE_DIR, mode=0o700, exist_ok=True)
     with os.fdopen(os.open(os.path.join(STATE_DIR, "claim-guard.jsonl"), os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600), "a", encoding="utf-8") as f:
         f.write(json.dumps({"ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "session_id": sid[:36],
                             "would_block": True, "cue": cue}) + "\n")

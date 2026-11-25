@@ -473,7 +473,7 @@ def prove(days=7):
         have[k] = row
     if new_rows:
         try:
-            os.makedirs(HANDOFFS_DIR, exist_ok=True)
+            os.makedirs(HANDOFFS_DIR, mode=0o700, exist_ok=True)
             with open(pfile, "a", encoding="utf-8") as f:
                 f.write("".join(json.dumps(r) + "\n" for r in new_rows))
         except Exception as e:

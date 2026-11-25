@@ -3,7 +3,7 @@ folder of the hook file. It holds the subject, evidence, cooldown and state rule
 Stdlib only. Nothing here prints; the hooks print."""
 import hashlib, json, os, re, time
 
-HOOK_VERSION = "1.22.1"
+HOOK_VERSION = "1.22.2"
 HOME = os.path.expanduser("~")
 BUDGET_S = 3.0
 MAX_ANCHORS, MAX_SUBJECTS = 60, 4
@@ -378,7 +378,7 @@ def save_shown(sid, keep, idx, tk, turn_uuid=None):
     st["shown"] = shown
     if turn_uuid is not None:
         st["turn"] = turn_uuid
-    os.makedirs(state_dir(), exist_ok=True)
+    os.makedirs(state_dir(), mode=0o700, exist_ok=True)
     path = state_path(sid)
     tmp = "%s.tmp%d" % (path, os.getpid())
     with os.fdopen(os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w", encoding="utf-8") as f:
@@ -387,7 +387,7 @@ def save_shown(sid, keep, idx, tk, turn_uuid=None):
 
 
 def log_row(name, row):
-    os.makedirs(state_dir(), exist_ok=True)
+    os.makedirs(state_dir(), mode=0o700, exist_ok=True)
     fd = os.open(os.path.join(state_dir(), name), os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
     try:
         os.fchmod(fd, 0o600)
