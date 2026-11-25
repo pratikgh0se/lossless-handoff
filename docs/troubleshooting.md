@@ -10,4 +10,7 @@ What to check when something does not work. This page is part of the [docs index
 - If there is no nudge: it fires only above 75% of the window (300k for 400k) and it needs a usage entry in the transcript. Check `CLAUDE_CODE_AUTO_COMPACT_WINDOW`.
 - If search says `keyword only`, Ollama is not running or `bge-m3` is not pulled. Start Ollama and run `ollama pull bge-m3`.
 - If settings or hooks are in a bad state: install and uninstall leave timestamped backups (`settings.json.bak-*`, `~/.claude/hooks/.claude-handoff-backup-*`).
+- To check the install, run `python3 ~/.claude/hooks/postcompact-inject.py --check --verbose`. It prints one line for each check and a last line.
+- If the last line names an install problem (hook not wired, file missing, file differs, version mismatch, `recall.py` missing, or the allow rule `Bash(python3 ~/.claude/hooks/recall.py:*)` missing): run the installer again, then restart Claude Code.
+- If the last line names a data problem (compactions without a handoff, a failed proof, or failing or stale claims): do not run the installer. For missed compactions, run `python3 ~/.claude/hooks/precompact-handoff.py --reconcile`. For a failed proof, read `proof-report.md`. For claims, read `claims-report.md`.
 - For any other problem, run `bash tests/smoke.sh`, then open an issue with the bug report template.

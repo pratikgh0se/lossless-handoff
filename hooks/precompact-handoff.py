@@ -13,7 +13,7 @@ if os.environ.get("HANDOFF_HOOK_CHILD"):  # spawned by our own summary call: nev
     sys.exit(0)
 
 _T0 = time.monotonic()
-HOOK_VERSION = "1.22.0"
+HOOK_VERSION = "1.22.1"
 # The steer text stays in this file: the smoke test reads it from here.
 STEER_TEXT = """Lossless Handoff guidance for this summary:
 - Quote the user's own words for every decision, rule and correction, with the date if known.

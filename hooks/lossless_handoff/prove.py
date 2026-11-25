@@ -95,8 +95,18 @@ def _first_cwd(path):
     return None
 
 
-def _recall_run(args, timeout=30):
+def _recall_timeout():
+    """F85.e: the limit of each recall call is 60 s; HANDOFF_PROVE_RECALL_TIMEOUT=<seconds> changes it (for tests)."""
+    try:
+        v = float(os.environ.get("HANDOFF_PROVE_RECALL_TIMEOUT") or 60)
+        return v if v > 0 else 60.0
+    except ValueError:
+        return 60.0
+
+
+def _recall_run(args, timeout=None):
     import subprocess
+    timeout = timeout or _recall_timeout()
     r = subprocess.run([sys.executable] + args, capture_output=True, text=True, timeout=timeout, stdin=subprocess.DEVNULL)
     return r.stdout or ""
 
@@ -134,7 +144,7 @@ def check_lossless(rc):
         if len(phrase.strip()) < 10:
             continue
         try:
-            sargs = [rp, "search", phrase, "--fixed", "--keyword", "--limit", "100", "--cwd", cwd] + (["--subagents"] if sub else [])
+            sargs = [rp, "search", phrase, "--fixed", "--keyword", "--limit", "100", "--session", sid8, "--cwd", cwd] + (["--subagents"] if sub else [])
             hits = {}
             for ln in _recall_run(sargs).splitlines():
                 # F57.b labels: <session8>:<line> (main) or <parent8>/<agent8>:<line> (subagent)

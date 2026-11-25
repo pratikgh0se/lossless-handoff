@@ -272,6 +272,10 @@ def parse_line(line):
     return d if isinstance(d, dict) else None
 
 
+STATS = {"opened": set(), "lines_parsed": 0, "rg_calls": 0}  # F85.d: counters for RECALL_STATS=1
+_OFFSETS = {}  # F85.a: path -> {lineno: byte offset} of the lines rg named
+
+
 class Transcript:
     def __init__(self, path, sub):
         self.path = path
@@ -293,14 +297,34 @@ class Transcript:
 
     def records(self, want=None):
         """Yield (lineno, rec) for parseable records; `want`: optional set of line numbers."""
+        last = max(want) if want else 0
+        off = _OFFSETS.get(self.path)
+        if want and off and all(n in off for n in want):  # F85.a: seek to each candidate line
+            try:
+                fb = open(self.path, "rb")
+            except OSError:
+                return
+            with fb:
+                STATS["opened"].add(self.path)
+                for n in sorted(want):
+                    fb.seek(off[n])
+                    STATS["lines_parsed"] += 1
+                    rec = parse_line(fb.readline().decode("utf-8", "replace"))
+                    if rec is not None:
+                        yield n, rec
+            return
         try:
             f = open(self.path, encoding="utf-8", errors="replace")
         except OSError:
             return
         with f:
+            STATS["opened"].add(self.path)
             for n, line in enumerate(f, 1):
                 if want is not None and n not in want:
+                    if n >= last:  # F85.a: nothing wanted after the last candidate line
+                        break
                     continue
+                STATS["lines_parsed"] += 1
                 rec = parse_line(line)
                 if rec is not None:
                     yield n, rec
@@ -399,30 +423,55 @@ def rg_candidates(files, pattern, fixed):
     if fixed:
         if not SAFE_FIXED_RE.match(pattern):
             return None
-        args = ["-F", "-e", pattern]
+        rpat = re.sub(r"([\\.+*?()|\[\]{}^$#&~-])", r"\\\1", pattern)  # fixed string as a regex, safe for rg
+        prx = re.compile(re.escape(pattern), re.I)
     else:
         if not SAFE_RE.match(pattern):
             return None
-        args = ["-e", pattern.replace(".", DOT_REPL)]
+        rpat = pattern.replace(".", DOT_REPL)
+        try:
+            prx = re.compile(rpat, re.I)
+        except re.error:
+            return None
+    # F85.b: one rg pass finds the candidate lines and the recall.py / lossless-recall lines together.
+    args = ["-e", "(?i:%s)" % rpat, "-e", r"recall\.py", "-e", "lossless-recall"]
     hits = {}
+    offs = {}
+    rlines = {}
     paths = [t.path for t in files]
     for i in range(0, len(paths), 400):
         chunk = paths[i:i + 400]
         try:
-            r = subprocess.run([rg, "-i", "-n", "--no-heading", "--with-filename", "--no-messages",
+            STATS["rg_calls"] += 1
+            r = subprocess.run([rg, "-a", "-n", "-b", "--no-heading", "--with-filename", "--no-messages",
                                 "--max-columns", "0"] + args + ["--"] + chunk,
                                capture_output=True, timeout=300)
         except Exception:
             return None
         if r.returncode > 1:
             return None
-        # stdout lines: path:lineno:content (content may be huge; we only need the head)
+        # stdout lines: path:lineno:byteoffset:content
         for raw in r.stdout.split(b"\n"):
             if not raw:
                 continue
-            m = re.match(rb"(.+?\.jsonl):(\d+):", raw)
+            m = re.match(rb"(.+?\.jsonl):(\d+):(\d+):", raw)
             if m:
-                hits.setdefault(m.group(1).decode("utf-8", "replace"), set()).add(int(m.group(2)))
+                p = m.group(1).decode("utf-8", "replace")
+                body = raw[m.end():]
+                if b"recall.py" in body or b"lossless-recall" in body:
+                    rlines.setdefault(p, []).append(body)
+                    if not prx.search(body.decode("utf-8", "replace")):
+                        continue  # a recall line that is not a candidate
+                hits.setdefault(p, set()).add(int(m.group(2)))
+                offs.setdefault(p, {})[int(m.group(2))] = int(m.group(3))
+    for p, d in offs.items():
+        _OFFSETS.setdefault(p, {}).update(d)  # F85.a: byte offsets of the candidate lines
+    for p in hits:  # F85.b: the ids of recall's own calls, only for transcripts that have a candidate line
+        if p not in _RECALL_IDS:
+            ids = set()
+            for body in rlines.get(p, []):
+                _add_recall_ids(ids, body.decode("utf-8", "replace"))
+            _RECALL_IDS[p] = ids
     return hits
 
 
@@ -483,6 +532,16 @@ def _is_recall_use(b):
 _RECALL_IDS = {}  # path -> ids, one scan per transcript per process (the hook runs 3 identifiers)
 
 
+def _add_recall_ids(ids, line):
+    STATS["lines_parsed"] += 1
+    rec = parse_line(line)
+    c = ((rec or {}).get("message") or {}).get("content") if isinstance(rec, dict) else None
+    if isinstance(c, list):
+        for b in c:
+            if _is_recall_use(b) and isinstance(b.get("id"), str):
+                ids.add(b["id"])
+
+
 def recall_tool_ids(path):
     """Ids of the tool calls of recall itself in one transcript (F73.a)."""
     if path in _RECALL_IDS:
@@ -490,15 +549,11 @@ def recall_tool_ids(path):
     ids = _RECALL_IDS[path] = set()
     try:
         with open(path, encoding="utf-8", errors="replace") as f:
+            STATS["opened"].add(path)
             for line in f:
                 if "recall.py" not in line and "lossless-recall" not in line:
                     continue
-                rec = parse_line(line)
-                c = ((rec or {}).get("message") or {}).get("content") if isinstance(rec, dict) else None
-                if isinstance(c, list):
-                    for b in c:
-                        if _is_recall_use(b) and isinstance(b.get("id"), str):
-                            ids.add(b["id"])
+                _add_recall_ids(ids, line)
     except OSError:
         pass
     return ids
@@ -2078,6 +2133,17 @@ def emit(lines, cap=OUT_CAP):
 
 
 def main(argv):
+    t0 = time.time()
+    try:
+        return _main(argv)
+    finally:
+        if os.environ.get("RECALL_STATS"):  # F85.d: the last line on stderr
+            sys.stderr.write("recall stats: transcripts_opened=%d lines_parsed=%d rg_calls=%d ms=%d\n"
+                             % (len(STATS["opened"]), STATS["lines_parsed"], STATS["rg_calls"],
+                                int((time.time() - t0) * 1000)))
+
+
+def _main(argv):
     os.umask(0o077)  # state files hold redacted chat content: new files get mode 0600
     try:
         a = build_parser().parse_args(argv)
