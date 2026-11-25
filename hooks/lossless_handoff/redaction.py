@@ -18,6 +18,17 @@ _FB_SECRET_RES = [
     ("url", re.compile(r"(?i)\b[a-z][a-z0-9+.-]{1,20}://[^\s/:@]{1,100}:([^\s/@]{3,200})@"), 1),
     # Authorization: Bearer VALUE
     ("secret", re.compile(r"(?i)\bauthorization[\"']?\s*[:=]\s*[\"']?(?:bearer|basic)\s+([A-Za-z0-9._~+/=-]{8,})"), 1),
+    # F87.b: more shapes. The value filter _fb_value_ok() also runs on the kind "secret" (prose password).
+    ("stripe", re.compile(r"(?<![A-Za-z0-9_-])(?:[sr]k|pk)_(?:live|test)_[A-Za-z0-9]{16,}"), 0),
+    ("stripe", re.compile(r"(?<![A-Za-z0-9_-])whsec_[A-Za-z0-9]{24,}"), 0),
+    ("gitlab", re.compile(r"(?<![A-Za-z0-9_-])gl(?:pat|dt|rt|cbt|ptt)-[A-Za-z0-9_-]{20,}"), 0),
+    ("huggingface", re.compile(r"(?<![A-Za-z0-9_-])hf_[A-Za-z0-9]{30,}"), 0),
+    ("telegram", re.compile(r"(?<![0-9A-Za-z])\d{8,10}:AA[A-Za-z0-9_-]{33}(?![A-Za-z0-9_-])"), 0),
+    ("slack", re.compile(r"https://hooks\.slack\.com/(?:services|workflows|triggers)/([A-Za-z0-9/_-]{20,})"), 1),
+    ("cookie", re.compile(r"(?i)\b(?:set-)?cookie[\"']?[ \t]*:[ \t]*([^\n\"']{8,2000})"), 1),
+    ("cli", re.compile(r"\b(?:mysql|mysqldump|mysqladmin|mariadb)\b[^\n|;&]{0,200}?\s-p([^\s\"']{3,200})"), 1),
+    ("cli", re.compile(r"\bcurl\b[^\n|;&]{0,300}?\s(?:-u|--user)[ =]+[\"']?[^\s:\"']{1,100}:([^\s\"']{3,200})"), 1),
+    ("secret", re.compile(r"(?i)\b(?:password|passwd|passphrase|passcode)[ \t]+(?:is|was|:|=>|->)[ \t]+[\"'`]?([^\s\"'`,;]{8,200})"), 1),
     # key=value or key: value; the key name ends with a secret word; the key stays, the value goes.
     # No prefix scan before the key word, so the match time is linear. _fb_value_ok() filters the value.
     ("secret", re.compile(r"(?i)(?:password|passwd|passphrase|secret(?:[_-]?key)?|token|api[_-]?key|apikey|access[_-]?key|private[_-]?key)"

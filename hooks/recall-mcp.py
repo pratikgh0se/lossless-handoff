@@ -9,7 +9,7 @@ Health: one row per tool call in recall-mcp.jsonl (ts, tool, hits, ms; no query 
 """
 import contextlib, json, os, sys, time
 
-HOOK_VERSION = "1.22.1"
+HOOK_VERSION = "1.22.2"
 SERVER_NAME = "lossless-recall"
 HOME = os.path.expanduser("~")
 
@@ -95,7 +95,7 @@ def load_recall():
 
 def health(tool, hits, t0):
     try:
-        os.makedirs(STATE_DIR, exist_ok=True)
+        os.makedirs(STATE_DIR, mode=0o700, exist_ok=True)
         with os.fdopen(os.open(os.path.join(STATE_DIR, "recall-mcp.jsonl"), os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600), "a", encoding="utf-8") as f:
             f.write(json.dumps({"ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "tool": tool, "hits": int(hits),
                                 "ms": int((time.monotonic() - t0) * 1000)}) + "\n")

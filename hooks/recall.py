@@ -59,6 +59,17 @@ SECRET_RES = [
     ("url", re.compile(r"(?i)\b[a-z][a-z0-9+.-]{1,20}://[^\s/:@]{1,100}:([^\s/@]{3,200})@"), 1),
     # Authorization: Bearer VALUE
     ("secret", re.compile(r"(?i)\bauthorization[\"']?\s*[:=]\s*[\"']?(?:bearer|basic)\s+([A-Za-z0-9._~+/=-]{8,})"), 1),
+    # F87.b: more shapes. The value filter _value_ok() also runs on the kind "secret" (prose password).
+    ("stripe", re.compile(r"(?<![A-Za-z0-9_-])(?:[sr]k|pk)_(?:live|test)_[A-Za-z0-9]{16,}"), 0),
+    ("stripe", re.compile(r"(?<![A-Za-z0-9_-])whsec_[A-Za-z0-9]{24,}"), 0),
+    ("gitlab", re.compile(r"(?<![A-Za-z0-9_-])gl(?:pat|dt|rt|cbt|ptt)-[A-Za-z0-9_-]{20,}"), 0),
+    ("huggingface", re.compile(r"(?<![A-Za-z0-9_-])hf_[A-Za-z0-9]{30,}"), 0),
+    ("telegram", re.compile(r"(?<![0-9A-Za-z])\d{8,10}:AA[A-Za-z0-9_-]{33}(?![A-Za-z0-9_-])"), 0),
+    ("slack", re.compile(r"https://hooks\.slack\.com/(?:services|workflows|triggers)/([A-Za-z0-9/_-]{20,})"), 1),
+    ("cookie", re.compile(r"(?i)\b(?:set-)?cookie[\"']?[ \t]*:[ \t]*([^\n\"']{8,2000})"), 1),
+    ("cli", re.compile(r"\b(?:mysql|mysqldump|mysqladmin|mariadb)\b[^\n|;&]{0,200}?\s-p([^\s\"']{3,200})"), 1),
+    ("cli", re.compile(r"\bcurl\b[^\n|;&]{0,300}?\s(?:-u|--user)[ =]+[\"']?[^\s:\"']{1,100}:([^\s\"']{3,200})"), 1),
+    ("secret", re.compile(r"(?i)\b(?:password|passwd|passphrase|passcode)[ \t]+(?:is|was|:|=>|->)[ \t]+[\"'`]?([^\s\"'`,;]{8,200})"), 1),
     # key=value or key: value; the key name ends with a secret word; the key stays, the value goes.
     # No prefix scan before the key word, so the match time is linear. _value_ok() filters the value.
     ("secret", re.compile(r"(?i)(?:password|passwd|passphrase|secret(?:[_-]?key)?|token|api[_-]?key|apikey|access[_-]?key|private[_-]?key)"
@@ -348,7 +359,7 @@ def load_index():
 
 def save_index(idx):
     try:
-        os.makedirs(STATE_DIR, exist_ok=True)
+        os.makedirs(STATE_DIR, mode=0o700, exist_ok=True)
         tmp = INDEX_FILE + ".%d.tmp" % os.getpid()
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(idx, f)
@@ -370,6 +381,22 @@ def first_cwd(path):
                     return rec["cwd"]
     except OSError:
         pass
+    return ""
+
+
+HOME_ONLY_CMDS = ("search", "open", "user", "history", "handoffs", "map", "describe", "nodes")
+
+
+def home_project_root():
+    """F87.a: the project root of the session named by CLAUDE_CODE_SESSION_ID, from the first cwd of its
+    transcript. "" when the variable is not set or no such transcript exists (recall then works as before)."""
+    sid = (os.environ.get("CLAUDE_CODE_SESSION_ID") or "").strip()
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,100}", sid):
+        return ""
+    for p in sorted(glob.glob(os.path.join(PROJECTS_DIR, "*", sid + ".jsonl"))):
+        cwd = first_cwd(p)
+        if cwd:
+            return project_root(cwd)
     return ""
 
 
@@ -1232,7 +1259,7 @@ def cmd_index(a, root):
     t0 = time.time()
     deadline = t0 + a.max_seconds if a.max_seconds else None
     d, dbp, lockp = index_paths(root)
-    os.makedirs(d, exist_ok=True)
+    os.makedirs(d, mode=0o700, exist_ok=True)
     lockf = open(lockp, "a+")
     try:
         fcntl.flock(lockf, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -1456,7 +1483,7 @@ def cmd_index_all(a):
 def log_hook_error(exc):
     """One JSON line in <state>/hooks-error.jsonl. Never raises."""
     try:
-        os.makedirs(STATE_DIR, exist_ok=True)
+        os.makedirs(STATE_DIR, mode=0o700, exist_ok=True)
         with open(os.path.join(STATE_DIR, "hooks-error.jsonl"), "a", encoding="utf-8") as f:
             f.write(json.dumps({"ts": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
                                 "hook": "recall.py session-end", "version": "1.8.0", "sid": None,
@@ -1474,7 +1501,7 @@ def cmd_session_end():
         if not isinstance(cwd, str) or not cwd.strip() or not os.path.isdir(cwd):
             return 0
         rdir = os.path.join(STATE_DIR, "recall")
-        os.makedirs(rdir, exist_ok=True)
+        os.makedirs(rdir, mode=0o700, exist_ok=True)
         log = open(os.path.join(rdir, "index.log"), "ab")
         try:
             subprocess.Popen([sys.executable, os.path.abspath(__file__), "index", "--cwd", cwd, "--max-seconds", "600"],
@@ -1625,7 +1652,7 @@ def handoff_for(session, agent, btime):
 
 
 def open_nodes_lock(ldir, wait):
-    os.makedirs(ldir, exist_ok=True)
+    os.makedirs(ldir, mode=0o700, exist_ok=True)
     lf = open(os.path.join(ldir, NODES_LOCK), "a+")
     end = time.time() + wait
     while True:
@@ -2160,6 +2187,13 @@ def _main(argv):
             if os.path.realpath(cwd) == here and old and os.path.isdir(old) and os.path.realpath(old) != here:
                 cwd = old
         root = project_root(cwd)
+        home = home_project_root() if a.cmd in HOME_ONLY_CMDS else ""
+        if home and os.path.realpath(root) != os.path.realpath(home):
+            if a.cwd:  # F87.a: a chat reads only the project of its own session
+                sys.stderr.write("recall.py: %s is another project. A chat reads only its own project (%s). "
+                                 "To read another project, run this command in a terminal.\n" % (root, home))
+                return 2
+            root = home
         fn = {"search": cmd_search, "open": cmd_open, "user": cmd_user, "index": cmd_index, "handoffs": cmd_handoffs,
               "map": cmd_map, "describe": cmd_describe, "nodes": cmd_nodes, "history": cmd_history}[a.cmd]
         big = a.cmd == "open" and (a.full or a.from_ is not None)

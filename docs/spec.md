@@ -1356,3 +1356,41 @@ Why: `--check` told the user to run the installer again for a missed compaction 
 5. A test reads the README version line and fails when it differs from `install.sh` VERSION or `HOOK_VERSION`.
 6. `HOOK_VERSION` is 1.22.1 in all hook files. `install.sh` VERSION is 0.20.1.
 
+## F87 Safety fixes (2026-11-25)
+
+Why: a cold review found 4 gaps. Recall with `--cwd` reads other projects with no prompt. `redact()` did not mask 9 common secret shapes. The state folders had mode 0755. A handoff that was already injected could be injected again as current when `PreCompact` did not run.
+
+**F87.a Recall stays in the project of the session.** This applies to `search`, `open`, `user`, `history`, `handoffs`, `map`, `describe` and `nodes`. When `CLAUDE_CODE_SESSION_ID` is set and a transcript `<projects>/*/<that id>.jsonl` exists, the home root is the project root (F39.1) of the first `cwd` of that transcript. If `--cwd` names a folder whose project root is not the home root, recall prints on stderr `recall.py: <root> is another project. A chat reads only its own project (<home root>). To read another project, run this command in a terminal.` and exits 2. It prints no chat text. With no `--cwd`, when the project root of the current folder is not the home root, recall uses the home root. With no such variable, or with no such transcript, recall works as before. `index`, `session-end` and the MCP tool do not change. `SECURITY.md` states the limit: a call that unsets the variable or that reads the transcript files directly does not match the allow rule.
+
+**F87.b More secret shapes.** `redact()` also masks, with these kinds:
+- `stripe`: `sk_live_`, `sk_test_`, `rk_live_`, `rk_test_`, `pk_live_`, `pk_test_` with 16 or more letters or digits; `whsec_` with 24 or more.
+- `gitlab`: `glpat-`, `gldt-`, `glrt-`, `glcbt-`, `glptt-` with 20 or more characters of `[A-Za-z0-9_-]`.
+- `huggingface`: `hf_` with 30 or more letters or digits.
+- `telegram`: 8 to 10 digits, `:AA`, then 33 characters of `[A-Za-z0-9_-]`.
+- `slack`: the path after `https://hooks.slack.com/services/` (also `workflows/` and `triggers/`), 20 or more characters. The host stays.
+- `cookie`: the full value of a `Cookie:` or `Set-Cookie:` header to the end of the line.
+- `cli`: the password after `-p` in a `mysql`, `mysqldump`, `mysqladmin` or `mariadb` command; the password after `user:` in `curl -u` or `curl --user`.
+- `secret`: the value in `password is <value>`, `password was <value>` (also `passwd`, `passphrase`, `passcode`), when the value passes the value filter of F65.
+The copy in `lossless_handoff/redaction.py` gets the same patterns (F65). A bare 40-character AWS secret with no key name is not masked; `SECURITY.md` says so.
+
+**F87.c Private folders.** The installer sets mode 0700 on the state folder and on each folder below it. Each hook that creates a state folder creates it with mode 0700. `--check` reports the install problem `state folder is open to other users: <path>` when the state folder or `projects/` has a group or other permission bit. File modes do not change (F52).
+
+**F87.d A handoff serves one compaction.** Each receipt row (F47.a) gets `health_ts`: the `ts` of the `<key>-last-health.json` that the hook read. Before a part accepts a handoff, it reads the last 256 KiB of `receipts.jsonl`. The handoff is used when a row has the same `key`, the same `health_ts`, and a `ts` more than 60 seconds old. A used handoff is handled as a health record older than 15 minutes that does not belong to this compaction: part 1 runs the recovery of F45.b; if recovery fails, the first line is the `HANDOFF DEGRADED` line with `handoff not refreshed for this compaction`; parts 2 and 3 do as F45.b says. A receipt row with no `health_ts` never makes a handoff used. An unreadable `receipts.jsonl` changes nothing.
+
+**F87.e Acceptance.**
+1. Two fixture projects A and B, each with one transcript that holds a unique token. With `CLAUDE_CODE_SESSION_ID` set to the session of A: `search <token of B> --cwd <B>` exits 2, stdout is empty, stderr holds `is another project`.
+2. The same variable, current folder B, no `--cwd`: `search <token of A>` finds the token of A.
+3. With the variable not set: `search <token of B> --cwd <B>` finds the token (as hooks 1.22.1).
+4. `index --cwd <B>` and `session-end` work with the variable set.
+5. For each of these 9 samples, the secret part is not in the output of `redact()` and `[REDACTED:<kind>]` is: a Stripe `sk_live_` key, a GitLab `glpat-` token, a Hugging Face `hf_` token, a Telegram bot token, a Slack webhook URL, `Cookie: sessionid=abc123def456; theme=dark99aa`, `mysql -u root -pS3cr3tPw99 db`, `curl -u admin:S3cr3tPw99 https://x.test`, `the password is S3cr3tPw99`.
+6. These texts come back unchanged: `mkdir -p/tmp/abc123`, `docker run -p8080:80 x`, `ssh -p2222 host`, `the password is required`, `commit 3f786850e387550fdab836ed7e6dc881de23001b`.
+7. `redact(redact(x)) == redact(x)` for each sample of item 5. The fallback copy gives the same output as `recall.py` for items 5 and 6.
+8. 1,000,000 characters of text with no secret pass `redact()` in less than 2 seconds.
+9. Install into a temp HOME whose state folder, `projects/x/` and `recall/` have mode 0755: after the install each has mode 0700 and each file has mode 0600.
+10. A state folder with mode 0755: `--check` prints `state folder is open to other users`. With mode 0700: no such text.
+11. Fixture: a fresh health record, a handoff file with token T1, and a receipt row with the same key and `health_ts`, 61 seconds old, and no way to recover: part 1 output starts with `HANDOFF DEGRADED:` and holds `handoff not refreshed for this compaction`.
+12. The same fixture with a receipt row 10 seconds old: part 1 prints the handoff with no warning, and parts 2 and 3 print their parts.
+13. The same fixture with a receipt row that has no `health_ts`: part 1 prints the handoff with no warning.
+14. After a normal part 1 run, the new receipt row has `health_ts` equal to the `ts` of the health record.
+15. `HOOK_VERSION` is 1.22.2 in all hook files. `install.sh` VERSION is 0.20.2.
+

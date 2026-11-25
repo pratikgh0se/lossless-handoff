@@ -16,7 +16,7 @@ try:
 except ImportError:  # no flock: no lock (parallel calls may inject twice)
     fcntl = None
 
-HOOK_VERSION = "1.22.1"
+HOOK_VERSION = "1.22.2"
 HOME = os.path.expanduser("~")
 
 
@@ -89,7 +89,7 @@ def rules_text(cwd):
 
 
 def save_anchor(path, anchor):
-    os.makedirs(STATE_DIR, exist_ok=True)
+    os.makedirs(STATE_DIR, mode=0o700, exist_ok=True)
     tmp = "%s.tmp%d" % (path, os.getpid())
     with os.fdopen(os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w", encoding="utf-8") as f:
         json.dump({"v": 1, "anchor": anchor}, f)
@@ -99,7 +99,7 @@ def save_anchor(path, anchor):
 def decide(sp, lp, t):
     """Under an exclusive lock from the anchor read to the anchor save, so parallel tool calls inject once per interval.
     -> True when this run must inject."""
-    os.makedirs(STATE_DIR, exist_ok=True)
+    os.makedirs(STATE_DIR, mode=0o700, exist_ok=True)
     fd = os.open(lp, os.O_RDWR | os.O_CREAT, 0o600)
     try:
         if fcntl is not None:

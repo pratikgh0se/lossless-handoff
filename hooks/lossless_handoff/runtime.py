@@ -35,7 +35,7 @@ def log_error(sid, exc):
     try:
         import traceback
         path = os.path.join(HANDOFFS_DIR, "hooks-error.jsonl")
-        os.makedirs(HANDOFFS_DIR, exist_ok=True)
+        os.makedirs(HANDOFFS_DIR, mode=0o700, exist_ok=True)
         try:
             if os.path.getsize(path) > 1000000:
                 os.replace(path, path + ".1")
@@ -100,7 +100,7 @@ def start_indexer(d, sid):
         if not rp or not isinstance(cwd, str) or not cwd.strip():
             return
         rdir = os.path.join(HANDOFFS_DIR, "recall")
-        os.makedirs(rdir, exist_ok=True)
+        os.makedirs(rdir, mode=0o700, exist_ok=True)
         log = open(os.path.join(rdir, "index.log"), "ab")
         try:
             subprocess.Popen([sys.executable, rp, "index", "--cwd", cwd, "--max-seconds", "600"],

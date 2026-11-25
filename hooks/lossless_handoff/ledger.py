@@ -372,7 +372,7 @@ def ledger_merge(sid, tp, root, led, timeout):
             led["status"], led["error"] = "failed", "NoFcntl"
             return
         ddir = ledger_dir(root)
-        os.makedirs(ddir, exist_ok=True)
+        os.makedirs(ddir, mode=0o700, exist_ok=True)
         lock = open(os.path.join(ddir, "decisions.lock"), "a+")
         wait_until = t0 + min(LOCK_WAIT_S, timeout)
         while True:
@@ -460,7 +460,7 @@ def ledger_maintain(dirarg):
         return
     lock = None
     try:
-        os.makedirs(ddir, exist_ok=True)
+        os.makedirs(ddir, mode=0o700, exist_ok=True)
         lock = open(os.path.join(ddir, "decisions.lock"), "a+")
         t0 = time.monotonic()
         while True:
