@@ -1394,3 +1394,32 @@ The copy in `lossless_handoff/redaction.py` gets the same patterns (F65). A bare
 14. After a normal part 1 run, the new receipt row has `health_ts` equal to the `ts` of the health record.
 15. `HOOK_VERSION` is 1.22.2 in all hook files. `install.sh` VERSION is 0.20.2.
 
+## F88 Decisions list at scale (2026-11-25)
+
+Why: one live list has 290 active entries (104,000 characters). The room is 3 parts of 9,900 characters. Rules get full text (F42.3), but 150 entries are not listed and have no lookup command. A subagent gets 5 of 55 rules. The rules use 75% of the room and grow each day, with no signal. After `/clear` a chat has no list. A database was examined and rejected: the limit is the context window, the file parses in less than 1 ms, and a plain file stays readable and diffable.
+
+**F88.a Lookup.** `python3 recall.py decisions [<pattern> ...] [--kind rule|decision|task] [--closed] [--cwd <dir>]`. 0 to 5 patterns, with the pattern rules of `search` (F44, F84.b); case does not matter. An entry matches when its line matches one pattern or more. With no pattern, each entry matches. `--kind` keeps one kind; an untagged entry counts as `decision`. Default: active entries only. `--closed` adds SUPERSEDED and RESOLVED entries. Line 1: `decisions: <n> of <m> active entries match (<path>)`. Then the full lines in the order of F42.3 (rules, decisions, tasks; newest first), then closed lines when asked. Output goes through `redact()` and the usual output cap; when cut, the last line is `(<k> more; add a pattern or --kind)`. No ledger: `no decisions list for <root>`, exit 0. The command makes no model call and writes no file. The project scope follows F87.a.
+
+**F88.b Pointers.** The index note of F42.3 becomes `Index entries are summaries: before you act on one, read the full entry: python3 <hooks>/recall.py decisions D<n>`. The count line becomes `- (<k> more active entries not listed; search them: python3 <hooks>/recall.py decisions "<words>")`. The subagent line `[more rules: ...]` (F58.a) names `recall.py decisions --kind rule` and the path; it no longer names `recall.py search "rule"`.
+
+**F88.c Subagent rule index.** This amends F58.a. The full-text rules are cut at 4,000 characters as before. When rules are left, the line `INDEX (rules not shown in full above):` follows, then one index line (F42.3 form, 90 characters; 50 when 90 does not fit) for each rule that is left, newest first, then the F88.b pointer line. The total is 9,900 characters at most; if the 50-character lines do not fit, the oldest index lines go and the pointer line gives their count. The health row gets `rules_index` (count of index lines). Lists whose rules fit in 4,000 characters give the same output as hooks 1.22.2, apart from the F88.b pointer text.
+
+**F88.d Room signal.** `--check --verbose` prints `info: decisions list: <r> rules, <c> of <room> characters of full-text room (<p>%); <a> active entries; <u> not listed` for the project of the current folder. `<room>` is the number of rule characters that `plan_ledger` can show in full for this list. `--check` reports the data problem `decisions list: rules use <p>% of the room; retire or merge rules (recall.py decisions --kind rule)` when `<p>` is 90 or more, and `decisions list: <k> rules are index lines only` when a rule has no full text. Neither line gives installer advice (F86.a).
+
+**F88.e After /clear.** The installer registers the 3 commands `postcompact-inject.py --ledger --part N` for the SessionStart matcher `clear`, with the rules of the `startup` entry (idempotent, `--dry-run` writes nothing). `uninstall.sh` removes them. `--check` reports a missing `clear` entry as an install problem. `docs/limitations.md` says: a session that ends with no compaction adds no decision; run `/compact` before you close a session that made decisions.
+
+**F88.f Acceptance.**
+1. A ledger with 3 rules, 4 decisions (1 untagged), 2 tasks, 1 SUPERSEDED and 1 RESOLVED entry. `decisions` prints line 1 with `9 of 9` and the 9 active lines in F42.3 order. `decisions --kind decision` prints 4 lines. `decisions --closed` prints 11 entry lines.
+2. `decisions D2` prints the full line of D2. `decisions "grafana" "disk"` prints each entry that holds one of the two words, one time each.
+3. A ledger line with a planted `ghp_` token: the output holds `[REDACTED:github]` and not the token.
+4. No ledger for the folder: stdout `no decisions list for <root>`, exit 0, and no folder is created.
+5. With the session of project A (F87.a), `decisions --cwd <B>` exits 2.
+6. A ledger with 60 rules of 350 characters: the SubagentStart `additionalContext` is 9,900 characters or less, holds the `INDEX (rules not shown in full above):` line, names each of the 60 rule ids one time, and the health row has `rules` + `rules_index` = 60.
+7. A ledger with 2 rules: the SubagentStart output has no `INDEX` line and holds both rule lines in full.
+8. A ledger with 400 rules of 350 characters: the output is 9,900 characters or less and ends with a pointer line that gives a count.
+9. A ledger over the room: ledger part text holds `recall.py decisions` in the index note and in the count line, and each part is below 10,000 characters.
+10. A ledger with 3 short rules: `--check --verbose` prints the F88.d info line with `3 rules`; `--check` prints no decisions list problem.
+11. A ledger whose rules use 95% of the room: `--check` prints `rules use 95% of the room`. A ledger whose rules do not fit: `--check` prints `rules are index lines only` with the count.
+12. `install.sh` in a temp HOME: `settings.json` has a SessionStart entry with matcher `clear` and the 3 ledger commands; a second install adds none; `uninstall.sh` removes it and keeps other hooks. A settings file with no `clear` entry: `--check` names it as an install problem.
+13. `HOOK_VERSION` is 1.23.0 in all hook files. `install.sh` VERSION is 0.21.0.
+

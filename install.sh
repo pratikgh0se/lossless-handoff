@@ -2,7 +2,7 @@
 # Lossless Handoff installer (formerly claude-handoff): copies the hooks and merges them into ~/.claude/settings.json.
 set -euo pipefail
 
-VERSION="0.20.2"
+VERSION="0.21.0"
 usage() {
   cat <<EOF
 Lossless Handoff $VERSION (formerly claude-handoff)
@@ -339,7 +339,8 @@ want = {
     "SessionStart": [
         {"matcher": "compact", "hooks": [{"type": "command", "command": "%s --part %d" % (pi, n), "timeout": 10} for n in (1, 2, 3)] + led},
         {"matcher": "startup", "hooks": led + [chk]},
-        {"matcher": "resume", "hooks": led + [chk]}],
+        {"matcher": "resume", "hooks": led + [chk]},
+        {"matcher": "clear", "hooks": led}],
     "SessionEnd": [{"hooks": [{"type": "command", "command": "python3 %s/recall.py session-end" % h, "timeout": 5}]}],
     "SubagentStart": [{"hooks": [{"type": "command", "command": pi + " --subagent-start", "timeout": 10}]}],
 }
@@ -616,6 +617,18 @@ for matcher in ("startup", "resume"):
         g2["hooks"].append({"type": "command", "command": check_cmd, "timeout": 5})
         check_added = True
         changes.append("add SessionStart %s --check (timeout 5)" % matcher)
+
+g3 = next((g for g in groups if isinstance(g, dict) and g.get("matcher") == "clear"
+           and isinstance(g.get("hooks"), list)), None)  # F88.e: after /clear the chat has no decisions list
+if g3 is None:
+    g3 = {"matcher": "clear", "hooks": []}
+    groups.append(g3)
+for n, cmd in enumerate(post_led, 1):
+    if any(isinstance(h, dict) and h.get("command") == cmd for h in g3["hooks"]):
+        changes.append("SessionStart clear --ledger --part %d already present" % n)
+    else:
+        g3["hooks"].append({"type": "command", "command": cmd, "timeout": 10})
+        changes.append("add SessionStart clear --ledger --part %d (timeout 10)" % n)
 
 groups = hooks.setdefault("SessionEnd", [])
 session_end_added = False

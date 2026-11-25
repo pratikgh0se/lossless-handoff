@@ -131,6 +131,8 @@ python3 ~/.claude/hooks/recall.py open abcd1234:57             # a hit plus 2 me
 python3 ~/.claude/hooks/recall.py open abcd1234:57 --full      # the whole message, up to 40,000 chars
 python3 ~/.claude/hooks/recall.py open abcd1234:57 --full --from 40000   # next page of a longer message
 python3 ~/.claude/hooks/recall.py user --last 20               # your own typed messages, newest first
+python3 ~/.claude/hooks/recall.py decisions "grafana" "disk"   # F88: full lines of the decisions list that match 1 to 5 patterns (a bare D12 names one entry)
+python3 ~/.claude/hooks/recall.py decisions --kind rule        # F88: every active rule in full; `--closed` adds SUPERSEDED and RESOLVED entries
 python3 ~/.claude/hooks/recall.py handoffs                     # this project's handoff files
 python3 ~/.claude/hooks/recall.py index                        # build or refresh the index for this project
 python3 ~/.claude/hooks/recall.py index --all                  # every project that has a git repo

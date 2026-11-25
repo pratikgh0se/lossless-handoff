@@ -63,7 +63,7 @@ Other options: `--no-nudge` (skip the context nudge, and remove one from an earl
 - It records everything that it added in `~/.claude/hooks/.claude-handoff-install.json`, so uninstall removes exactly that.
 - It merges into `~/.claude/settings.json` (backup `settings.json.bak-<timestamp>`):
   - a PreCompact hook (timeout 150) and a PostToolUse hook (matcher `*`, timeout 5);
-  - a SessionStart `compact` group with the three inject commands and the three `--ledger --part 1/2/3` commands (timeout 10), and `startup` and `resume` groups with the three `--ledger` commands plus `postcompact-inject.py --check` (timeout 5);
+  - a SessionStart `compact` group with the three inject commands and the three `--ledger --part 1/2/3` commands (timeout 10), and `startup` and `resume` groups with the three `--ledger` commands plus `postcompact-inject.py --check` (timeout 5), and a `clear` group with the three `--ledger` commands (timeout 10; 0.21.0);
   - a `SessionEnd` hook that runs `recall.py session-end` (timeout 5);
   - a `SubagentStart` hook that runs `postcompact-inject.py --subagent-start` (timeout 10);
   - only with `--auto-recall`: a `UserPromptSubmit` hook that runs `auto-recall.py` (timeout 5);

@@ -6,7 +6,7 @@ This page shows every part of Lossless Handoff, the Claude Code event that calls
 
 ## Summary
 
-- Five Claude Code events call the hooks: `PostToolUse`, `PreCompact`, `SessionStart`, `SubagentStart` and `SessionEnd`. `SessionStart` has three matchers: `compact`, `startup` and `resume`.
+- Five Claude Code events call the hooks: `PostToolUse`, `PreCompact`, `SessionStart`, `SubagentStart` and `SessionEnd`. `SessionStart` has four matchers: `compact`, `startup`, `resume` and `clear` (the last one runs the three `--ledger` commands only).
 - The default install has the core only: the hooks, `recall.py`, the recall subagent and the decisions list. Three parts are opt-in flags: `--window N` (the compaction window value), `--nightly` (two jobs that run outside Claude Code: the index job at 03:30 and the reconcile-and-prove job at 04:15), and `--semantic` (the local bge-m3 model for meaning search). `--save-defaults` keeps the chosen flags in `~/.config/lossless-handoff/install-defaults`. A rerun never removes an installed part.
 - One redaction step masks secrets before the hooks write handoff files, the decisions list and recall output. See [Redaction](#redaction).
 - Claude Code keeps the chat transcripts in `~/.claude/projects/`. Lossless Handoff only reads them. It never writes to them.
@@ -132,7 +132,7 @@ When recall and the decisions list disagree, the decisions list and the latest w
 
 ## Verified facts
 
-These numbers come from the code in this repository (hooks 1.22.2), not from a benchmark run.
+These numbers come from the code in this repository (hooks 1.23.0), not from a benchmark run.
 
 | Fact | Where it is in the code |
 |---|---|
