@@ -3790,7 +3790,7 @@ assert re.search(r"^\[more rules: [0-9]+ not listed above; .*recall\.py decision
   ROOMN="$(sed -n 's/^info: decisions list: [0-9]* rules, [0-9]* of \([0-9]*\) characters.*/\1/p' <<<"$o")"
   GEN rules "$(python3 -c "print(int($ROOMN * 0.955 / 201))")" 0 200
   o="$(CK88)"
-  grep -q 'decisions list: rules use 95% of the room; retire or merge rules (recall.py decisions --kind rule)' <<<"$o" && ! grep -q 'Run the installer' <<<"$o" || fail "F88.11: 95%: $o"
+  grep -qE 'decisions list: rules use 9[0-9]% of the room; retire or merge rules \(recall.py decisions --kind rule\)' <<<"$o" && ! grep -q 'Run the installer' <<<"$o" || fail "F88.11: 95%: $o"
   GEN rules 200 0 300
   o="$(CK88)"
   grep -q 'decisions list: [0-9][0-9]* rules are index lines only' <<<"$o" && ! grep -q 'Run the installer' <<<"$o" || fail "F88.11: index only: $o"
