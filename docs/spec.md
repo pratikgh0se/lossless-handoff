@@ -1315,3 +1315,44 @@ Why: one recall call did one thing. Claude then wrote a loop or a shell variable
 10. `HOOK_VERSION` is 1.22.0 in all hook files. `install.sh` VERSION is 0.20.0.
 ```
 
+## F85 Recall speed on a large project (2026-11-25)
+
+Why: on a project with 4,058 sessions, a keyword search took 17 to 19 s. F44.5 says under 10 s. Recall read 2,075 whole files to find its own tool calls, and read each whole file to parse a few lines. The lossless check searched all sessions with a 30 s limit, and one check timed out.
+
+**F85.a Candidate lines only.** When `rg` gives the candidate lines, recall parses only those lines. It stops reading a file after the last candidate line, or it seeks to a byte offset.
+
+**F85.b Own tool calls.** The scan for the ids of recall's own tool calls (F73.a) runs only for transcripts that have a candidate line. With `rg` on PATH, one `rg` call finds the lines that contain `recall.py` or `lossless-recall`, and recall parses only those lines.
+
+**F85.c Same output.** For each fixture of F44.8, F57, F73 and F74, stdout is the same byte for byte with `rg` and without `rg`, and the same as hooks 1.22.0.
+
+**F85.d Counter seam.** With `RECALL_STATS=1`, recall prints on stderr one last line: `recall stats: transcripts_opened=<n> lines_parsed=<n> rg_calls=<n> ms=<n>`. `transcripts_opened` counts the transcript files that recall itself opens to parse messages. With no such variable, stderr does not change.
+
+**F85.e Lossless check.** The `lossless` check of `--prove` adds `--session <id8>` to its search, where `<id8>` names the transcript of the receipt. The limit of each recall call is 60 s. The variable `HANDOFF_PROVE_RECALL_TIMEOUT=<seconds>` changes this limit (for tests). A timeout gives `skip` with the reason `timeout`.
+
+**F85.f Acceptance.**
+1. Fixture: 50 transcripts of 2,000 lines each. The pattern is in 3 lines of 2 transcripts, and those 2 transcripts hold 4 lines with the text `recall.py`. With `rg` and `RECALL_STATS=1`, on the second run (the scope cache is warm): `lines_parsed` is 7 or less, and `transcripts_opened` is 2 or less. The hits are the 3 planted lines.
+2. The same search with `rg` removed from PATH prints the same stdout.
+3. A hit inside a recall tool call or its result is still left out (F73.a).
+4. The lossless check on a fixture with 2 sessions that hold the same sentence passes, and the recorded search arguments contain `--session`.
+5. With `HANDOFF_PROVE_RECALL_TIMEOUT=2`, a fake recall that sleeps 5 s gives `skip` and `timeout` for the lossless check.
+
+## F86 A check that gives correct advice (2026-11-25)
+
+Why: `--check` told the user to run the installer again for a missed compaction and for a failed proof. It did not test recall, and it printed nothing when all was well.
+
+**F86.a Two classes.** Install problems are: settings unreadable, a hook not wired, a hook file missing, a file that differs from the manifest, a version mismatch, `recall.py` missing, and the allow rule `Bash(python3 ~/.claude/hooks/recall.py:*)` missing. Data problems are: compactions without a handoff, a failed proof, and failing or stale claims. The line is `HANDOFF CHECK: <install problems>. Run the installer again, then restart Claude Code.` when there are install problems only. It is `HANDOFF CHECK: <data problems>.` when there are data problems only: no installer advice. With both classes it is `HANDOFF CHECK: <install problems>. Run the installer again, then restart Claude Code. Also: <data problems>.`
+
+**F86.b Verbose mode.** `--check --verbose` prints one line for each check: `ok: <name>` or `problem: <text>`. Then it prints: `info: recall rule on` or `info: recall rule off`; `info: recall covers <n> sessions for <project root>` for the current folder; `info: claude on PATH: yes` or `no`. The last line is `HANDOFF CHECK: all ok (<n> checks)` or the F86.a line. The command makes no model call, exits 0, and ends in 5 s on a fixture.
+
+**F86.c Installer.** The last line of a real install is `Check: python3 ~/.claude/hooks/postcompact-inject.py --check --verbose`.
+
+**F86.d Docs.** `docs/troubleshooting.md` gives the advice for each class. The README line "Current versions" names the same versions as `install.sh` and `HOOK_VERSION`. The README and `docs/limitations.md` line about cut handoffs gives the count and the date range from `health.jsonl`, for main chats and for subagents apart, and says that only auto-extracted fact sections are cut first. F44.5 gets the measured time and the session count.
+
+**F86.e Acceptance.**
+1. A fixture with only a failed proof prints `HANDOFF CHECK: proof failed: 1 checks; see proof-report.md.` and no installer advice.
+2. A fixture with a missing hook file and 2 missed compactions prints the two-class line of F86.a.
+3. A fixture with no allow rule for recall prints an install problem that names the rule.
+4. A healthy fixture prints nothing with `--check`, and with `--check --verbose` prints only `ok:` and `info:` lines and `HANDOFF CHECK: all ok (<n> checks)`.
+5. A test reads the README version line and fails when it differs from `install.sh` VERSION or `HOOK_VERSION`.
+6. `HOOK_VERSION` is 1.22.1 in all hook files. `install.sh` VERSION is 0.20.1.
+
