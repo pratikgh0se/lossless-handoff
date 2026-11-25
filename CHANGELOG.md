@@ -18,7 +18,12 @@ One grammar for each shared format (hooks 1.24.0). Spec: F90 in `docs/spec.md`.
 ### Changed
 
 - A line of the decisions list that is outside the known forms (for example `- D9 [date] RETIRED [date] (reason): [rule] text`) is no longer read as an active entry. It is not injected, it is not counted as active, and a merge writes it back where it was. Before, a merge dropped such a line. A legacy active line with no `| why:` stays valid, as before.
-- Part 1 of the injected decisions list says: `This list is written by the hooks; do not edit decisions.md yourself.`
+- Part 1 of the injected decisions list says: `This list is written by the hooks; do not edit decisions.md yourself.` The sentence is at the end of the existing header line of part 1, on the same line, so no new line comes before the entries.
+- The text of every active line (after the tag, if any) must not start with `SUPERSEDED` or `RESOLVED`, or with 2 or more capitals followed by ` [`, `:` or ` YYYY-MM-DD`. So a superseded line with no `| because:` (for example `- D49 [2026-10-27] SUPERSEDED by D154 [2026-11-02] (reason): text`) and a task line such as `- D311 [2026-11-15] [task] DONE 2026-11-15: text` are malformed, not active. Text such as `README is x` or `OOLONG runs x` stays valid.
+
+### Fixed
+
+- `recall.py open <id> --full` removed trailing whitespace from message text (for example `delta \t ` came back as `delta`). It now keeps the text byte for byte after `redact()`. Search snippets are unchanged.
 
 ## [0.21.1] - 2026-11-25
 
