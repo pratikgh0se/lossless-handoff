@@ -4,6 +4,22 @@ Lossless Handoff, formerly claude-handoff.
 
 ## [Unreleased]
 
+## [0.22.0] - 2026-11-25
+
+One grammar for each shared format (hooks 1.24.0). Spec: F90 in `docs/spec.md`.
+
+### Added
+
+- `hooks/lossless_handoff/grammar.py`: the one parser for a decisions list line (G1) and for a recall hit id (G2). `ledger.py`, `postcompact-inject.py`, `recall.py` and `prove.py` use it and keep no pattern of their own for these formats. The two hooks that run without the package keep a copy that a smoke check compares with the file.
+- `--check` reports `decisions list: <k> malformed lines (first: line <i>)` for the project of the current folder. `--check --verbose` also shows the first 3 malformed lines, cut to 120 characters, after secrets are masked.
+- A `VERSION` file in the repo root (`product=` and `hooks=`). Smoke checks read it, and fail when `install.sh`, a `HOOK_VERSION`, the README version line or the top changelog entry differs.
+- Smoke negative controls: the proof check, `--check` and the claims lint each fail on a known-bad sample.
+
+### Changed
+
+- A line of the decisions list that is outside the known forms (for example `- D9 [date] RETIRED [date] (reason): [rule] text`) is no longer read as an active entry. It is not injected, it is not counted as active, and a merge writes it back where it was. Before, a merge dropped such a line. A legacy active line with no `| why:` stays valid, as before.
+- Part 1 of the injected decisions list says: `This list is written by the hooks; do not edit decisions.md yourself.`
+
 ## [0.21.1] - 2026-11-25
 
 End a rule with your own words (hooks 1.23.1). Spec: F89 in `docs/spec.md`.

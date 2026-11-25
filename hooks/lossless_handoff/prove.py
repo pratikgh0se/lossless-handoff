@@ -148,9 +148,9 @@ def check_lossless(rc):
             hits = {}
             for ln in _recall_run(sargs).splitlines():
                 # F57.b labels: <session8>:<line> (main) or <parent8>/<agent8>:<line> (subagent)
-                m = re.match(r"^(?:([A-Za-z0-9_-]+)/)?([A-Za-z0-9_-]+):(\d+) \d{4}-", ln)
-                if m and m.group(2) == sid8 and bool(m.group(1)) == sub:
-                    hits[int(m.group(3))] = (m.group(1) + "/" if m.group(1) else "") + m.group(2)
+                m = parse_recall_hit(ln)  # F90: G2, both forms, one parser
+                if m and (m[1] or m[0]) == sid8 and bool(m[1]) == sub:
+                    hits[m[2]] = (m[0] + "/" + m[1]) if m[1] else m[0]
             if not hits:
                 return "fail", f"line {n}: recall found no hit for the message"
             line = n if n in hits else next(iter(hits))

@@ -17,6 +17,10 @@ unset CLAUDE_CODE_AUTO_COMPACT_WINDOW HANDOFF_STATE_DIR HANDOFF_HOOK_CHILD || tr
 H="$HOME/.claude/hooks"; ST="$HOME/.local/state/claude-handoffs"; S="$HOME/.claude/settings.json"
 fail() { echo "FAIL: $*" >&2; exit 1; }
 ok() { echo "ok: $*"; }
+# F90.h: the expected versions come from the VERSION file; no check here holds a version literal
+PVER="$(sed -n 's/^product=//p' "$ROOT/VERSION")"; HVER="$(sed -n 's/^hooks=//p' "$ROOT/VERSION")"
+[ -n "$PVER" ] && [ -n "$HVER" ] || fail "F90.h: VERSION has no product= or hooks= line"
+export PVER HVER
 
 cat > "$S" <<'JSON'
 {
@@ -75,8 +79,8 @@ python3 - "$H" <<'PY'
 import hashlib, json, sys
 h = sys.argv[1]
 m = json.load(open(h + "/.handoff-manifest.json"))
-assert m["version"] == "1.23.1" and m["installed_at"], m
-pkg = ["lossless_handoff/%s.py" % n for n in "__init__ transcript summary ledger handoff runtime redaction pipeline reconcile prove claims".split()]
+assert m["version"] == __import__("os").environ["HVER"] and m["installed_at"], m
+pkg = ["lossless_handoff/%s.py" % n for n in "__init__ grammar transcript summary ledger handoff runtime redaction pipeline reconcile prove claims".split()]
 assert sorted(m["files"]) == sorted(["claims.json", "handoff-nudge.py", "postcompact-inject.py", "precompact-handoff.py", "recall.py"] + pkg), m
 for n, want in m["files"].items():
     assert hashlib.sha256(open(h + "/" + n, "rb").read()).hexdigest() == want, n
@@ -924,8 +928,8 @@ PY
   [ ! -e "$F/precompact-handoff.py" ] || fail "F66.a: uninstall did not finish its other work"
   rm "$F/llm_map.py" "$SK"; rmdir "$(dirname "$SK")"; o="$("$ROOT/uninstall.sh")"; ! grep -q "llm-map: kept" <<<"$o" || fail "F66.a: kept line without llm-map files"
   # F66.d versions
-  [ "$("$ROOT/install.sh" --version)" = "Lossless Handoff 0.21.1" ] || fail "F66.d: product version"
-  [ "$(grep -c '^HOOK_VERSION = "1.23.1"$' "$ROOT/hooks/precompact-handoff.py" "$ROOT/hooks/postcompact-inject.py" | grep -c ':1$')" = 2 ] || fail "F66.d: HOOK_VERSION"
+  [ "$("$ROOT/install.sh" --version)" = "Lossless Handoff $PVER" ] || fail "F66.d: product version"
+  [ "$(grep -c "^HOOK_VERSION = \"$HVER\"\$" "$ROOT/hooks/precompact-handoff.py" "$ROOT/hooks/postcompact-inject.py" | grep -c ':1$')" = 2 ] || fail "F66.d: HOOK_VERSION"
   # F66.c: README holds no claim markers; evidence page does; claims-lint default path
   ! grep -qE '\[C[1-9]\]' "$ROOT/README.md" && ! grep -qiE '^#+ .*proof|\*\*proof' "$ROOT/README.md" || fail "F66.c: README holds Proof or claim markers"
   grep -qE '\[C1\]' "$ROOT/docs/evidence.md" || fail "F66.c: docs/evidence.md has no markers"
@@ -972,7 +976,7 @@ rows = {json.loads(x)["sid"]: json.loads(x) for x in open(sys.argv[1]) if x.stri
 a, b = rows["f56a"], rows["f56b"]
 assert a["excerpt_chars"] > 0 and a["excerpt_dropped"] == 0, a
 assert b["excerpt_dropped"] > 0 and 0 < b["excerpt_chars"] <= 120000, b
-assert a["hook_version"] == "1.23.1"
+assert a["hook_version"] == __import__("os").environ["HVER"]
 PY
   p="$(python3 "$ROOT/hooks/precompact-handoff.py" --prove --days 1; echo "rc=$?")"
   grep -qE "^excerpt cut: 1 of 2 compactions, median dropped [0-9]+ chars$" <<<"$p" || fail "F56.b: prove line: $p"
@@ -1138,7 +1142,7 @@ PY
 import json, sys
 rows = [json.loads(x) for x in open(sys.argv[1]) if x.strip()]
 r = [x for x in rows if x.get("event") == "subagent_start"][-1]
-assert r["rules"] == 2 and r["chars"] > 0 and r["hook_version"] == "1.23.1" and r["agent_type"] == "general-purpose", r
+assert r["rules"] == 2 and r["chars"] > 0 and r["hook_version"] == __import__("os").environ["HVER"] and r["agent_type"] == "general-purpose", r
 PY
   # AC 262: no handoff text, no agent notes
   printf '# Handoff\n- cwd: %s\nLATESTTOKEN\n' "$PROJ" > "$STF/s58-latest.md"; printf 'AGENTTOKEN\n' > "$STF/s58-agent.md"
@@ -1913,7 +1917,7 @@ PY
   CMD="python3 $F/auto-recall.py"
   echo '{"model": "opus"}' > "$FS"
   grep -q -- "--auto-recall" <<<"$("$ROOT/install.sh" --help)" || fail "F67.a: --help lacks --auto-recall"
-  [ "$(grep -c '^HOOK_VERSION = "1.23.1"$' "$ROOT/hooks/auto-recall.py")" = 1 ] || fail "F67.e: auto-recall HOOK_VERSION"
+  [ "$(grep -c "^HOOK_VERSION = \"$HVER\"\$" "$ROOT/hooks/auto-recall.py")" = 1 ] || fail "F67.e: auto-recall HOOK_VERSION"
   # default install: not installed, not registered
   "$ROOT/install.sh" >/dev/null
   [ ! -e "$F/auto-recall.py" ] && ! grep -q "auto-recall" "$FS" && ! grep -q "auto-recall" "$F/.handoff-manifest.json" || fail "F67.a: default install holds auto-recall"
@@ -2078,9 +2082,9 @@ assert "(same full path for: open <id> [<id> ...]; user --last 20. One call take
 assert a.RECALL_RULE_LINE == '- recall rule: if your context does not clearly show an earlier number, path, name, command or decision, run the recall command above before you answer. Copy it exactly: full path, no cd. A failed or denied command is not "not found": run the exact command again. If no search can run, say so.', a.RECALL_RULE_LINE
 assert m.RULE == a.RECALL_RULE_LINE and m.INSTRUCTIONS.startswith(m.RULE)
 PY
-  # F83.g: every HOOK_VERSION constant is 1.23.1
-  ! grep -rn --include='*.py' -E '^HOOK_VERSION = "' "$ROOT/hooks" | grep -v '"1.23.1"' | grep -q . || fail "F83.g: a HOOK_VERSION is not 1.23.1"
-  [ "$(grep -rc --include='*.py' -E '^HOOK_VERSION = "1\.23\.1"$' "$ROOT/hooks" | grep -vc ':0$')" -ge 9 ] || fail "F83.g: fewer than 9 hooks at 1.23.1"
+  # F83.g: every HOOK_VERSION constant is the hooks= value of VERSION
+  ! grep -rn --include='*.py' -E '^HOOK_VERSION = "' "$ROOT/hooks" | grep -vF "\"$HVER\"" | grep -q . || fail "F83.g: a HOOK_VERSION is not $HVER"
+  [ "$(grep -rcF --include='*.py' "HOOK_VERSION = \"$HVER\"" "$ROOT/hooks" | grep -vc ':0$')" -ge 9 ] || fail "F83.g: fewer than 9 hooks at $HVER"
   # F83.c: the PreCompact recall line (summary.py) holds the new text, the same as the inject line
   python3 - "$ROOT/hooks" <<'PY'
 import importlib.util, sys
@@ -2124,7 +2128,7 @@ SH
   [ ! -e "$F/recall-mcp.py" ] && ! grep -q "recall-mcp" "$F/.handoff-manifest.json" && [ ! -s "$FAKE_CLAUDE_LOG" ] || fail "F69: default install holds recall-mcp or called claude"
   ! grep -q "recall-mcp" <<<"$(PATH="$D/fakebin:$PATH" "$ROOT/install.sh" --dry-run)" || fail "F69: default dry-run mentions recall-mcp"
   grep -q -- "--recall-mcp" <<<"$("$ROOT/install.sh" --help)" || fail "F69: --help lacks --recall-mcp"
-  [ "$(grep -c '^HOOK_VERSION = "1.23.1"$' "$ROOT/hooks/recall-mcp.py")" = 1 ] || fail "F69: HOOK_VERSION"
+  [ "$(grep -c "^HOOK_VERSION = \"$HVER\"\$" "$ROOT/hooks/recall-mcp.py")" = 1 ] || fail "F69: HOOK_VERSION"
   # dry-run lists the file and the command; runs nothing
   o="$(PATH="$D/fakebin:$PATH" "$ROOT/install.sh" --recall-mcp --dry-run)"
   grep -q "install hook: .*/recall-mcp.py" <<<"$o" && grep -qF "claude mcp add --scope user lossless-recall -- $MC" <<<"$o" || fail "F69: dry-run: $o"
@@ -2237,7 +2241,7 @@ out, raw = run([
 by = {o.get("id"): o for o in out}
 assert [o.get("id") for o in out].count(2) == 1 and 99 not in by
 init = by[1]["result"]
-assert init["protocolVersion"] == "2025-06-18" and init["serverInfo"] == {"name": "lossless-recall", "version": "1.23.1"}, init
+assert init["protocolVersion"] == "2025-06-18" and init["serverInfo"] == {"name": "lossless-recall", "version": __import__("os").environ["HVER"]}, init
 ins = init["instructions"]
 assert len(ins) < 4096 and "recall rule: if your context does not clearly show an earlier number, path, name, command or decision, run the recall command above before you answer. Copy it exactly: full path, no cd. A failed or denied command is not \"not found\": run the exact command again. If no search can run, say so." in ins and "search_earlier_chat" in ins, ins
 assert by[2]["result"] == {}
@@ -2300,7 +2304,7 @@ def tr(name, tokens):
 tr("t30k", 29985); tr("t60k", 59985); tr("t120k", 119985); tr("t20k", 19985)
 PY
   ra() { python3 -c 'import json,sys; print(json.dumps({"session_id":sys.argv[1],"transcript_path":sys.argv[2],"cwd":sys.argv[3],"hook_event_name":"PostToolUse","tool_name":"Bash"}))' "$1" "$D/$2.jsonl" "$W" | python3 "$HK"; }
-  [ "$(grep -c '^HOOK_VERSION = "1.23.1"$' "$HK")" = 1 ] || fail "F70: HOOK_VERSION"
+  [ "$(grep -c "^HOOK_VERSION = \"$HVER\"\$" "$HK")" = 1 ] || fail "F70: HOOK_VERSION"
   # below the interval: nothing, no state file
   [ -z "$(ra s1 t30k)" ] && [ ! -e "$HANDOFF_STATE_DIR/reanchor-s1.json" ] || fail "F70: output below 50,000"
   # at 60,000: exactly one JSON object, exact shape and first line, the rules block, the recall line is not required to exist here
@@ -2352,7 +2356,7 @@ PY
   set -e
   D="$T/f71"; mkdir -p "$D"; export HOME="$D/home"; mkdir -p "$HOME/.claude"
   export HANDOFF_STATE_DIR="$D/state"; HK="$ROOT/hooks/claim-guard.py"; LOG="$HANDOFF_STATE_DIR/claim-guard.jsonl"; unset HANDOFF_CLAIM_GUARD
-  [ "$(grep -c '^HOOK_VERSION = "1.23.1"$' "$HK")" = 1 ] || fail "F71: HOOK_VERSION"
+  [ "$(grep -c "^HOOK_VERSION = \"$HVER\"\$" "$HK")" = 1 ] || fail "F71: HOOK_VERSION"
   python3 - "$D" <<'PY'
 import json, sys
 d = sys.argv[1]
@@ -2808,7 +2812,7 @@ PY
   git -C "$W" init -q; : > "$W2/queue-limit"
   HG="$ROOT/hooks/history-guard.py"; AG="$ROOT/hooks/action-guard.py"; AR="$ROOT/hooks/auto-recall.py"
   for f in history-guard.py action-guard.py auto-recall.py guard_common.py; do
-    [ "$(grep -c '^HOOK_VERSION = "1.23.1"$' "$ROOT/hooks/$f")" = 1 ] || fail "F77: HOOK_VERSION of $f"
+    [ "$(grep -c "^HOOK_VERSION = \"$HVER\"\$" "$ROOT/hooks/$f")" = 1 ] || fail "F77: HOOK_VERSION of $f"
   done
   python3 - "$HOME" "$W" "$D" <<'PY'
 import json, os, re, sys
@@ -3384,9 +3388,9 @@ PY
   o="$(printf '{"session_id":"s84","cwd":"%s","agent_id":"agx","agent_type":"general-purpose","hook_event_name":"SubagentStart"}' "$PROJ" | python3 "$HK/postcompact-inject.py" --subagent-start 2>/dev/null)"
   grep -qF -- "several patterns or several ids" <<<"$o" || fail "F84.9: SubagentStart: $o"
   # F84.f.10: versions
-  [ "$(grep -h '^HOOK_VERSION = ' "$ROOT"/hooks/*.py | sort -u)" = 'HOOK_VERSION = "1.23.1"' ] || fail "F84.10: HOOK_VERSION"
-  [ "$("$ROOT/install.sh" --version)" = "Lossless Handoff 0.21.1" ] || fail "F84.10: install.sh VERSION"
-  grep -q 'product 0.21.1' "$ROOT/README.md" && grep -q 'hooks 1.23.1' "$ROOT/README.md" || fail "F84.e: README version line"
+  [ "$(grep -h '^HOOK_VERSION = ' "$ROOT"/hooks/*.py | sort -u)" = "HOOK_VERSION = \"$HVER\"" ] || fail "F84.10: HOOK_VERSION"
+  [ "$("$ROOT/install.sh" --version)" = "Lossless Handoff $PVER" ] || fail "F84.10: install.sh VERSION"
+  grep -qF "product $PVER" "$ROOT/README.md" && grep -qF "hooks $HVER" "$ROOT/README.md" || fail "F84.e: README version line"
   ok "F84: batch open and search, caps, bad ids, usage line, recall line, versions"
 )
 
@@ -3519,7 +3523,7 @@ PY
   # F86.e.5 and 6: versions
   IV="$(sed -n 's/^VERSION="\(.*\)"$/\1/p' "$ROOT/install.sh")"
   HV="$(grep -h '^HOOK_VERSION = ' "$ROOT"/hooks/*.py | sort -u | sed 's/.*"\(.*\)"/\1/')"
-  [ "$IV" = 0.21.1 ] && [ "$HV" = 1.23.1 ] || fail "F86.6: versions $IV $HV"
+  [ "$IV" = "$PVER" ] && [ "$HV" = "$HVER" ] || fail "F86.6: versions $IV $HV"
   grep -q "^Current versions: product $IV (" "$ROOT/README.md" && grep -q "hooks $HV (" "$ROOT/README.md" || fail "F86.5: README version line differs from install.sh or HOOK_VERSION"
   grep -q 'Check: python3 ~/.claude/hooks/postcompact-inject.py --check --verbose' "$ROOT/install.sh" || fail "F86.c: installer last line"
   ok "F86: two classes, verbose mode, allow rule, versions"
@@ -3831,8 +3835,8 @@ assert d["hooks"]["PreToolUse"][0]["hooks"][0]["command"] == "echo keep", d
 PY
   ok "F88.e: clear entry installed once, dry-run writes nothing, --check names a missing entry, uninstall keeps other hooks"
   # F88.f.13: versions
-  [ "$(grep -h '^HOOK_VERSION = ' "$ROOT"/hooks/*.py | sort -u)" = 'HOOK_VERSION = "1.23.1"' ] || fail "F88.13: HOOK_VERSION"
-  [ "$("$ROOT/install.sh" --version)" = "Lossless Handoff 0.21.1" ] || fail "F88.13: install.sh VERSION"
+  [ "$(grep -h '^HOOK_VERSION = ' "$ROOT"/hooks/*.py | sort -u)" = "HOOK_VERSION = \"$HVER\"" ] || fail "F88.13: HOOK_VERSION"
+  [ "$("$ROOT/install.sh" --version)" = "Lossless Handoff $PVER" ] || fail "F88.13: install.sh VERSION"
   ok "F88.13: versions"
 )
 
@@ -3929,9 +3933,147 @@ grep -q 'resolved=0' "$T/o89m.out" || fail "F89.7: maintenance summary"
 grep -q 'never RESOLVE a rule' "$T/shim.log.merge" || fail "F89.7: maintenance prompt"
 ok "F89.7: --ledger-maintain keeps the rule active"
 # F89.f.9: versions
-[ "$(grep -h '^HOOK_VERSION = ' "$ROOT"/hooks/*.py | sort -u)" = 'HOOK_VERSION = "1.23.1"' ] || fail "F89.9: HOOK_VERSION"
-[ "$("$ROOT/install.sh" --version)" = "Lossless Handoff 0.21.1" ] || fail "F89.9: install.sh VERSION"
+[ "$(grep -h '^HOOK_VERSION = ' "$ROOT"/hooks/*.py | sort -u)" = "HOOK_VERSION = \"$HVER\"" ] || fail "F89.9: HOOK_VERSION"
+[ "$("$ROOT/install.sh" --version)" = "Lossless Handoff $PVER" ] || fail "F89.9: install.sh VERSION"
 ok "F89.9: versions"
+
+# F90: one grammar for each shared format, malformed lines kept and reported, negative controls, one version source
+mkdir -p "$T/p90"; P90="$(cd "$T/p90" && pwd -P)"  # the real path: --check reads the current folder with getcwd
+printf '%s\n' '- D1 [2026-11-20] [rule] Rule alpha stays | why: a' > "$T/m90.txt"
+f89_tr "$T/t90s.jsonl" "Seed the F90 project now"
+run_led f90seed "$P90" "$T/t90s.jsonl" "$T/m90.txt"
+LF90="$(ls "$ST"/projects/p90-*/decisions.md | head -1)"
+[ -n "$LF90" ] || fail "F90: seed ledger"
+cat > "$LF90" <<'TXT'
+# Project decisions: p90
+- D1 [2026-11-20] [rule] Rule alpha stays | why: a
+- D2 [2026-11-20] Untagged beta text | why: b
+- D3 [2026-11-20] [decision] Gamma has no why part
+- D4 [2026-11-20] SUPERSEDED by D1 [2026-11-21]: [task] Delta | because: c
+- D5 [2026-11-20] RESOLVED [2026-11-21]: done | was: [task] Epsilon | why: e
+<!-- a comment line -->
+
+- D9 [2026-11-14] RETIRED [2026-11-25] (ended): [rule] x | why: y
+- D10 [2026-11-14] DONE: x
+D11 no dash
+TXT
+L9="$(grep -n '^- D9 ' "$LF90" | cut -d: -f1)"
+# F90.j.1: --check counts the 3 malformed lines; no part injects them; the active count excludes them
+o="$(cd "$P90" && python3 "$H/postcompact-inject.py" --check)"
+grep -qF "decisions list: 3 malformed lines (first: line $L9)" <<<"$o" || fail "F90.1: --check output: $o"
+grep -qF "fix them to a known form (docs/decisions-list.md)" <<<"$o" || fail "F90.1: --check advice: $o"
+! grep -q "Run the installer again" <<<"$(grep -F 'malformed' <<<"$o" | grep -v 'Also:')" || fail "F90.1: a malformed line is not an install problem"
+for n in 1 2 3; do
+  o="$(printf '{"cwd":"%s"}' "$P90" | python3 "$H/postcompact-inject.py" --ledger --part "$n")"
+  ! grep -qE '(^|[^0-9])(D9|D10|D11)([^0-9]|$)' <<<"$o" || fail "F90.1: a malformed line is injected in part $n"
+  grep -q 'Rule alpha stays' <<<"$o" || [ "$n" != 1 ] || fail "F90.1: the rule is not injected"
+done
+o="$(printf '{"cwd":"%s"}' "$P90" | python3 "$H/postcompact-inject.py" --ledger --part 1 | inj_ctx)"
+grep -q 'Untagged beta text' <<<"$o" && grep -q 'Gamma has no why part' <<<"$o" || fail "F90.1: valid legacy forms are not injected"
+# F90.j.8: part 1 holds the hand-edit sentence
+grep -qF 'do not edit decisions.md yourself' <<<"$o" || fail "F90.8: part 1 sentence"
+o="$(cd "$P90" && python3 "$H/postcompact-inject.py" --check --verbose)"
+grep -q ' 3 active entries' <<<"$o" || fail "F90.1: active count: $o"
+[ "$(grep -c '^info: malformed line ' <<<"$o")" = 3 ] || fail "F90.c: verbose lists the first 3 malformed lines: $o"
+ok "F90.1, F90.8: malformed lines are reported, never injected or counted; part 1 sentence"
+# F90.j.2: NO CHANGES leaves the file as it is; a real merge writes the malformed lines back at their positions
+cp "$LF90" "$T/l90.before"
+printf '%s\n' 'NO CHANGES' > "$T/o90a.txt"
+f89_tr "$T/t90a.jsonl" "A plain message for the F90 merge"
+run_led f90a "$P90" "$T/t90a.jsonl" "$T/o90a.txt"
+cmp -s "$LF90" "$T/l90.before" || fail "F90.2: NO CHANGES changed the file"
+printf '%s\n' 'KIND D2 decision' '- D9 [2026-11-26] [rule] Reused id | why: z' '- D12 [2026-11-26] [decision] New twelve | why: n' > "$T/o90b.txt"
+f89_tr "$T/t90b.jsonl" "Another plain message for the F90 merge"
+run_led f90b "$P90" "$T/t90b.jsonl" "$T/o90b.txt"
+grep -qxF -- '- D2 [2026-11-20] [decision] Untagged beta text | why: b' "$LF90" && grep -qF -- '- D12 [2026-11-26] [decision] New twelve' "$LF90" || fail "F90.2: the merge did not write"
+for k in '- D3 [2026-11-20] [decision] Gamma has no why part' '- D9 [2026-11-14] RETIRED [2026-11-25] (ended): [rule] x | why: y' '- D10 [2026-11-14] DONE: x' 'D11 no dash'; do
+  grep -qxF -- "$k" "$LF90" || fail "F90.2: kept line lost: $k"
+done
+[ "$(grep -c '^- D9 ' "$LF90")" = 1 ] || fail "F90.2: a new entry reused the id of a kept line"
+n3="$(grep -n '^- D3 ' "$LF90" | cut -d: -f1)"; n2="$(grep -n '^- D2 ' "$LF90" | cut -d: -f1)"; n4="$(grep -n '^- D4 ' "$LF90" | cut -d: -f1)"
+n5="$(grep -n '^- D5 ' "$LF90" | cut -d: -f1)"; n9="$(grep -n '^- D9 ' "$LF90" | cut -d: -f1)"; n10="$(grep -n '^- D10 ' "$LF90" | cut -d: -f1)"; n11="$(grep -n '^D11 ' "$LF90" | cut -d: -f1)"
+[ "$n3" -gt "$n2" ] && [ "$n3" -lt "$n4" ] && [ "$n9" -gt "$n5" ] && [ "$n10" = $((n9 + 1)) ] && [ "$n11" = $((n10 + 1)) ] || fail "F90.2: kept lines moved"
+o="$(cd "$P90" && python3 "$H/postcompact-inject.py" --check)"
+grep -qF "decisions list: 3 malformed lines" <<<"$o" || fail "F90.2: --check after the merge: $o"
+ok "F90.2: malformed lines stay at their positions through a merge; ids are not reused"
+# F90.j.3: no malformed line, no `malformed` text
+grep -v -e '^- D9 ' -e '^- D10 ' -e '^D11 ' "$LF90" > "$T/l90.clean"
+cp "$T/l90.clean" "$LF90"
+o="$(cd "$P90" && python3 "$H/postcompact-inject.py" --check --verbose 2>&1)"
+! grep -qi 'malformed' <<<"$o" || fail "F90.3: --check reports a list with no malformed line: $o"
+ok "F90.3: a clean list gives no malformed text"
+# F90.j.4: G2 has two forms and one parser
+python3 - "$ROOT/hooks/lossless_handoff/grammar.py" <<'PY'
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location("g", sys.argv[1]); g = importlib.util.module_from_spec(spec); spec.loader.exec_module(g)
+assert g.parse_recall_id("abcd1234:7") == ("abcd1234", None, 7)
+assert g.parse_recall_id("aaaaaaaa/ag123456:2") == ("aaaaaaaa", "ag123456", 2)
+assert g.parse_recall_hit("aaaaaaaa/ag123456:2 2026-11-25 10:00 user text") == ("aaaaaaaa", "ag123456", 2)
+assert g.parse_recall_hit("abcd1234:7 2026-11-25 10:00 user text") == ("abcd1234", None, 7)
+for bad in ("abcd1234", "abcd1234:", ":5", "abcd1234:0", "a/b/c:1", "abcd 1234:1"):
+    assert g.parse_recall_id(bad) is None, bad
+assert g.parse_recall_hit("abcd1234:7 no timestamp") is None
+PY
+ok "F90.4: both G2 forms parse the same way"
+# F90.j.5 and F90.b: no pattern for a decisions line or a recall id outside grammar.py; the fallback copies equal the file
+python3 - "$ROOT" <<'PY'
+import re, sys
+root = sys.argv[1]
+g = open(root + "/hooks/lossless_handoff/grammar.py", encoding="utf-8").read()
+copies = []
+for f in ("hooks/postcompact-inject.py", "hooks/recall.py"):
+    t = open(root + "/" + f, encoding="utf-8").read()
+    m = re.search(r"GRAMMAR_SRC = r'''(.*?)'''\n", t, re.S)
+    assert m and m.group(1) == g, f + ": GRAMMAR_SRC differs from grammar.py"
+    cns = {}
+    exec(compile(m.group(1), f, "exec"), cns)
+    copies.append(cns)
+    t = t[:m.start()] + t[m.end():]
+    for ln in t.splitlines():
+        if re.search(r"re\.(compile|match|search|fullmatch|findall)\(", ln) and re.search(r'\^- D|- D\(\\d|\(\?:\(\[A-Za-z0-9_-\]\+\)/\)|\[\(rule\|decision\|task\)\]', ln):
+            raise SystemExit(f + ": own pattern for a G1 or G2 format: " + ln)
+for f in ("hooks/lossless_handoff/ledger.py", "hooks/lossless_handoff/prove.py"):
+    for ln in open(root + "/" + f, encoding="utf-8").read().splitlines():
+        if re.search(r"re\.(compile|match|search|fullmatch|findall)\(", ln) and re.search(r'\^- D|- D\(\\d|\(\?:\(\[A-Za-z0-9_-\]\+\)/\)|\[\(rule\|decision\|task\)\]', ln):
+            raise SystemExit(f + ": own pattern for a G1 or G2 format: " + ln)
+# the copy gives the same result as the file on a sample set (it is byte-identical, so this also proves the loader path)
+ns = {}
+exec(compile(g, "grammar.py", "exec"), ns)
+for s in ("- D1 [2026-11-20] [rule] a | why: b", "- D2 [2026-11-20] a", "- D3 [2026-11-20] DONE: x", "D4 x", "# h", "", "<!-- c -->",
+          "- D5 [2026-11-20] RESOLVED [2026-11-21]: r | was: w", "- D6 [2026-11-20] SUPERSEDED by D1 [2026-11-21]: o | because: c",
+          "- D0 [2026-11-20] [rule] a | why: b"):
+    for mod in [ns] + copies:
+        assert mod["parse_decision"](s) == ns["parse_decision"](s), s
+PY
+ok "F90.5, F90.b: no own G1 or G2 pattern outside grammar.py; fallback copies equal the file"
+# F90.j.6 and F90.g: each checker fails on its known-bad sample
+o="$(cd "$P90" && python3 "$H/recall.py" open zzzzzzzz:99 2>&1 || true)"
+case "$o" in "--- "*) fail "F90.g: recall open printed a message for an id that does not exist" ;; esac
+printf 'The claim [C9999] has no source.\n' > "$T/bad90.md"
+r=0; HANDOFF_STATE_DIR="$T/f90-state" python3 "$ROOT/hooks/precompact-handoff.py" --claims-lint "$T/bad90.md" >"$T/bad90.out" 2>&1 || r=$?
+[ "$r" = 1 ] && grep -q 'unknown claim C9999' "$T/bad90.out" || fail "F90.g: claims lint passed a claim with no source"
+cp "$T/l90.before" "$LF90"
+o="$(cd "$P90" && python3 "$H/postcompact-inject.py" --check)"
+grep -qF "malformed lines" <<<"$o" || fail "F90.g: --check passed a malformed line"
+ok "F90.g: the proof check, --check and the claims lint fail their known-bad samples"
+# F90.h: one version source
+f90_versions_ok() { # $1 = repo root, $2 = VERSION file
+  local pv hv
+  pv="$(sed -n 's/^product=//p' "$2")"; hv="$(sed -n 's/^hooks=//p' "$2")"
+  [ -n "$pv" ] && [ -n "$hv" ] || return 1
+  [ "$(sed -n 's/^VERSION="\(.*\)"$/\1/p' "$1/install.sh")" = "$pv" ] || return 1
+  [ "$(grep -h '^HOOK_VERSION = ' "$1"/hooks/*.py | sort -u)" = "HOOK_VERSION = \"$hv\"" ] || return 1
+  grep -qF "product $pv (" "$1/README.md" && grep -qF "hooks $hv (" "$1/README.md" || return 1
+  [ "$(sed -n 's/^## \[\([0-9][^]]*\)\].*/\1/p' "$1/CHANGELOG.md" | head -n 1)" = "$pv" ] || return 1
+  sed -n '/^## \[[0-9]/{n;n;p;q;}' "$1/CHANGELOG.md" | grep -qF "hooks $hv" || return 1
+}
+[ "$(wc -l < "$ROOT/VERSION" | tr -d ' ')" = 2 ] && grep -qE '^product=[0-9]+\.[0-9]+\.[0-9]+$' "$ROOT/VERSION" && grep -qE '^hooks=[0-9]+\.[0-9]+\.[0-9]+$' "$ROOT/VERSION" || fail "F90.h: VERSION form"
+f90_versions_ok "$ROOT" "$ROOT/VERSION" || fail "F90.h: install.sh, HOOK_VERSION, README or CHANGELOG differ from VERSION"
+printf 'product=%s\nhooks=9.9.9\n' "$PVER" > "$T/v90.txt"
+! f90_versions_ok "$ROOT" "$T/v90.txt" || fail "F90.7: a changed hooks= line did not fail the check"
+printf 'product=9.9.9\nhooks=%s\n' "$HVER" > "$T/v90.txt"
+! f90_versions_ok "$ROOT" "$T/v90.txt" || fail "F90.7: a changed product= line did not fail the check"
+ok "F90.h, F90.7, F90.9: VERSION is the one source; a changed line fails the check"
 
 "$ROOT/uninstall.sh" >"$T/un.out"
 python3 - "$S" "$T/original.json" <<'PY'

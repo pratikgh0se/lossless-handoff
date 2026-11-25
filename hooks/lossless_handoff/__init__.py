@@ -5,7 +5,7 @@ import os
 
 # The order of PARTS is the order of the old single file. Top-level assignments run in this order and some use names
 # from an earlier part, so do not sort or reorder this list.
-PARTS = ("transcript", "summary", "ledger", "handoff", "runtime", "redaction", "pipeline", "reconcile", "prove", "claims")
+PARTS = ("grammar", "transcript","summary", "ledger", "handoff", "runtime", "redaction", "pipeline", "reconcile", "prove", "claims")
 
 
 def load_into(ns):

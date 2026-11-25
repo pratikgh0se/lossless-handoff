@@ -47,10 +47,22 @@ MAINT_PROMPT = ("Stdin has a project's decisions LEDGER (one entry per line). Ou
                 "choice; task = a one-off approval, action or status that is finished once done. Tag every untagged "
                 "active entry. Never add entries, never edit entry text, never RESOLVE a rule. Output \"NO CHANGES\" "
                 "if nothing applies.")
-ACT_RE = re.compile(r"^- D(\d+) \[(\d{4}-\d{2}-\d{2})\] (.+?) \| why: (.+)$")
-RES_RE = re.compile(r"^- D(\d+) \[(\d{4}-\d{2}-\d{2})\] RESOLVED \[(\d{4}-\d{2}-\d{2})\]: (.+?) \| was: (.+)$")
-TAG_RE = re.compile(r"^\[(rule|decision|task)\] ")
-SUP_RE = re.compile(r"^- D(\d+) \[(\d{4}-\d{2}-\d{2})\] SUPERSEDED by D(\d+) \[(\d{4}-\d{2}-\d{2})\]: (.+?) \| because: (.+)$")
+# F90: the line formats are in grammar.py (parse_decision); this file keeps no pattern for them.
+
+
+def _act_of(line):
+    """The G1 parse of an active line with a `| why:` part, else None."""
+    d = parse_decision(line)
+    return d if d and d["form"] == "act" else None
+
+
+def _pre_rest(line):
+    """An active line -> (`- D<n> [<date>]`, the rest of the line), else None."""
+    d = _act_of(line)
+    if not d:
+        return None
+    pre = "- D%d [%s]" % (d["id"], d["date"])
+    return pre, d["line"][len(pre) + 1:]
 
 
 def ledger_enabled():
@@ -96,27 +108,21 @@ def ledger_dir(root):
 def parse_entry(line, cap=True):
     """One ledger line -> dict(id, kind, line, by, tag) or None. kind is act|sup|res; tag (F42.1) is
     rule|decision|task|None for an active entry. Over-long lines are cut with `...` (F39.2)."""
-    line = (line or "").rstrip("\r\n").strip()
-    m = RES_RE.match(line)
-    if m:
-        pre = f"- D{m.group(1)} [{m.group(2)}] RESOLVED [{m.group(3)}]: {m.group(4)} | was: "
-        was = m.group(5)
-        # F44.11(c): RESOLVED lines are exempt from LEDGER_LINE_MAX (never injected); `was:` is kept whole
-        return None if int(m.group(1)) < 1 else {"id": int(m.group(1)), "kind": "res", "line": pre + was, "by": None, "tag": None}
-    m = SUP_RE.match(line)
-    if m:
-        pre = f"- D{m.group(1)} [{m.group(2)}] SUPERSEDED by D{m.group(3)} [{m.group(4)}]: "
-        dec, sep, why = m.group(5), " | because: ", m.group(6)
-        kind, by = "sup", int(m.group(3))
-    else:
-        m = ACT_RE.match(line)
-        if not m:
-            return None
-        pre = f"- D{m.group(1)} [{m.group(2)}] "
-        dec, sep, why = m.group(3), " | why: ", m.group(4)
-        kind, by = "act", None
-    if int(m.group(1)) < 1:
+    d = parse_decision(line)  # F90: the one G1 parser
+    if not d or d["form"] not in ("act", "sup", "res"):
         return None
+    if d["form"] == "res":
+        pre = f"- D{d['id']} [{d['date']}] RESOLVED [{d['rdate']}]: {d['reason']} | was: "
+        # F44.11(c): RESOLVED lines are exempt from LEDGER_LINE_MAX (never injected); `was:` is kept whole
+        return {"id": d["id"], "kind": "res", "line": pre + d["was"], "by": None, "tag": None}
+    if d["form"] == "sup":
+        pre = f"- D{d['id']} [{d['date']}] SUPERSEDED by D{d['by']} [{d['bdate']}]: "
+        dec, sep, why = d["text"], " | because: ", d["why"]
+        kind, by = "sup", d["by"]
+    else:
+        pre = f"- D{d['id']} [{d['date']}] "
+        dec, sep, why = d["text"], " | why: ", d["why"]
+        kind, by = "act", None
     full = pre + dec + sep + why
     if cap and len(full) > LEDGER_LINE_MAX and kind == "act":  # F44.11(c): SUPERSEDED lines are exempt from the cap
         # F39.11: parsed first; cut the why/because text (ending ...), then the decision text; never dropped
@@ -129,8 +135,7 @@ def parse_entry(line, cap=True):
             why = "..."
             dec = dec[: max(len(dec) - over - 3, 0)] + "..."
         full = pre + dec + sep + why
-    tm = TAG_RE.match(dec) if kind == "act" else None
-    return {"id": int(m.group(1)), "kind": kind, "line": full, "by": by, "tag": tm.group(1) if tm else None}
+    return {"id": d["id"], "kind": kind, "line": full, "by": by, "tag": d["tag"] if kind == "act" else None}
 
 
 def parse_ledger(text):
@@ -142,8 +147,30 @@ def parse_ledger(text):
     return out
 
 
-def ledger_text(root, entries):
-    return f"# Project decisions: {root}\n" + "".join(entries[i]["line"] + "\n" for i in sorted(entries))
+def kept_lines(text):
+    """F90.c: [(anchor id or None, raw line)] of the lines a merge must write back unchanged: each malformed line, and
+    each legacy active line with no `| why:` (F44.11(e)). The anchor is the id of the entry before the line in the file."""
+    out, anchor, seen = [], None, set()
+    for _n, raw, p in scan_decisions(text):
+        if p is None or p["form"] == "nowhy":
+            out.append((anchor, raw.rstrip("\r\n")))
+        elif p["form"] != "skip" and p["id"] not in seen:
+            seen.add(p["id"])
+            anchor = p["id"]
+    return out
+
+
+def kept_ids(kept):
+    """The ids of the kept lines that start with `- D<n> `: a new entry must not reuse one."""
+    return [i for i in (decision_line_id(r) for _a, r in kept or []) if i]
+
+
+def ledger_text(root, entries, kept=None):
+    by = {}
+    for a, ln in kept or []:
+        by.setdefault(a if a in entries else None, []).append(ln)  # F90.c: malformed lines stay at their position
+    return (f"# Project decisions: {root}\n" + "".join(x + "\n" for x in by.get(None, []))
+            + "".join(entries[i]["line"] + "\n" + "".join(x + "\n" for x in by.get(i, [])) for i in sorted(entries)))
 
 
 def active_lines(entries):
@@ -267,7 +294,7 @@ def rule_quote_ok(quote, user_texts):
     return any(q in _quote_norm(t) for t in user_texts or [])
 
 
-def apply_changes(prev, out_text, allow_new=True, kind_limit=KIND_LIMIT, stats=None, user_texts=None):
+def apply_changes(prev, out_text, allow_new=True, kind_limit=KIND_LIMIT, stats=None, user_texts=None, extra_ids=()):
     """F40.1 + F42.2 + F89: apply the model's ADD / KIND / RESOLVE / SUPERSEDE lines to the previous entries.
     Returns (entries, n_changes); entries is a new dict, `prev` is untouched. Invalid lines are ignored.
     Never removes an entry. allow_new=False (maintenance) ignores new entries; kind_limit None = no limit.
@@ -275,7 +302,7 @@ def apply_changes(prev, out_text, allow_new=True, kind_limit=KIND_LIMIT, stats=N
     never resolved. `stats` (dict) receives counts add/kind/resolved/superseded/rule_resolved/rule_resolve_rejected."""
     res = dict(prev)
     st = {"add": 0, "kind": 0, "resolved": 0, "superseded": 0}
-    prev_max = max(prev) if prev else 0
+    prev_max = max(list(prev) + list(extra_ids or ()) or [0])  # F90.c: ids of kept lines count, so no id is reused
     lines = [(ln or "").strip() for ln in (out_text or "").splitlines()]
     today = datetime.date.today().isoformat()
     if allow_new:
@@ -289,10 +316,10 @@ def apply_changes(prev, out_text, allow_new=True, kind_limit=KIND_LIMIT, stats=N
         if not m or (kind_limit is not None and st["kind"] >= kind_limit):
             continue
         i = int(m.group(1))
-        am = ACT_RE.match(res[i]["line"]) if i in res and res[i]["kind"] == "act" and res[i].get("tag") is None else None
+        am = _act_of(res[i]["line"]) if i in res and res[i]["kind"] == "act" and res[i].get("tag") is None else None
         if not am:
             continue
-        e = parse_entry(f"- D{i} [{am.group(2)}] [{m.group(2)}] {am.group(3)} | why: {am.group(4)}")
+        e = parse_entry(f"- D{i} [{am['date']}] [{m.group(2)}] {am['text']} | why: {am['why']}")
         if e:
             res[i] = e
             st["kind"] += 1
@@ -310,8 +337,8 @@ def apply_changes(prev, out_text, allow_new=True, kind_limit=KIND_LIMIT, stats=N
             if not user_texts or not why or not rule_quote_ok(quote, user_texts) or " | was: " in why + quote:
                 rst["rule_resolve_rejected"] += 1
                 continue
-            pm = re.match(r"^(- D\d+ \[\d{4}-\d{2}-\d{2}\]) (.+)$", res[i]["line"])
-            e = parse_entry(f"{pm.group(1)} RESOLVED [{today}]: {why} (user: \"{quote}\") | was: {pm.group(2)}") if pm else None
+            pm = _pre_rest(res[i]["line"])
+            e = parse_entry(f"{pm[0]} RESOLVED [{today}]: {why} (user: \"{quote}\") | was: {pm[1]}") if pm else None
             if e and e["kind"] == "res" and e["id"] == i:
                 res[i] = e
                 st["resolved"] += 1
@@ -321,10 +348,10 @@ def apply_changes(prev, out_text, allow_new=True, kind_limit=KIND_LIMIT, stats=N
             continue
         if i not in res or res[i]["kind"] != "act" or res[i].get("tag") not in (None, "task") or not why:
             continue
-        pm = re.match(r"^(- D\d+ \[\d{4}-\d{2}-\d{2}\]) (.+)$", res[i]["line"])
+        pm = _pre_rest(res[i]["line"])
         if not pm:
             continue
-        e = parse_entry(f"{pm.group(1)} RESOLVED [{today}]: {why} | was: {pm.group(2)}")
+        e = parse_entry(f"{pm[0]} RESOLVED [{today}]: {why} | was: {pm[1]}")
         if e:
             res[i] = e
             st["resolved"] += 1
@@ -335,10 +362,10 @@ def apply_changes(prev, out_text, allow_new=True, kind_limit=KIND_LIMIT, stats=N
         old, new, why = int(m.group(1)), int(m.group(2)), m.group(3).strip()
         if old == new or old not in res or new not in res or res[old]["kind"] != "act" or not why:
             continue
-        am = ACT_RE.match(res[old]["line"])
+        am = _act_of(res[old]["line"])
         if not am:
             continue
-        sup = parse_entry(f"- D{old} [{am.group(2)}] SUPERSEDED by D{new} [{today}]: {am.group(3)} | because: {why}")
+        sup = parse_entry(f"- D{old} [{am['date']}] SUPERSEDED by D{new} [{today}]: {am['text']} | because: {why}")
         if sup:
             res[old] = sup
             st["superseded"] += 1
@@ -456,14 +483,15 @@ def ledger_merge(sid, tp, root, led, timeout):
             led["status"], led["error"] = "failed", ledger_error_of(err)
             return
         mst = {}
-        res, changes = apply_changes(prev, out, stats=mst, user_texts=users)
+        kept = kept_lines(prev_text)
+        res, changes = apply_changes(prev, out, stats=mst, user_texts=users, extra_ids=kept_ids(kept))
         led["rule_resolved"], led["rule_resolve_rejected"] = mst.get("rule_resolved", 0), mst.get("rule_resolve_rejected", 0)
         if changes:
             if prev_text.strip():
                 ts = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
                 write_atomic(os.path.join(ddir, f"decisions.{ts}.md"), redact(prev_text))
                 prune_backups(ddir)
-            write_atomic(lpath, redact(ledger_text(root, res)))
+            write_atomic(lpath, redact(ledger_text(root, res, kept)))
         if (newest or last_ts):
             cursors[sid] = newest or last_ts
         cursors = prune_cursors(cursors)
@@ -534,9 +562,10 @@ def ledger_maintain(dirarg):
             print(f"maintain failed: {ledger_error_of(err)}")
             return
         stats = {}
-        res, changes = apply_changes(prev, out, allow_new=False, kind_limit=None, stats=stats)
+        kept = kept_lines(prev_text)
+        res, changes = apply_changes(prev, out, allow_new=False, kind_limit=None, stats=stats, extra_ids=kept_ids(kept))
         if changes:
-            write_atomic(lpath, redact(ledger_text(root, res)))
+            write_atomic(lpath, redact(ledger_text(root, res, kept)))
         print(f"kind={stats.get('kind', 0)} resolved={stats.get('resolved', 0)} superseded={stats.get('superseded', 0)} "
               f"active_before={before} active_after={ledger_counts(res)[0]}")
     finally:
@@ -589,9 +618,9 @@ def ledger_repair(dirarg):
                 if b not in cache:
                     d = {}
                     for ln in read_text(b).splitlines():
-                        m = ACT_RE.match(ln.strip())
-                        if m and int(m.group(1)) not in d:
-                            d[int(m.group(1))] = (m.group(3), m.group(4))
+                        m = _act_of(ln)
+                        if m and m["id"] not in d:
+                            d[m["id"]] = (m["text"], m["why"])
                     cache[b] = d
                 if i in cache[b]:
                     dec, why = cache[b][i]
@@ -603,21 +632,19 @@ def ledger_repair(dirarg):
         total = fixed = 0
         for n, raw in enumerate(lines):
             ln = raw.rstrip("\r").strip()
-            m = RES_RE.match(ln)
-            if m and m.group(5).endswith("..."):
+            d = parse_decision(ln)
+            if d and d["form"] == "res" and d["was"].endswith("..."):
                 total += 1
-                o = original(int(m.group(1)), m.group(5)[:-3])
+                o = original(d["id"], d["was"][:-3])
                 if o:
-                    lines[n] = f"- D{m.group(1)} [{m.group(2)}] RESOLVED [{m.group(3)}]: {m.group(4)} | was: {o[0]} | why: {o[1]}"
+                    lines[n] = f"- D{d['id']} [{d['date']}] RESOLVED [{d['rdate']}]: {d['reason']} | was: {o[0]} | why: {o[1]}"
                     fixed += 1
-                continue
-            m = SUP_RE.match(ln)
-            if m and m.group(5).endswith("..."):
+            elif d and d["form"] == "sup" and d["text"].endswith("..."):
                 total += 1
-                o = original(int(m.group(1)), m.group(5)[:-3])
+                o = original(d["id"], d["text"][:-3])
                 if o:
-                    lines[n] = (f"- D{m.group(1)} [{m.group(2)}] SUPERSEDED by D{m.group(3)} [{m.group(4)}]: "
-                                f"{o[0]} | because: {m.group(6)}")
+                    lines[n] = (f"- D{d['id']} [{d['date']}] SUPERSEDED by D{d['by']} [{d['bdate']}]: "
+                                f"{o[0]} | because: {d['why']}")
                     fixed += 1
         if fixed:
             ts = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
