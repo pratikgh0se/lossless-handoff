@@ -11,7 +11,7 @@ _SUP_RE = re.compile(r"^- D(\d+) \[(%s)\] SUPERSEDED by D(\d+) \[(%s)\]: (.+?) \
 _ACT_RE = re.compile(r"^- D(\d+) \[(%s)\] (.+?) \| why: (.+)$" % _DATE)
 _LOOSE_RE = re.compile(r"^- D(\d+) \[(%s)\] (.+)$" % _DATE)
 _TAG_RE = re.compile(r"^\[(rule|decision|task)\] ")
-_CAPS_RE = re.compile(r"^[A-Z]{2,}(?: \[|:)")  # RETIRED [..] or DONE: is not untagged text (F90.a)
+_CAPS_RE = re.compile(r"^(?:SUPERSEDED|RESOLVED|[A-Z]{2,}(?: \[|:| \d{4}-\d{2}-\d{2}))")  # RETIRED [..], DONE: or DONE 2026-11-15: is not active text (F90.a)
 _ID_RE = re.compile(r"^- D(\d+) ")
 _RID_RE = re.compile(r"^([A-Za-z0-9_-]+)(?:/([A-Za-z0-9_-]+))?:(\d+)$")
 _HIT_TAIL_RE = re.compile(r"^\d{4}-")
@@ -43,7 +43,7 @@ def parse_decision(line):
                 return None
             text = m.group(3)
             tm = _TAG_RE.match(text)
-            if not tm and _CAPS_RE.match(text):
+            if _CAPS_RE.match(text[tm.end():] if tm else text):
                 return None
             d = {"form": form, "id": int(m.group(1)), "date": m.group(2), "text": text, "tag": tm.group(1) if tm else None,
                  "why": m.group(4) if form == "act" else None}

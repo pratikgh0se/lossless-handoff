@@ -4056,6 +4056,47 @@ cp "$T/l90.before" "$LF90"
 o="$(cd "$P90" && python3 "$H/postcompact-inject.py" --check)"
 grep -qF "malformed lines" <<<"$o" || fail "F90.g: --check passed a malformed line"
 ok "F90.g: the proof check, --check and the claims lint fail their known-bad samples"
+# F90.a amendment: a superseded line with no `| because:` and a `DONE <date>:` task line are malformed, not active
+for shape in '- D49 [2026-10-27] SUPERSEDED by D154 [2026-11-02] (reason): text' '- D311 [2026-11-15] [task] DONE 2026-11-15: text'; do
+  cp "$T/l90.clean" "$LF90"; printf '%s\n' "$shape" >> "$LF90"
+  o="$(cd "$P90" && python3 "$H/postcompact-inject.py" --check)"
+  grep -qF "decisions list: 1 malformed lines" <<<"$o" || fail "F90.a: not reported as malformed: $shape: $o"
+  for n in 1 2 3; do
+    o="$(printf '{"cwd":"%s"}' "$P90" | python3 "$H/postcompact-inject.py" --ledger --part "$n")"
+    ! grep -qE '(^|[^0-9])(D49|D311)([^0-9]|$)' <<<"$o" || fail "F90.a: injected as active: $shape"
+  done
+done
+python3 - "$ROOT/hooks/lossless_handoff/grammar.py" <<'PY'
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location("g", sys.argv[1]); g = importlib.util.module_from_spec(spec); spec.loader.exec_module(g)
+assert g.parse_decision("- D5 [2026-11-20] README is x | why: y")["form"] == "act"
+assert g.parse_decision("- D5 [2026-11-20] [rule] OOLONG runs x | why: y")["form"] == "act"
+assert g.parse_decision("- D5 [2026-11-20] [rule] DONE: x | why: y") is None
+assert g.parse_decision("- D5 [2026-11-20] [task] RESOLVED soon | why: y") is None
+PY
+ok "F90.a: the two real non-standard shapes are malformed; README and OOLONG text stay valid"
+# F90.e I1: `open --full` gives text with trailing spaces and a tab byte for byte
+python3 - "$ROOT/hooks/recall.py" "$T" <<'PY'
+import json, os, subprocess, sys
+rc, t = sys.argv[1], sys.argv[2]
+home = os.environ["HOME"]
+proj = os.path.join(t, "p90i"); os.makedirs(proj)
+subprocess.run(["git", "-C", proj, "init", "-q"], check=True)
+proj = os.path.realpath(proj)
+pdir = os.path.join(home, ".claude", "projects", proj.replace("/", "-")); os.makedirs(pdir)
+text = "alpha beta\ngamma delta \t "
+rows = [{"type": "user", "uuid": "u1", "timestamp": "2026-11-18T10:00:01.000Z", "cwd": proj, "message": {"role": "user", "content": text}},
+        {"type": "assistant", "uuid": "u2", "timestamp": "2026-11-18T10:00:02.000Z", "cwd": proj, "message": {"role": "assistant", "content": [{"type": "text", "text": text}]}}]
+open(os.path.join(pdir, "eeeeeeee-1111-2222-3333-444444444444.jsonl"), "w").write("\n".join(json.dumps(r) for r in rows) + "\n")
+for n in (1, 2):
+    out = subprocess.run([sys.executable, rc, "open", "eeeeeeee:%d" % n, "--full", "--around", "0"], cwd=proj, capture_output=True, text=True).stdout
+    lines = out.split("\n")
+    assert lines[0].startswith("--- "), out
+    body = "\n".join(lines[1:])
+    body = body[:-1] if body.endswith("\n") else body
+    assert body == text, (n, repr(body))
+PY
+ok "F90.e I1: trailing whitespace survives open --full"
 # F90.h: one version source
 f90_versions_ok() { # $1 = repo root, $2 = VERSION file
   local pv hv

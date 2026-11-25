@@ -199,8 +199,11 @@ def redacted_snippet(text, s, e, ctx=120):
 
 # ---------------------------------------------------------------- transcripts
 
-def strip_reminders(t):
-    return REMINDER_RE.sub("", t).strip()
+def strip_reminders(t, exact=False):
+    s = REMINDER_RE.sub("", t)
+    if exact and s == t:  # F90 I1: `open` keeps text without a reminder byte for byte, trailing whitespace included
+        return t
+    return s.strip()
 
 
 def typed_ok(t):
@@ -218,8 +221,8 @@ def result_text(c):
     return ""
 
 
-def segments(rec):
-    """F44.3: record -> list of (role, text); role in user|assistant|tool."""
+def segments(rec, exact=False):
+    """F44.3: record -> list of (role, text); role in user|assistant|tool. `exact` (open only): no strip of text that holds no reminder."""
     typ = rec.get("type")
     if typ not in ("user", "assistant"):
         return []
@@ -242,12 +245,12 @@ def segments(rec):
                     typed.append(b["text"])
                 elif b.get("type") == "tool_result":
                     tools.append(result_text(b.get("content")))
-        t = strip_reminders("\n".join(typed))
+        t = strip_reminders("\n".join(typed), exact)
         if typed_ok(t):
             out.append(("user", t))
         for x in tools:
-            x = strip_reminders(x)
-            if x:
+            x = strip_reminders(x, exact)
+            if x.strip():
                 out.append(("tool", x))
         return out
     # assistant
@@ -267,8 +270,8 @@ def segments(rec):
                 except Exception:
                     s = str(inp)
                 tools.append("%s %s" % (b.get("name") or "tool", s))
-    t = strip_reminders("\n".join(texts))
-    if t:
+    t = strip_reminders("\n".join(texts), exact)
+    if t.strip():
         out.append(("assistant", t))
     for x in tools:
         out.append(("tool", x))
@@ -1913,7 +1916,7 @@ def cap_body(text, full, mid=None, start=0, cap=None):
 
 
 def rec_message(rec):
-    segs = segments(rec)
+    segs = segments(rec, True)
     if not segs:
         return None
     role = segs[0][0]
@@ -2107,7 +2110,7 @@ _SUP_RE = re.compile(r"^- D(\d+) \[(%s)\] SUPERSEDED by D(\d+) \[(%s)\]: (.+?) \
 _ACT_RE = re.compile(r"^- D(\d+) \[(%s)\] (.+?) \| why: (.+)$" % _DATE)
 _LOOSE_RE = re.compile(r"^- D(\d+) \[(%s)\] (.+)$" % _DATE)
 _TAG_RE = re.compile(r"^\[(rule|decision|task)\] ")
-_CAPS_RE = re.compile(r"^[A-Z]{2,}(?: \[|:)")  # RETIRED [..] or DONE: is not untagged text (F90.a)
+_CAPS_RE = re.compile(r"^(?:SUPERSEDED|RESOLVED|[A-Z]{2,}(?: \[|:| \d{4}-\d{2}-\d{2}))")  # RETIRED [..], DONE: or DONE 2026-11-15: is not active text (F90.a)
 _ID_RE = re.compile(r"^- D(\d+) ")
 _RID_RE = re.compile(r"^([A-Za-z0-9_-]+)(?:/([A-Za-z0-9_-]+))?:(\d+)$")
 _HIT_TAIL_RE = re.compile(r"^\d{4}-")
@@ -2139,7 +2142,7 @@ def parse_decision(line):
                 return None
             text = m.group(3)
             tm = _TAG_RE.match(text)
-            if not tm and _CAPS_RE.match(text):
+            if _CAPS_RE.match(text[tm.end():] if tm else text):
                 return None
             d = {"form": form, "id": int(m.group(1)), "date": m.group(2), "text": text, "tag": tm.group(1) if tm else None,
                  "why": m.group(4) if form == "act" else None}
