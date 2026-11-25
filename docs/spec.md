@@ -1433,7 +1433,7 @@ Why: F42.2 never resolves a rule, so that the merge model cannot drop a standing
 
 **F89.c Resolved line.** An applied rule RESOLVE writes `- D<n> [<date>] RESOLVED [<today>]: <reason> (user: "<quote>") | was: <original text without the id and date prefix>`. This is the F42.2 RESOLVED form, so parsing, injection (never injected), counts (`ledger_resolved`) and `--ledger-repair` do not change. The health row counts it in `ledger_rule_resolved` too.
 
-**F89.d Prompt.** The merge prompt (F40.1, F42.2) changes the rule sentence to: `Never RESOLVE a rule on your own judgement. Only when a user message in the NEW CONVERSATION ends a rule (it is over, done, or no longer applies), output "RESOLVE D<n>: <reason> | user: \"<exact words of the user>\"".` Tasks keep the F42.2 form.
+**F89.d Prompt.** The merge prompt (F40.1, F42.2) changes the rule sentence to: `Never RESOLVE a rule on your own judgement. Only when a user message in the NEW CONVERSATION ends a rule (it is over, done, or no longer applies), output "RESOLVE D<n>: <reason> | user: "<exact words of the user>"".` Tasks keep the F42.2 form.
 
 **F89.e Maintenance stays strict.** `--ledger-maintain` (F42.4) has no conversation, so it never resolves a rule: its prompt keeps "never RESOLVE a rule", and the code rejects any rule RESOLVE in that mode.
 
@@ -1445,6 +1445,6 @@ Why: F42.2 never resolves a rule, so that the merge model cannot drop a standing
 5. A quote that differs only in case and spacing from the user text: applied.
 6. `RESOLVE D3: shipped` on an active task still resolves it (F42.2 unchanged).
 7. `--ledger-maintain` with a shim that outputs a rule RESOLVE with a `| user:` part: the rule stays active.
-8. The merge prompt text holds `Never RESOLVE a rule on your own judgement` and `| user: \"`.
+8. The merge prompt text holds `Never RESOLVE a rule on your own judgement` and `| user: "` (plain quote, no backslash).
 9. `HOOK_VERSION` is 1.23.1 in all hook files. `install.sh` VERSION is 0.21.1.
 
