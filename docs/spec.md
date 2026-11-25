@@ -1456,6 +1456,7 @@ Why: a cold review (2026-11-25) found that the tests pin exact text (39% of the 
 - G1 Decisions line. A line of a decisions list is exactly one of:
   - active: `- D<n> [<date>] [<tag>] <text> | why: <why>`, where `<tag>` is `rule`, `decision` or `task`;
   - active untagged (older lists): `- D<n> [<date>] <text> | why: <why>`, where `<text>` does not start with a word in capitals followed by ` [` or `:` (so `RETIRED [..]` or `DONE:` is not untagged text);
+  - active with no why (legacy, F44.11(e)): `- D<n> [<date>] [<tag>] <text>` or `- D<n> [<date>] <text>` with no ` | why: ` part, under the same rule for `<text>` as the untagged form. It stays valid: it is injected as an active entry and logged as `nowhy`, as F44.11(e) and its acceptance item 162 state;
   - superseded: `- D<n> [<date>] SUPERSEDED by D<m> [<date>]: <old text> | because: <reason>`;
   - resolved: `- D<n> [<date>] RESOLVED [<date>]: <reason> | was: <old text>`;
   - a header line (starts with `#`), a blank line, or a comment line (starts with `<!--`).
