@@ -1423,3 +1423,28 @@ Why: one live list has 290 active entries (104,000 characters). The room is 3 pa
 12. `install.sh` in a temp HOME: `settings.json` has a SessionStart entry with matcher `clear` and the 3 ledger commands; a second install adds none; `uninstall.sh` removes it and keeps other hooks. A settings file with no `clear` entry: `--check` names it as an install problem.
 13. `HOOK_VERSION` is 1.23.0 in all hook files. `install.sh` VERSION is 0.21.0.
 
+## F89 End a rule with the user's words (2026-11-25)
+
+Why: F42.2 never resolves a rule, so that the merge model cannot drop a standing rule on its own judgement. But a rule that is simply over (a past date, a one-time event) then stays active for ever, unless a new rule replaces it. On 2026-11-25 the user ended 3 rules in a live list, and the merge kept all 3 (about 1,450 characters of rule room). F89 lets the merge resolve a rule only when the user's own words in the new conversation end it, and the code checks those words.
+
+**F89.a Output form.** The merge model may output `RESOLVE D<n>: <reason> | user: "<quote>"` for an active `[rule]` entry. `<quote>` is 8 to 300 characters, copied from a user message in the NEW CONVERSATION part of the merge input, that ends this rule or names its id as ended. The F42.2 form `RESOLVE D<n>: <reason>` with no `| user:` part is still ignored for a rule.
+
+**F89.b Code check.** The code applies a rule RESOLVE only when all of these hold: the entry is active and tagged `[rule]`; the reason is not empty; the quote, after whitespace is collapsed to single spaces and case is ignored, is a substring of the text of a user message (role user, not tool results) in the new conversation that the merge received. Otherwise the line is ignored, and the health row counts it in `ledger_rule_resolve_rejected`.
+
+**F89.c Resolved line.** An applied rule RESOLVE writes `- D<n> [<date>] RESOLVED [<today>]: <reason> (user: "<quote>") | was: <original text without the id and date prefix>`. This is the F42.2 RESOLVED form, so parsing, injection (never injected), counts (`ledger_resolved`) and `--ledger-repair` do not change. The health row counts it in `ledger_rule_resolved` too.
+
+**F89.d Prompt.** The merge prompt (F40.1, F42.2) changes the rule sentence to: `Never RESOLVE a rule on your own judgement. Only when a user message in the NEW CONVERSATION ends a rule (it is over, done, or no longer applies), output "RESOLVE D<n>: <reason> | user: \"<exact words of the user>\"".` Tasks keep the F42.2 form.
+
+**F89.e Maintenance stays strict.** `--ledger-maintain` (F42.4) has no conversation, so it never resolves a rule: its prompt keeps "never RESOLVE a rule", and the code rejects any rule RESOLVE in that mode.
+
+**F89.f Acceptance.**
+1. Ledger with active rule D2. New conversation has the user message `D2 has ended, the date is past`. A shim merge outputs `RESOLVE D2: date passed | user: "D2 has ended, the date is past"`. D2 becomes `- D2 [<date>] RESOLVED [<today>]: date passed (user: "D2 has ended, the date is past") | was: <old text>`; it is in no injected part; `ledger_resolved` and `ledger_rule_resolved` are 1.
+2. The same, but the quote is not in any user message (for example only in an assistant message or a tool result): D2 stays active; `ledger_rule_resolve_rejected` is 1.
+3. `RESOLVE D2: done` with no `| user:` part on a rule: D2 stays active (as F42.2 test 126).
+4. A quote of 7 characters, or of 301 characters: ignored.
+5. A quote that differs only in case and spacing from the user text: applied.
+6. `RESOLVE D3: shipped` on an active task still resolves it (F42.2 unchanged).
+7. `--ledger-maintain` with a shim that outputs a rule RESOLVE with a `| user:` part: the rule stays active.
+8. The merge prompt text holds `Never RESOLVE a rule on your own judgement` and `| user: \"`.
+9. `HOOK_VERSION` is 1.23.1 in all hook files. `install.sh` VERSION is 0.21.1.
+
