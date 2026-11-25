@@ -10,7 +10,7 @@ Off switch: HANDOFF_AUTO_RECALL=0. The health log (auto-recall.jsonl) holds no p
 """
 import json, os, re, sys, threading, time
 
-HOOK_VERSION = "1.22.2"
+HOOK_VERSION = "1.23.0"
 HOME = os.path.expanduser("~")
 
 

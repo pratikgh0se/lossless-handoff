@@ -6,7 +6,7 @@
 
 This documentation uses ASD-STE100 Simplified Technical English.
 
-Current versions: product 0.20.2 (`install.sh`), hooks 1.22.2 (`HOOK_VERSION` in `hooks/precompact-handoff.py`, `hooks/postcompact-inject.py`, `hooks/auto-recall.py`, `hooks/recall-mcp.py`, `hooks/reanchor.py`, `hooks/claim-guard.py`, `hooks/history-guard.py` and `hooks/action-guard.py`).
+Current versions: product 0.21.0 (`install.sh`), hooks 1.23.0 (`HOOK_VERSION` in `hooks/precompact-handoff.py`, `hooks/postcompact-inject.py`, `hooks/auto-recall.py`, `hooks/recall-mcp.py`, `hooks/reanchor.py`, `hooks/claim-guard.py`, `hooks/history-guard.py` and `hooks/action-guard.py`).
 
 ![blocked baseline: plain Claude Code at 10 compactions: 58%](https://img.shields.io/badge/blocked%20baseline%3A%20plain%20at%2010%20compactions-58%25-c0392b) ![Lossless Handoff at 10 compactions: 100%](https://img.shields.io/badge/Lossless%20Handoff%20at%2010%20compactions-100%25-0b7a75) ![4 seeds, small benchmark](https://img.shields.io/badge/benchmark-4%20seeds-8197a0)
 
@@ -85,7 +85,7 @@ To check the install without a model call, run `python3 ~/.claude/hooks/postcomp
 
 **Uninstall.** Run `./uninstall.sh`. Add `--purge` to also delete the saved install defaults. Handoff files, indexes and decisions lists stay. See [docs/install.md](docs/install.md#uninstall).
 
-**Use it.** Work as usual. After a compaction, ask "what exactly did I say about X?". Claude runs recall and quotes you. Try it yourself, from a project folder: `python3 ~/.claude/hooks/recall.py user --last 5`. One call also takes several patterns or ids: `recall.py search "cache" "zebra"` and `recall.py open 1a2b3c4d:57 1a2b3c4d:90` (0.20.0). It prints nothing in a folder with no earlier chats.
+**Use it.** Work as usual. After a compaction, ask "what exactly did I say about X?". Claude runs recall and quotes you. Try it yourself, from a project folder: `python3 ~/.claude/hooks/recall.py user --last 5`. One call also takes several patterns or ids: `recall.py search "cache" "zebra"` and `recall.py open 1a2b3c4d:57 1a2b3c4d:90` (0.20.0). It prints nothing in a folder with no earlier chats. To read decisions list entries in full, run `recall.py decisions "<words>"`, `recall.py decisions D12` or `recall.py decisions --kind rule` (0.21.0).
 
 ## How it works
 

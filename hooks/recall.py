@@ -384,7 +384,7 @@ def first_cwd(path):
     return ""
 
 
-HOME_ONLY_CMDS = ("search", "open", "user", "history", "handoffs", "map", "describe", "nodes")
+HOME_ONLY_CMDS = ("search", "open", "user", "history", "handoffs", "map", "describe", "nodes", "decisions")
 
 
 def home_project_root():
@@ -2090,6 +2090,73 @@ def cmd_handoffs(a, root):
             for m, p, s in rows]
 
 
+# ---------------------------------------------------------------- decisions (F88.a)
+
+_ACT_RE = re.compile(r"^- D(\d+) \[\d{4}-\d{2}-\d{2}\] (.+)$")
+_CLOSED_RE = re.compile(r"^- D(\d+) \[\d{4}-\d{2}-\d{2}\] (SUPERSEDED by D\d+ \[\d{4}-\d{2}-\d{2}\]: .+ \| because: .+|"
+                        r"RESOLVED \[\d{4}-\d{2}-\d{2}\]: .+ \| was: .+)$")
+_KIND_ORDER = {"rule": 0, "decision": 1, "task": 2}
+
+
+def read_decisions(path):
+    """F88.a: (active, closed) entries of a decisions.md, same reading as the SessionStart ledger (F42.1). Each entry is a
+    dict (id, kind, line). Active: rules, decisions (untagged count as decision), tasks, each newest first. Closed: newest first."""
+    act, closed = {}, {}
+    with open(path, encoding="utf-8", errors="replace") as f:
+        for ln in f.read().splitlines():
+            ln = ln.strip()
+            m = _CLOSED_RE.match(ln)
+            if m and int(m.group(1)) >= 1:
+                closed.setdefault(int(m.group(1)), {"id": int(m.group(1)), "kind": "closed", "line": ln})
+                continue
+            m = _ACT_RE.match(ln)
+            if not m or int(m.group(1)) < 1 or re.match(r"^(SUPERSEDED by |RESOLVED \[)", m.group(2)):
+                continue
+            i = int(m.group(1))
+            tm = re.match(r"^\[(rule|decision|task)\] ", m.group(2))
+            if i not in act:
+                act[i] = {"id": i, "kind": tm.group(1) if tm else "decision", "line": ln}
+    ents = sorted((e for e in act.values() if e["id"] not in closed), key=lambda e: (_KIND_ORDER[e["kind"]], -e["id"]))
+    return ents, sorted(closed.values(), key=lambda e: -e["id"])
+
+
+def cmd_decisions(a, root):
+    pats = a.patterns
+    if len(pats) > MAX_PATTERNS:
+        raise UsageError("at most %d patterns in one call" % MAX_PATTERNS)
+    path = os.path.abspath(os.path.join(ledger_dir_for(root), "decisions.md"))
+    try:
+        act, closed = read_decisions(path)
+    except OSError:
+        return ["no decisions list for %s" % root]
+    tests = []
+    for p in pats:
+        if re.fullmatch(r"[Dd]\d+", p):  # a bare id names one entry exactly: D2 does not match D20
+            tests.append(lambda e, want=int(p[1:]): e["id"] == want)
+            continue
+        q = loose_pattern(p)
+        try:
+            rx = re.compile(q, re.I)
+        except re.error:
+            rx = re.compile(re.escape(p), re.I)
+        tests.append(lambda e, rx=rx: bool(rx.search(e["line"])))
+
+    def keep(e):
+        return not tests or any(t(e) for t in tests)
+    hits = [e for e in act if keep(e) and (not a.kind or e["kind"] == a.kind)]
+    chits = [e for e in closed if keep(e)] if a.closed and not a.kind else []
+    head = "decisions: %d of %d active entries match (%s)" % (len(hits), len(act), path)
+    lines = [redact(e["line"]) for e in hits + chits]
+    out, used = [head], len(head)
+    for i, x in enumerate(lines):
+        if used + len(x) + 1 > OUT_CAP - 80:
+            out.append("(%d more; add a pattern or --kind)" % (len(lines) - i))
+            break
+        out.append(x)
+        used += len(x) + 1
+    return out
+
+
 # ---------------------------------------------------------------- main
 
 class Parser(argparse.ArgumentParser):
@@ -2146,6 +2213,11 @@ def build_parser():
     p = sub.add_parser("nodes")
     p.add_argument("--backfill", action="store_true")
     common(p)
+    p = sub.add_parser("decisions")  # F88.a
+    p.add_argument("patterns", nargs="*")
+    p.add_argument("--kind", choices=["rule", "decision", "task"], default=None)
+    p.add_argument("--closed", action="store_true")
+    common(p)
     p = sub.add_parser("session-end")
     p = sub.add_parser("handoffs")
     common(p)
@@ -2195,7 +2267,8 @@ def _main(argv):
                 return 2
             root = home
         fn = {"search": cmd_search, "open": cmd_open, "user": cmd_user, "index": cmd_index, "handoffs": cmd_handoffs,
-              "map": cmd_map, "describe": cmd_describe, "nodes": cmd_nodes, "history": cmd_history}[a.cmd]
+              "map": cmd_map, "describe": cmd_describe, "nodes": cmd_nodes, "history": cmd_history,
+              "decisions": cmd_decisions}[a.cmd]
         big = a.cmd == "open" and (a.full or a.from_ is not None)
         emit(fn(a, root), 10 ** 9 if a.cmd == "history" and a.all else OPEN_FULL_CAP if big else OUT_CAP)
         return getattr(a, "exit_code", 0)

@@ -4,6 +4,21 @@ Lossless Handoff, formerly claude-handoff.
 
 ## [Unreleased]
 
+## [0.21.0] - 2026-11-25
+
+Decisions list at scale (hooks 1.23.0). Spec: F88 in `docs/spec.md`. Restart Claude Code after the install: the installer adds a `clear` entry to `settings.json`.
+
+### Added
+
+- F88.a: `recall.py decisions [<pattern> ...] [--kind rule|decision|task] [--closed]` prints full lines of the decisions list. A bare `D12` names one entry. It makes no model call and writes no file.
+- F88.c: a subagent gets the full text of the newest rules up to 4,000 characters, then an index line for each other rule (9,900 characters at most). The health row has `rules_index`.
+- F88.d: `--check --verbose` prints an `info: decisions list` line. `--check` reports rules that use 90% of the room or more, and rules that are index lines only.
+- F88.e: the installer registers the three `--ledger --part N` commands for the SessionStart matcher `clear`; `uninstall.sh` removes them; `--check` reports a missing `clear` entry as an install problem.
+
+### Changed
+
+- F88.b: the index note and the count line of the decisions list name `recall.py decisions`. The `[more rules: ...]` line names `recall.py decisions --kind rule`.
+
 ## [0.20.2] - 2026-11-25
 
 Safety fixes (hooks 1.22.2). Spec: F87 in `docs/spec.md`.

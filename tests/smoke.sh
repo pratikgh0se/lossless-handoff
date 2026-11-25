@@ -55,12 +55,12 @@ assert d["note"] == "café ☃"
 assert d["hooks"]["PreToolUse"][0]["hooks"][0]["command"] == "echo hi"
 assert [x["command"] for x in d["hooks"]["PreCompact"][0]["hooks"]] == ["python3 %s/precompact-handoff.py" % h]
 ss = {g["matcher"]: [x["command"] for x in g["hooks"]] for g in d["hooks"]["SessionStart"]}
-assert sorted(ss) == ["compact", "resume", "startup"], ss
-pi = "python3 %s/postcompact-inject.py" % h
+assert sorted(ss) == ["clear", "compact", "resume", "startup"], ss
+pi ="python3 %s/postcompact-inject.py" % h
 assert ss["compact"] == [pi + " --part 1", pi + " --part 2", pi + " --part 3", pi + " --ledger --part 1", pi + " --ledger --part 2", pi + " --ledger --part 3"], ss
 led3 = [pi + " --ledger --part %d" % n for n in (1, 2, 3)]
 chk = pi + " --check"
-assert ss["startup"] == ["echo hello"] + led3 + [chk] and ss["resume"] == led3 + [chk], ss
+assert ss["startup"] == ["echo hello"] + led3 + [chk] and ss["resume"] == led3 + [chk] and ss["clear"] == led3, ss
 assert all(x["timeout"] == 10 for g in d["hooks"]["SessionStart"] for x in g["hooks"] if "inject" in x["command"] and "--check" not in x["command"])
 assert all(x["timeout"] == 5 for g in d["hooks"]["SessionStart"] for x in g["hooks"] if x["command"].endswith("--check"))
 assert ss["compact"].count(chk) == 0
@@ -75,7 +75,7 @@ python3 - "$H" <<'PY'
 import hashlib, json, sys
 h = sys.argv[1]
 m = json.load(open(h + "/.handoff-manifest.json"))
-assert m["version"] == "1.22.2" and m["installed_at"], m
+assert m["version"] == "1.23.0" and m["installed_at"], m
 pkg = ["lossless_handoff/%s.py" % n for n in "__init__ transcript summary ledger handoff runtime redaction pipeline reconcile prove claims".split()]
 assert sorted(m["files"]) == sorted(["claims.json", "handoff-nudge.py", "postcompact-inject.py", "precompact-handoff.py", "recall.py"] + pkg), m
 for n, want in m["files"].items():
@@ -501,7 +501,7 @@ d = json.load(open(sys.argv[1])); h = sys.argv[2]
 assert d["allowedMcpServers"] == []
 assert [g["hooks"][0]["command"] for g in d["hooks"]["PreCompact"]] == ["python3 %s/precompact-handoff.py" % h]
 ss = {g["matcher"]: [x["command"] for x in g["hooks"]] for g in d["hooks"]["SessionStart"]}
-assert sorted(ss) == ["compact", "resume", "startup"] and ss["startup"][-1].endswith("postcompact-inject.py --check"), ss
+assert sorted(ss) == ["clear", "compact", "resume", "startup"] and ss["startup"][-1].endswith("postcompact-inject.py --check"), ss
 assert d["hooks"]["SessionEnd"][0]["hooks"][0]["command"].endswith("recall.py session-end")
 assert d["hooks"]["SubagentStart"][0]["hooks"][0]["command"].endswith("postcompact-inject.py --subagent-start"), d["hooks"]
 PY
@@ -924,8 +924,8 @@ PY
   [ ! -e "$F/precompact-handoff.py" ] || fail "F66.a: uninstall did not finish its other work"
   rm "$F/llm_map.py" "$SK"; rmdir "$(dirname "$SK")"; o="$("$ROOT/uninstall.sh")"; ! grep -q "llm-map: kept" <<<"$o" || fail "F66.a: kept line without llm-map files"
   # F66.d versions
-  [ "$("$ROOT/install.sh" --version)" = "Lossless Handoff 0.20.2" ] || fail "F66.d: product version"
-  [ "$(grep -c '^HOOK_VERSION = "1.22.2"$' "$ROOT/hooks/precompact-handoff.py" "$ROOT/hooks/postcompact-inject.py" | grep -c ':1$')" = 2 ] || fail "F66.d: HOOK_VERSION"
+  [ "$("$ROOT/install.sh" --version)" = "Lossless Handoff 0.21.0" ] || fail "F66.d: product version"
+  [ "$(grep -c '^HOOK_VERSION = "1.23.0"$' "$ROOT/hooks/precompact-handoff.py" "$ROOT/hooks/postcompact-inject.py" | grep -c ':1$')" = 2 ] || fail "F66.d: HOOK_VERSION"
   # F66.c: README holds no claim markers; evidence page does; claims-lint default path
   ! grep -qE '\[C[1-9]\]' "$ROOT/README.md" && ! grep -qiE '^#+ .*proof|\*\*proof' "$ROOT/README.md" || fail "F66.c: README holds Proof or claim markers"
   grep -qE '\[C1\]' "$ROOT/docs/evidence.md" || fail "F66.c: docs/evidence.md has no markers"
@@ -972,7 +972,7 @@ rows = {json.loads(x)["sid"]: json.loads(x) for x in open(sys.argv[1]) if x.stri
 a, b = rows["f56a"], rows["f56b"]
 assert a["excerpt_chars"] > 0 and a["excerpt_dropped"] == 0, a
 assert b["excerpt_dropped"] > 0 and 0 < b["excerpt_chars"] <= 120000, b
-assert a["hook_version"] == "1.22.2"
+assert a["hook_version"] == "1.23.0"
 PY
   p="$(python3 "$ROOT/hooks/precompact-handoff.py" --prove --days 1; echo "rc=$?")"
   grep -qE "^excerpt cut: 1 of 2 compactions, median dropped [0-9]+ chars$" <<<"$p" || fail "F56.b: prove line: $p"
@@ -1138,7 +1138,7 @@ PY
 import json, sys
 rows = [json.loads(x) for x in open(sys.argv[1]) if x.strip()]
 r = [x for x in rows if x.get("event") == "subagent_start"][-1]
-assert r["rules"] == 2 and r["chars"] > 0 and r["hook_version"] == "1.22.2" and r["agent_type"] == "general-purpose", r
+assert r["rules"] == 2 and r["chars"] > 0 and r["hook_version"] == "1.23.0" and r["agent_type"] == "general-purpose", r
 PY
   # AC 262: no handoff text, no agent notes
   printf '# Handoff\n- cwd: %s\nLATESTTOKEN\n' "$PROJ" > "$STF/s58-latest.md"; printf 'AGENTTOKEN\n' > "$STF/s58-agent.md"
@@ -1159,11 +1159,12 @@ L = ["- D%d [2026-11-05] [rule] LONGRULE%d %s | why: x" % (i, i, "word " * 30) f
 open(sys.argv[1], "a").write("\n".join(L) + "\n")
 PY
   c="$(sin | python3 "$POST" --subagent-start | cx)"
-  [ "${#c}" -le 4001 ] || fail "F58: context is ${#c} chars"
+  [ "${#c}" -le 9900 ] || fail "F58: context is ${#c} chars"
   grep -q "^\[more rules: " <<<"$c" || fail "F58: no more-rules line"
   python3 - "$c" <<'PY'
 import sys
 c = sys.argv[1].rstrip("\n")
+c = c.split("\nINDEX (rules not shown in full above):")[0]  # F88.c: the full-text part is cut at 4,000 as before
 assert len(c) <= 4000, len(c)
 lines = c.split("\n")
 rl = [x for x in lines if x.startswith("- D")]
@@ -1912,7 +1913,7 @@ PY
   CMD="python3 $F/auto-recall.py"
   echo '{"model": "opus"}' > "$FS"
   grep -q -- "--auto-recall" <<<"$("$ROOT/install.sh" --help)" || fail "F67.a: --help lacks --auto-recall"
-  [ "$(grep -c '^HOOK_VERSION = "1.22.2"$' "$ROOT/hooks/auto-recall.py")" = 1 ] || fail "F67.e: auto-recall HOOK_VERSION"
+  [ "$(grep -c '^HOOK_VERSION = "1.23.0"$' "$ROOT/hooks/auto-recall.py")" = 1 ] || fail "F67.e: auto-recall HOOK_VERSION"
   # default install: not installed, not registered
   "$ROOT/install.sh" >/dev/null
   [ ! -e "$F/auto-recall.py" ] && ! grep -q "auto-recall" "$FS" && ! grep -q "auto-recall" "$F/.handoff-manifest.json" || fail "F67.a: default install holds auto-recall"
@@ -2077,9 +2078,9 @@ assert "(same full path for: open <id> [<id> ...]; user --last 20. One call take
 assert a.RECALL_RULE_LINE == '- recall rule: if your context does not clearly show an earlier number, path, name, command or decision, run the recall command above before you answer. Copy it exactly: full path, no cd. A failed or denied command is not "not found": run the exact command again. If no search can run, say so.', a.RECALL_RULE_LINE
 assert m.RULE == a.RECALL_RULE_LINE and m.INSTRUCTIONS.startswith(m.RULE)
 PY
-  # F83.g: every HOOK_VERSION constant is 1.22.2
-  ! grep -rn --include='*.py' -E '^HOOK_VERSION = "' "$ROOT/hooks" | grep -v '"1.22.2"' | grep -q . || fail "F83.g: a HOOK_VERSION is not 1.22.2"
-  [ "$(grep -rc --include='*.py' -E '^HOOK_VERSION = "1\.22\.2"$' "$ROOT/hooks" | grep -vc ':0$')" -ge 9 ] || fail "F83.g: fewer than 9 hooks at 1.22.2"
+  # F83.g: every HOOK_VERSION constant is 1.23.0
+  ! grep -rn --include='*.py' -E '^HOOK_VERSION = "' "$ROOT/hooks" | grep -v '"1.23.0"' | grep -q . || fail "F83.g: a HOOK_VERSION is not 1.23.0"
+  [ "$(grep -rc --include='*.py' -E '^HOOK_VERSION = "1\.23\.0"$' "$ROOT/hooks" | grep -vc ':0$')" -ge 9 ] || fail "F83.g: fewer than 9 hooks at 1.23.0"
   # F83.c: the PreCompact recall line (summary.py) holds the new text, the same as the inject line
   python3 - "$ROOT/hooks" <<'PY'
 import importlib.util, sys
@@ -2123,7 +2124,7 @@ SH
   [ ! -e "$F/recall-mcp.py" ] && ! grep -q "recall-mcp" "$F/.handoff-manifest.json" && [ ! -s "$FAKE_CLAUDE_LOG" ] || fail "F69: default install holds recall-mcp or called claude"
   ! grep -q "recall-mcp" <<<"$(PATH="$D/fakebin:$PATH" "$ROOT/install.sh" --dry-run)" || fail "F69: default dry-run mentions recall-mcp"
   grep -q -- "--recall-mcp" <<<"$("$ROOT/install.sh" --help)" || fail "F69: --help lacks --recall-mcp"
-  [ "$(grep -c '^HOOK_VERSION = "1.22.2"$' "$ROOT/hooks/recall-mcp.py")" = 1 ] || fail "F69: HOOK_VERSION"
+  [ "$(grep -c '^HOOK_VERSION = "1.23.0"$' "$ROOT/hooks/recall-mcp.py")" = 1 ] || fail "F69: HOOK_VERSION"
   # dry-run lists the file and the command; runs nothing
   o="$(PATH="$D/fakebin:$PATH" "$ROOT/install.sh" --recall-mcp --dry-run)"
   grep -q "install hook: .*/recall-mcp.py" <<<"$o" && grep -qF "claude mcp add --scope user lossless-recall -- $MC" <<<"$o" || fail "F69: dry-run: $o"
@@ -2236,7 +2237,7 @@ out, raw = run([
 by = {o.get("id"): o for o in out}
 assert [o.get("id") for o in out].count(2) == 1 and 99 not in by
 init = by[1]["result"]
-assert init["protocolVersion"] == "2025-06-18" and init["serverInfo"] == {"name": "lossless-recall", "version": "1.22.2"}, init
+assert init["protocolVersion"] == "2025-06-18" and init["serverInfo"] == {"name": "lossless-recall", "version": "1.23.0"}, init
 ins = init["instructions"]
 assert len(ins) < 4096 and "recall rule: if your context does not clearly show an earlier number, path, name, command or decision, run the recall command above before you answer. Copy it exactly: full path, no cd. A failed or denied command is not \"not found\": run the exact command again. If no search can run, say so." in ins and "search_earlier_chat" in ins, ins
 assert by[2]["result"] == {}
@@ -2299,7 +2300,7 @@ def tr(name, tokens):
 tr("t30k", 29985); tr("t60k", 59985); tr("t120k", 119985); tr("t20k", 19985)
 PY
   ra() { python3 -c 'import json,sys; print(json.dumps({"session_id":sys.argv[1],"transcript_path":sys.argv[2],"cwd":sys.argv[3],"hook_event_name":"PostToolUse","tool_name":"Bash"}))' "$1" "$D/$2.jsonl" "$W" | python3 "$HK"; }
-  [ "$(grep -c '^HOOK_VERSION = "1.22.2"$' "$HK")" = 1 ] || fail "F70: HOOK_VERSION"
+  [ "$(grep -c '^HOOK_VERSION = "1.23.0"$' "$HK")" = 1 ] || fail "F70: HOOK_VERSION"
   # below the interval: nothing, no state file
   [ -z "$(ra s1 t30k)" ] && [ ! -e "$HANDOFF_STATE_DIR/reanchor-s1.json" ] || fail "F70: output below 50,000"
   # at 60,000: exactly one JSON object, exact shape and first line, the rules block, the recall line is not required to exist here
@@ -2351,7 +2352,7 @@ PY
   set -e
   D="$T/f71"; mkdir -p "$D"; export HOME="$D/home"; mkdir -p "$HOME/.claude"
   export HANDOFF_STATE_DIR="$D/state"; HK="$ROOT/hooks/claim-guard.py"; LOG="$HANDOFF_STATE_DIR/claim-guard.jsonl"; unset HANDOFF_CLAIM_GUARD
-  [ "$(grep -c '^HOOK_VERSION = "1.22.2"$' "$HK")" = 1 ] || fail "F71: HOOK_VERSION"
+  [ "$(grep -c '^HOOK_VERSION = "1.23.0"$' "$HK")" = 1 ] || fail "F71: HOOK_VERSION"
   python3 - "$D" <<'PY'
 import json, sys
 d = sys.argv[1]
@@ -2807,7 +2808,7 @@ PY
   git -C "$W" init -q; : > "$W2/queue-limit"
   HG="$ROOT/hooks/history-guard.py"; AG="$ROOT/hooks/action-guard.py"; AR="$ROOT/hooks/auto-recall.py"
   for f in history-guard.py action-guard.py auto-recall.py guard_common.py; do
-    [ "$(grep -c '^HOOK_VERSION = "1.22.2"$' "$ROOT/hooks/$f")" = 1 ] || fail "F77: HOOK_VERSION of $f"
+    [ "$(grep -c '^HOOK_VERSION = "1.23.0"$' "$ROOT/hooks/$f")" = 1 ] || fail "F77: HOOK_VERSION of $f"
   done
   python3 - "$HOME" "$W" "$D" <<'PY'
 import json, os, re, sys
@@ -3383,9 +3384,9 @@ PY
   o="$(printf '{"session_id":"s84","cwd":"%s","agent_id":"agx","agent_type":"general-purpose","hook_event_name":"SubagentStart"}' "$PROJ" | python3 "$HK/postcompact-inject.py" --subagent-start 2>/dev/null)"
   grep -qF -- "several patterns or several ids" <<<"$o" || fail "F84.9: SubagentStart: $o"
   # F84.f.10: versions
-  [ "$(grep -h '^HOOK_VERSION = ' "$ROOT"/hooks/*.py | sort -u)" = 'HOOK_VERSION = "1.22.2"' ] || fail "F84.10: HOOK_VERSION"
-  [ "$("$ROOT/install.sh" --version)" = "Lossless Handoff 0.20.2" ] || fail "F84.10: install.sh VERSION"
-  grep -q 'product 0.20.2' "$ROOT/README.md" && grep -q 'hooks 1.22.2' "$ROOT/README.md" || fail "F84.e: README version line"
+  [ "$(grep -h '^HOOK_VERSION = ' "$ROOT"/hooks/*.py | sort -u)" = 'HOOK_VERSION = "1.23.0"' ] || fail "F84.10: HOOK_VERSION"
+  [ "$("$ROOT/install.sh" --version)" = "Lossless Handoff 0.21.0" ] || fail "F84.10: install.sh VERSION"
+  grep -q 'product 0.21.0' "$ROOT/README.md" && grep -q 'hooks 1.23.0' "$ROOT/README.md" || fail "F84.e: README version line"
   ok "F84: batch open and search, caps, bad ids, usage line, recall line, versions"
 )
 
@@ -3518,7 +3519,7 @@ PY
   # F86.e.5 and 6: versions
   IV="$(sed -n 's/^VERSION="\(.*\)"$/\1/p' "$ROOT/install.sh")"
   HV="$(grep -h '^HOOK_VERSION = ' "$ROOT"/hooks/*.py | sort -u | sed 's/.*"\(.*\)"/\1/')"
-  [ "$IV" = 0.20.2 ] && [ "$HV" = 1.22.2 ] || fail "F86.6: versions $IV $HV"
+  [ "$IV" = 0.21.0 ] && [ "$HV" = 1.23.0 ] || fail "F86.6: versions $IV $HV"
   grep -q "^Current versions: product $IV (" "$ROOT/README.md" && grep -q "hooks $HV (" "$ROOT/README.md" || fail "F86.5: README version line differs from install.sh or HOOK_VERSION"
   grep -q 'Check: python3 ~/.claude/hooks/postcompact-inject.py --check --verbose' "$ROOT/install.sh" || fail "F86.c: installer last line"
   ok "F86: two classes, verbose mode, allow rule, versions"
@@ -3670,6 +3671,169 @@ rows = [json.loads(x) for x in open(os.path.join(st, "receipts.jsonl"))]
 assert rows and rows[-1]["health_ts"] == h["ts"], (rows, h)
 PY
   ok "F87.d: used handoff flagged, fresh row and row without health_ts unchanged, unreadable receipts ignored, health_ts written"
+)
+
+# F88: decisions list at scale (lookup command, pointers, subagent rule index, room signal, entry after /clear)
+(
+  set -euo pipefail
+  D="$T/f88"; mkdir -p "$D/home/.claude"; export HOME="$D/home"
+  export HANDOFF_STATE_DIR="$D/state"; mkdir -p "$HANDOFF_STATE_DIR"; chmod 700 "$HANDOFF_STATE_DIR"
+  RC="$ROOT/hooks/recall.py"; PI="$ROOT/hooks/postcompact-inject.py"
+  P="$D/proj"; P2="$D/proj2"; mkdir -p "$P" "$P2"; git -C "$P" init -q; git -C "$P2" init -q
+  P="$(cd "$P" && pwd -P)"; P2="$(cd "$P2" && pwd -P)"
+  GEN() { python3 - "$RC" "$P" "$@" <<'PY'
+import importlib.util, os, sys
+os.umask(0o077)
+rc, proj, mode = sys.argv[1:4]
+sp = importlib.util.spec_from_file_location("lh_rc88", rc); m = importlib.util.module_from_spec(sp); sp.loader.exec_module(m)
+ld = m.ledger_dir_for(m.project_root(proj)); os.makedirs(ld, exist_ok=True)
+def act(i, kind, text, tagged=True):
+    return "- D%d [2026-11-%02d] %s%s | why: reason %d" % (i, i % 28 + 1, "[%s] " % kind if tagged else "", text, i)
+def sized(i, kind, n):
+    return act(i, kind, "z" * (n - len(act(i, kind, ""))))
+small = [act(1, "rule", "always run tests"), act(2, "decision", "use grafana for dashboards"), act(3, "task", "write docs"),
+         act(4, "rule", "no secrets in logs"), act(5, "decision", "keep caches on disk", False), act(6, "decision", "pick sqlite"),
+         act(7, "rule", "use the stable api"), act(8, "task", "fix flaky test"), act(9, "decision", "drop the old api"),
+         "- D10 [2026-11-01] SUPERSEDED by D9 [2026-11-02]: old api stays | because: replaced",
+         "- D11 [2026-11-01] RESOLVED [2026-11-03]: ship docs | was: task write more docs"]
+if mode == "small":
+    L = small
+elif mode == "token":
+    L = small + [act(12, "decision", "deploy key " + "ghp_" + "abcdefghijklmnopqrstuvwxyz0123456789")]
+elif mode == "rules":  # rules <count> [<decisions> [<rule length> [<decision length>]]]
+    n = int(sys.argv[4]); nd = int(sys.argv[5]) if len(sys.argv) > 5 else 0
+    rl = int(sys.argv[6]) if len(sys.argv) > 6 else 350; dl = int(sys.argv[7]) if len(sys.argv) > 7 else 400
+    L = [sized(i, "rule", rl) for i in range(1, n + 1)] + [sized(n + j, "decision", dl) for j in range(1, nd + 1)]
+else:
+    raise SystemExit("bad mode")
+open(os.path.join(ld, "decisions.md"), "w").write("\n".join(L) + "\n")
+PY
+  }
+  SA() { printf '{"cwd":"%s","session_id":"s88","hook_event_name":"SubagentStart","agent_type":"general-purpose"}' "$P" | python3 "$PI" --subagent-start; }
+  PART() { printf '{"cwd":"%s","hook_event_name":"SessionStart","source":"clear"}' "$P" | python3 "$PI" --ledger --part "$1" | python3 -c 'import json,sys; t=sys.stdin.read(); print(json.loads(t)["hookSpecificOutput"]["additionalContext"] if t.strip() else "", end="")'; }
+  # F88.f.1: counts and order
+  GEN small
+  o="$(python3 "$RC" decisions --cwd "$P")"
+  [ "$(head -n 1 <<<"$o" | sed 's/ (.*//')" = "decisions: 9 of 9 active entries match" ] || fail "F88.1: line 1: $(head -n 1 <<<"$o")"
+  [ "$(tail -n +2 <<<"$o" | sed 's/^- \(D[0-9]*\) .*/\1/' | tr '\n' ' ')" = "D7 D4 D1 D9 D6 D5 D2 D8 D3 " ] || fail "F88.1: order: $o"
+  [ "$(python3 "$RC" decisions --kind decision --cwd "$P" | grep -c '^- D')" = 4 ] || fail "F88.1: --kind decision"
+  [ "$(python3 "$RC" decisions --closed --cwd "$P" | grep -c '^- D')" = 11 ] || fail "F88.1: --closed"
+  # F88.f.2: one id, several words
+  o="$(python3 "$RC" decisions D2 --cwd "$P")"
+  [ "$(tail -n +2 <<<"$o")" = "$(grep '^- D2 ' "$HANDOFF_STATE_DIR"/projects/*/decisions.md)" ] || fail "F88.2: D2 line: $o"
+  o="$(python3 "$RC" decisions "grafana" "disk" --cwd "$P")"
+  [ "$(grep -c '^- D' <<<"$o")" = 2 ] && [ "$(grep -c '^- D2 ' <<<"$o")" = 1 ] && [ "$(grep -c '^- D5 ' <<<"$o")" = 1 ] || fail "F88.2: two words: $o"
+  # F88.f.3: a planted token is masked
+  GEN token
+  o="$(python3 "$RC" decisions --cwd "$P")"
+  grep -q '\[REDACTED:github\]' <<<"$o" && ! grep -q 'ghp_abcdefghijklmnopqrstuvwxyz0123456789' <<<"$o" || fail "F88.3: token: $o"
+  # F88.f.4: no ledger for the folder: text, exit 0, no folder
+  before="$(find "$HANDOFF_STATE_DIR" | sort | cksum)"
+  r=0; o="$(python3 "$RC" decisions --cwd "$P2")" || r=$?
+  [ "$r" = 0 ] && [ "$o" = "no decisions list for $P2" ] && [ "$(find "$HANDOFF_STATE_DIR" | sort | cksum)" = "$before" ] || fail "F88.4: r=$r o=$o"
+  # F88.f.5: the session of project A cannot read project B
+  python3 - "$P" "$HOME" <<'PY'
+import json, os, re, sys
+proj, home = sys.argv[1:3]
+d = os.path.join(home, ".claude", "projects", re.sub(r"[^A-Za-z0-9]", "-", proj)); os.makedirs(d)
+open(os.path.join(d, "sA88.jsonl"), "w").write(json.dumps({"type": "user", "sessionId": "sA88", "cwd": proj, "timestamp": "2026-11-20T10:00:00Z", "message": {"role": "user", "content": "hello"}}) + "\n")
+PY
+  r=0; CLAUDE_CODE_SESSION_ID=sA88 python3 "$RC" decisions --cwd "$P2" >"$D/o5" 2>"$D/e5" || r=$?
+  [ "$r" = 2 ] && grep -q 'is another project' "$D/e5" || fail "F88.5: r=$r $(cat "$D/e5")"
+  ok "F88.a: lookup, order, kinds, closed entries, ids, several words, masking, no ledger, project scope"
+  # F88.f.6: 60 rules of 350 characters
+  GEN rules 60
+  : >"$HANDOFF_STATE_DIR/health.jsonl"
+  SA | python3 -c '
+import json, re, sys
+c = json.load(sys.stdin)["hookSpecificOutput"]["additionalContext"]
+assert len(c) <= 9900, len(c)
+assert "INDEX (rules not shown in full above):" in c
+for i in range(1, 61):
+    assert len(re.findall(r"(?m)^- D%d " % i, c)) == 1, i
+assert "recall.py decisions --kind rule" in c and "recall.py search \"rule\"" not in c
+' || fail "F88.6: 60 rules"
+  python3 - "$HANDOFF_STATE_DIR/health.jsonl" <<'PY' || fail "F88.6: health row"
+import json, sys
+r = [json.loads(x) for x in open(sys.argv[1]) if '"subagent_start"' in x][-1]
+assert r["rules"] >= 1 and r["rules_index"] >= 1 and r["rules"] + r["rules_index"] == 60, r
+PY
+  # F88.f.7: 2 rules, no index
+  GEN rules 2 0 120
+  SA | python3 -c '
+import json, sys
+c = json.load(sys.stdin)["hookSpecificOutput"]["additionalContext"]
+assert "INDEX" not in c and "[more rules" not in c
+assert c.count("\n- D1 ") == 1 and c.count("\n- D2 ") == 1 and "z" * 40 in c
+' || fail "F88.7: 2 rules"
+  # F88.f.8: 400 rules end with a pointer line that gives a count
+  GEN rules 400
+  SA | python3 -c '
+import json, re, sys
+c = json.load(sys.stdin)["hookSpecificOutput"]["additionalContext"]
+assert len(c) <= 9900, len(c)
+assert re.search(r"^\[more rules: [0-9]+ not listed above; .*recall\.py decisions --kind rule", c.splitlines()[-1]), c.splitlines()[-1]
+' || fail "F88.8: 400 rules"
+  ok "F88.c: 60 rules indexed, 2 rules unchanged, 400 rules end with a count, health row has rules_index"
+  # F88.f.9: a ledger over the room: pointers in the parts, each part below 10,000
+  GEN rules 30 600 300 400
+  for n in 1 2 3; do PART "$n" >"$D/part$n"; [ "$(python3 -c 'import sys; print(len(open(sys.argv[1], encoding="utf-8").read()))' "$D/part$n")" -lt 10000 ] || fail "F88.9: part $n too long"; done
+  grep -q 'Index entries are summaries: before you act on one, read the full entry: python3 .*recall.py decisions D<n>' "$D/part1" "$D/part2" "$D/part3" || fail "F88.9: index note"
+  cat "$D/part1" "$D/part2" "$D/part3" | grep -q '^- ([0-9]* more active entries not listed; search them: python3 .*recall.py decisions "<words>")' || fail "F88.9: count line"
+  ok "F88.b: index note and count line name recall.py decisions, parts stay below 10,000"
+  # F88.f.10 to 11: the room signal
+  CK88() { (cd "$P" && HOME="$T/home" python3 "$H/postcompact-inject.py" --check "$@" 2>&1 || true); }
+  GEN rules 3 0 120
+  o="$(CK88 --verbose)"
+  grep -q '^info: decisions list: 3 rules, [0-9]* of [0-9]* characters of full-text room ([0-9]*%); 3 active entries; 0 not listed$' <<<"$o" || fail "F88.10: info line: $o"
+  ! grep -q 'decisions list: rules\|index lines only' <<<"$o" && ! CK88 | grep -q 'decisions list' || fail "F88.10: problem on a small list"
+  ROOMN="$(sed -n 's/^info: decisions list: [0-9]* rules, [0-9]* of \([0-9]*\) characters.*/\1/p' <<<"$o")"
+  GEN rules "$(python3 -c "print(int($ROOMN * 0.955 / 201))")" 0 200
+  o="$(CK88)"
+  grep -q 'decisions list: rules use 95% of the room; retire or merge rules (recall.py decisions --kind rule)' <<<"$o" && ! grep -q 'Run the installer' <<<"$o" || fail "F88.11: 95%: $o"
+  GEN rules 200 0 300
+  o="$(CK88)"
+  grep -q 'decisions list: [0-9][0-9]* rules are index lines only' <<<"$o" && ! grep -q 'Run the installer' <<<"$o" || fail "F88.11: index only: $o"
+  ok "F88.d: info line, 95% problem, index-only problem, no installer advice"
+  # F88.f.12: the clear entry
+  H12="$D/home12"; mkdir -p "$H12/.claude"; S12="$H12/.claude/settings.json"
+  printf '%s' '{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"echo keep"}]}]}}' >"$S12"
+  cp "$S12" "$D/s12.orig"
+  env -u HANDOFF_STATE_DIR HOME="$H12" "$ROOT/install.sh" --no-nightly --dry-run >/dev/null
+  cmp -s "$S12" "$D/s12.orig" || fail "F88.12: dry-run changed settings"
+  env -u HANDOFF_STATE_DIR HOME="$H12" "$ROOT/install.sh" --no-nightly >/dev/null || fail "F88.12: install failed"
+  CLR='import json, sys
+g = [x for x in json.load(open(sys.argv[1]))["hooks"]["SessionStart"] if x.get("matcher") == "clear"]
+assert len(g) == 1, g
+cmds = [h["command"] for h in g[0]["hooks"]]
+assert len(cmds) == 3 and all(c.endswith("postcompact-inject.py --ledger --part %d" % (i + 1)) for i, c in enumerate(cmds)), cmds'
+  python3 -c "$CLR" "$S12" || fail "F88.12: clear entry after install"
+  env -u HANDOFF_STATE_DIR HOME="$H12" "$ROOT/install.sh" --no-nightly >/dev/null || fail "F88.12: second install failed"
+  python3 -c "$CLR" "$S12" || fail "F88.12: clear entry after second install"
+  o="$(env -u HANDOFF_STATE_DIR HOME="$H12" HANDOFF_STATE_DIR="$D/state12" python3 "$H12/.claude/hooks/postcompact-inject.py" --check 2>&1 || true)"
+  ! grep -q 'clear hook' <<<"$o" || fail "F88.12: --check names a clear entry that is there: $o"
+  python3 - "$S12" <<'PY'
+import json, sys
+p = sys.argv[1]; d = json.load(open(p))
+d["hooks"]["SessionStart"] = [x for x in d["hooks"]["SessionStart"] if x.get("matcher") != "clear"]
+json.dump(d, open(p, "w"))
+PY
+  o="$(env HOME="$H12" HANDOFF_STATE_DIR="$D/state12" python3 "$H12/.claude/hooks/postcompact-inject.py" --check 2>&1 || true)"
+  grep -q 'no SessionStart clear hook runs postcompact-inject.py' <<<"$o" && grep -q 'Run the installer again' <<<"$o" || fail "F88.12: --check without the clear entry: $o"
+  env -u HANDOFF_STATE_DIR HOME="$H12" "$ROOT/install.sh" --no-nightly >/dev/null || fail "F88.12: install after removal failed"
+  python3 -c "$CLR" "$S12" || fail "F88.12: clear entry back"
+  env -u HANDOFF_STATE_DIR HOME="$H12" "$ROOT/uninstall.sh" >/dev/null || fail "F88.12: uninstall failed"
+  python3 - "$S12" <<'PY' || fail "F88.12: uninstall result"
+import json, sys
+d = json.load(open(sys.argv[1]))
+assert not [x for x in d["hooks"].get("SessionStart", []) if x.get("matcher") == "clear" and x.get("hooks")], d
+assert d["hooks"]["PreToolUse"][0]["hooks"][0]["command"] == "echo keep", d
+PY
+  ok "F88.e: clear entry installed once, dry-run writes nothing, --check names a missing entry, uninstall keeps other hooks"
+  # F88.f.13: versions
+  [ "$(grep -h '^HOOK_VERSION = ' "$ROOT"/hooks/*.py | sort -u)" = 'HOOK_VERSION = "1.23.0"' ] || fail "F88.13: HOOK_VERSION"
+  [ "$("$ROOT/install.sh" --version)" = "Lossless Handoff 0.21.0" ] || fail "F88.13: install.sh VERSION"
+  ok "F88.13: versions"
 )
 
 "$ROOT/uninstall.sh" >"$T/un.out"

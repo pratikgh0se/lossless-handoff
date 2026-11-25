@@ -78,7 +78,7 @@ HARD_MAX = 9900    # each part's total output (warning + header + content + cont
 INLINE_MAX = 9700  # content target per part
 NAMES_MAX = 150    # the section-name list in a continuation line is cut to this many chars
 MAX_PARTS = 3      # F37.6
-HOOK_VERSION = "1.22.2"
+HOOK_VERSION = "1.23.0"
 
 
 def hooks_home():
@@ -365,7 +365,15 @@ def ledger_part_head(k, path):
 
 
 def index_note(path):
-    return f"Index entries are summaries: read the full entry in {path} before acting on one.\n"
+    # F88.b: the pointer names the lookup command (the path argument stays for callers)
+    return rpath("Index entries are summaries: before you act on one, read the full entry: "
+                 "python3 ~/.claude/hooks/recall.py decisions D<n>\n")
+
+
+def more_entries_line(k):
+    """F88.b: the count line of the ledger index."""
+    return rpath(f"- ({k} more active entries not listed; search them: "
+                 f"python3 ~/.claude/hooks/recall.py decisions \"<words>\")")
 
 
 ACT_LINE_RE = re.compile(r"^- D(\d+) \[\d{4}-\d{2}-\d{2}\] (.+) \| why: .+$")
@@ -467,7 +475,7 @@ def plan_ledger(ents, path):
             mid = (lo + hi) // 2
             drop = set([i for i in reversed(rest) if ents[i]["kind"] != "rule"][:mid])
             kept = [idx_all[i] for i in rest if i not in drop]
-            cl = f"- ({mid} more active entries not listed; read the full ledger)" if mid else ""
+            cl = more_entries_line(mid) if mid else ""
             r = pack(full_lines[:n], kept, cl, path)
             if r is not None:
                 best, hi = r, mid - 1
@@ -518,6 +526,7 @@ SUBAGENT_PREAMBLE = ("These are the user's standing rules for the main session o
 SUBAGENT_HEAD = ("Project rules for this repo (standing; from the Lossless Handoff decisions list; the user's latest "
                  "words win):")
 SUBAGENT_MAX = 4000
+SUBAGENT_TOTAL = 9900  # F88.c: the whole additionalContext, with the rule index
 
 
 def ledger_path_for(cwd):
@@ -536,22 +545,25 @@ def ledger_path_for(cwd):
     return os.path.abspath(os.path.join(HANDOFFS_DIR, "projects", key, "decisions.md"))
 
 
-def subagent_context(path, preamble=True):
-    """F58.a: -> (text, number of rule lines in it). Only active `rule` entries, newest first, cut at an entry boundary."""
+def subagent_context(path, preamble=True, index=True):
+    """F58.a + F88.c: -> (text, number of full-text rule lines, number of index lines). Only active `rule` entries,
+    newest first. Full text is cut at an entry boundary at 4,000 chars; the rules left get an index (90 chars per
+    line, else 50, else the oldest lines go) and a pointer line, 9,900 chars in all."""
     try:
         rules = [e for e in parse_ledger_file(path) if e["kind"] == "rule"]
     except OSError:
         rules = []
     rl = recall_line().rstrip("\n")
     if not rules:
-        return rl, 0
-    more = rpath(f"[more rules: python3 ~/.claude/hooks/recall.py search \"rule\" --role user, "
-                 f"or the decisions list at {path}]")
+        return rl, 0, 0
+    pointer = (f"[more rules: python3 ~/.claude/hooks/recall.py decisions --kind rule, "
+               f"or the decisions list at {path}]")
+    more = rpath(pointer)
     head = (SUBAGENT_PREAMBLE + "\n" if preamble else "") + SUBAGENT_HEAD + "\n"
     tail = ("\n" + rl) if rl else ""
     full = head + "\n".join(e["line"] for e in rules) + tail
     if len(full) <= SUBAGENT_MAX:
-        return full, len(rules)
+        return full, len(rules), 0
     room = SUBAGENT_MAX - len(head) - len(more) - 1 - len(tail)
     kept, used = [], 0
     for e in rules:
@@ -559,10 +571,26 @@ def subagent_context(path, preamble=True):
             break
         kept.append(e["line"])
         used += len(e["line"]) + 1
-    return head + "\n".join(kept + [more]) + tail, len(kept)
+    if not index:  # F70 reanchor block: the F58.a text as before (full-text rules and the pointer line), no rule index
+        return head + "\n".join(kept + [more]) + tail, len(kept), 0
+    left = rules[len(kept):]
+
+    def build(idx, dropped):
+        ptr = rpath(pointer.replace("[more rules: ", f"[more rules: {dropped} not listed above; ", 1)) if dropped else more
+        return (head + "\n".join(kept) + tail + "\nINDEX (rules not shown in full above):\n"
+                + "\n".join(idx + [ptr]))
+    for width in (90, 50):
+        idx = [index_line(e, width) for e in left]
+        if len(build(idx, 0)) <= SUBAGENT_TOTAL:
+            return build(idx, 0), len(kept), len(idx)
+    idx = [index_line(e, 50) for e in left]
+    for drop in range(1, len(idx) + 1):
+        if len(build(idx[:len(idx) - drop], drop)) <= SUBAGENT_TOTAL:
+            return build(idx[:len(idx) - drop], drop), len(kept), len(idx) - drop
+    return build([], len(idx)), len(kept), 0
 
 
-def subagent_health(d, rules, chars):
+def subagent_health(d, rules, chars, rules_index=0):
     """F58.d: one health.jsonl row. These rows are skipped by --prove and --reconcile. Never raises."""
     try:
         at = d.get("agent_type")
@@ -571,8 +599,8 @@ def subagent_health(d, rules, chars):
         with open(path, "a", encoding="utf-8") as f:
             f.write(json.dumps({"ts": utc_now(), "event": "subagent_start", "hook": "inject",
                                 "sid": str(d.get("session_id") or "")[:36],
-                                "agent_type": at if isinstance(at, str) else "", "rules": rules, "chars": chars,
-                                "hook_version": HOOK_VERSION}) + "\n")
+                                "agent_type": at if isinstance(at, str) else "", "rules": rules, "rules_index": rules_index,
+                                "chars": chars, "hook_version": HOOK_VERSION}) + "\n")
         if os.path.getsize(path) > 2000000:  # keep the file small: drop the oldest SubagentStart rows
             with open(path, "rb") as f:
                 lines = f.readlines()
@@ -601,8 +629,8 @@ def subagent_start_mode():
     if not isinstance(cwd, str) or not cwd.strip():
         return
     _SID[0] = d.get("session_id") or "unknown"
-    ctx, nrules = subagent_context(ledger_path_for(cwd))
-    subagent_health(d, nrules, len(ctx))
+    ctx, nrules, nidx = subagent_context(ledger_path_for(cwd))
+    subagent_health(d, nrules, len(ctx), nidx)
     if ctx:
         print(json.dumps({"hookSpecificOutput": {"hookEventName": "SubagentStart", "additionalContext": ctx}}))
 
@@ -617,7 +645,7 @@ def rules_block_mode():
     cwd = d.get("cwd") if isinstance(d, dict) else None
     if not isinstance(cwd, str) or not cwd.strip():
         return
-    ctx, nrules = subagent_context(ledger_path_for(cwd), preamble=False)  # F70: no SubagentStart preamble
+    ctx, nrules, _nidx = subagent_context(ledger_path_for(cwd), preamble=False, index=False)  # F70: no SubagentStart preamble
     if ctx and nrules > 0:
         sys.stdout.write(ctx)
 
@@ -869,6 +897,29 @@ def effective_cleanup_days(user, managed):
 RECALL_ALLOW_RULE = "Bash(python3 ~/.claude/hooks/recall.py:*)"
 
 
+def decisions_stats(path):
+    """F88.d: numbers for the decisions list at `path`, or None (no list, no rule, or any error). `room` is the number of
+    rule characters (each line plus its newline) that plan_ledger can show in full: the 3 parts minus their headers.
+    `index_only` is the number of rules that plan_ledger shows as an index line or not at all."""
+    try:
+        ents = parse_ledger_file(path)
+        rules = [e for e in ents if e["kind"] == "rule"]
+        if not rules:
+            return None
+        room = sum(HARD_MAX - len(ledger_part_head(k, path)) - 1 for k in range(1, MAX_PARTS + 1))
+        chars = sum(len(e["line"]) + 1 for e in rules)
+        text = "\n".join(plan_ledger(ents, path))
+        shown = set(int(x) for x in re.findall(r"(?m)^- D(\d+) \[", text))
+        lines = set(text.split("\n"))
+        full = sum(1 for e in rules if e["line"] in lines)
+        return {"rules": len(rules), "chars": chars, "room": room, "pct": int(100 * chars / room),
+                "active": len(ents), "unlisted": sum(1 for e in ents if e["id"] not in shown),
+                "index_only": len(rules) - full}
+    except Exception as e:
+        log_error(e)
+        return None
+
+
 def check_mode(verbose=False):
     """F45.d, F86: one line `HANDOFF CHECK: ...` when something is wrong, nothing when all is fine. F86.a: install
     problems get the installer advice, data problems do not. `verbose` (F86.b) prints one line for each check."""
@@ -923,11 +974,11 @@ def check_mode(verbose=False):
         problems.clear()  # no user settings file at all, but the managed file is there: not a problem
     mark("settings readable")
 
-    def runs(event, script, need_compact):
+    def runs(event, script, need_compact, word="compact"):
         for src in (st, managed):
             try:
                 for g in (src.get("hooks") or {}).get(event) or []:
-                    if need_compact and "compact" not in str(g.get("matcher") or ""):
+                    if need_compact and word not in str(g.get("matcher") or ""):
                         continue
                     for h in g.get("hooks") or []:
                         if script in str(h.get("command") or ""):
@@ -942,6 +993,9 @@ def check_mode(verbose=False):
         if not runs("SessionStart", "postcompact-inject.py", True):
             problems.append("no SessionStart compact hook runs postcompact-inject.py")
         mark("SessionStart hook wired")
+        if not runs("SessionStart", "postcompact-inject.py", True, "clear"):  # F88.e
+            problems.append("no SessionStart clear hook runs postcompact-inject.py")
+        mark("SessionStart clear hook wired")
     pre, post = os.path.join(hooks_dir, "precompact-handoff.py"), os.path.join(hooks_dir, "postcompact-inject.py")
     for fp in (pre, post):
         if not os.path.isfile(fp):
@@ -1049,6 +1103,14 @@ def check_mode(verbose=False):
     except Exception as e:
         log_error(e)
     mark("no failing or stale claim")
+    dstat = decisions_stats(ledger_path_for(os.getcwd()))  # F88.d
+    if dstat:
+        if dstat["pct"] >= 90:
+            data.append(f"decisions list: rules use {dstat['pct']}% of the room; retire or merge rules "
+                        "(recall.py decisions --kind rule)")
+        if dstat["index_only"]:
+            data.append(f"decisions list: {dstat['index_only']} rules are index lines only")
+    mark("decisions list has room")
     inst_t, data_t = list(problems), list(data)
     _CLEAN_ST[0], _CLEAN_ST[1] = st, managed
     if verbose:
@@ -1057,6 +1119,10 @@ def check_mode(verbose=False):
         for name, texts in checks:
             sys.stdout.write(("problem: " + "; ".join(texts) if texts else "ok: " + name) + "\n")
         sys.stdout.write("info: recall rule %s\n" % ("on" if recall_rules_on() else "off"))
+        if dstat:  # F88.d
+            sys.stdout.write(f"info: decisions list: {dstat['rules']} rules, {dstat['chars']} of {dstat['room']} "
+                             f"characters of full-text room ({dstat['pct']}%); {dstat['active']} active entries; "
+                             f"{dstat['unlisted']} not listed\n")
         try:
             import importlib.util
             spec = importlib.util.spec_from_file_location("lh_recall_check", os.path.join(hooks_dir, "recall.py"))
