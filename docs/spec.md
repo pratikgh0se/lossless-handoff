@@ -1448,3 +1448,56 @@ Why: F42.2 never resolves a rule, so that the merge model cannot drop a standing
 8. The merge prompt text holds `Never RESOLVE a rule on your own judgement` and `| user: "` (plain quote, no backslash).
 9. `HOOK_VERSION` is 1.23.1 in all hook files. `install.sh` VERSION is 0.21.1.
 
+## F90 Grammars, invariants and one version source (2026-11-25)
+
+Why: a cold review (2026-11-25) found that the tests pin exact text (39% of the code-blind tests compare only against literals, and 1 of 1,715 uses generated input). In a mutation check, 3 of 10 planted faults passed both suites. Real bugs came from format drift between modules. `prove.py` did not read the subagent recall label for a week. A hand-edited decisions line (`- D252 [date] RETIRED [date] (reason): [rule] text`) was read as an active untagged entry by one module, dropped by another, and no check reported it. Four modules parse decisions lines with 9 or more separate patterns. F90 makes each shared format one grammar with one parser, reports lines outside the grammar, and states invariants that tests check on generated input.
+
+**F90.a Grammars.** These are contract formats. Each producer writes only these forms, and each consumer reads them through one shared parser.
+- G1 Decisions line. A line of a decisions list is exactly one of:
+  - active: `- D<n> [<date>] [<tag>] <text> | why: <why>`, where `<tag>` is `rule`, `decision` or `task`;
+  - active untagged (older lists): `- D<n> [<date>] <text> | why: <why>`, where `<text>` does not start with a word in capitals followed by ` [` or `:` (so `RETIRED [..]` or `DONE:` is not untagged text);
+  - superseded: `- D<n> [<date>] SUPERSEDED by D<m> [<date>]: <old text> | because: <reason>`;
+  - resolved: `- D<n> [<date>] RESOLVED [<date>]: <reason> | was: <old text>`;
+  - a header line (starts with `#`), a blank line, or a comment line (starts with `<!--`).
+  `<n>` and `<m>` are integers of 1 or more. `<date>` is `YYYY-MM-DD`. Any other line is a **malformed line**.
+- G2 Recall hit id. `<sid8>:<line>` for a main transcript, or `<sid8>/<agent8>:<line>` for a subagent transcript (F57.b). `<sid8>` and `<agent8>` are 8 characters of `[0-9a-f-]` and `<line>` is an integer of 1 or more. Each module that reads a recall id (recall `open`, the proof check, the recall subagent text, auto-recall) uses one shared parser for G2.
+- G3 JSON state rows (health row, receipt row, proof row). The contract is the set of keys and their value types, not the key order. A new key may be added in any position.
+
+**F90.b One parser.** A new module `hooks/lossless_handoff/grammar.py` holds the G1 and G2 parsers. `ledger.py`, `postcompact-inject.py`, `recall.py` and `prove.py` use it, and they keep no own pattern for these formats. A hook that runs without the package (fallback path) may keep a copy only if a smoke check proves that the copy gives the same result as `grammar.py` on the G1 and G2 sample set.
+
+**F90.c Malformed lines are kept and reported.** A malformed decisions line is never injected, never counted as active, and never deleted: the merge writes it back unchanged at its position. `--check` reports the data problem `decisions list: <k> malformed lines (first: line <i>); fix them to a known form (docs/decisions-list.md)` for the project of the current folder, when `<k>` is 1 or more. `--check --verbose` adds the first 3 malformed lines, each cut to 120 characters, after `redact()`. This is a data problem, not an install problem (F86.a).
+
+**F90.d Hand edits.** `docs/decisions-list.md` states: the hooks write the decisions list; do not edit it by hand or by script; to change a rule or decision, say it in the chat and run `/compact`. If a hand edit is needed, use only the G1 forms, then run `--check`. The injected decisions part 1 (F42.3) adds one short sentence: `This list is written by the hooks; do not edit decisions.md yourself.`
+
+**F90.e Invariants.** Tests check these on generated input. Each invariant has an id.
+- I1 Recall round trip: for each message in a transcript, `recall.py open <id>` with `--full` gives the message text byte-identical (after `redact()`), including trailing whitespace and unicode. When a stated cap cuts the text, the kept part is a byte-identical prefix and the cut is marked.
+- I2 Tool results: a tool result with a list of content blocks keeps the text of every block in recall output, in order.
+- I3 Limits: each injected part (handoff parts, ledger parts, SubagentStart, auto-recall) is under its stated limit for any input size.
+- I4 Ledger safety: after any merge output (valid, invalid or random lines), each id that was in the list is still in the list, no id changes, and no superseded or resolved entry becomes active again.
+- I5 Grammar round trip: each line that a producer writes parses under G1 or G2 to the same fields that the producer used.
+- I6 Malformed lines: a malformed line in a list is never injected, is counted by `--check`, and is still in the file after a merge.
+- I7 Privacy: each state folder that a hook creates has mode 0700, and each state file mode 0600, on Linux and macOS.
+- I8 Project scope: with `CLAUDE_CODE_SESSION_ID` set (F87.a), no recall command prints text from a transcript of another project.
+- I9 Prompts: no model prompt that the hooks send holds a backslash before a quote character, or a control character other than newline.
+- I10 Redaction: `redact(redact(x)) == redact(x)`, and no planted secret of a F65/F87.b kind is in any output of recall, the handoff, or the injected parts.
+
+**F90.f Transcript shapes.** Tests use a shape matrix, not one fixture. The matrix has at least: main transcript; subagent transcript (`agent-<id>.jsonl`); user content as a string and as a list of blocks; tool results with string content and with a list of 2 or more blocks; thinking blocks; unicode and emoji; a line of 20,000 characters or more; text with trailing whitespace; planted secrets; two projects; a compaction boundary with summary.
+
+**F90.g Negative controls.** Each checker has one known-bad sample that must fail: the proof check (a recall hit id that does not open), `--check` (a malformed decisions line), and the claims lint (a claim with no source). Smoke runs each one and fails if the checker passes the bad sample.
+
+**F90.h One version source.** A file `VERSION` in the repo root holds 2 lines: `product=<x.y.z>` and `hooks=<x.y.z>`. A smoke check fails when `install.sh` VERSION, any `HOOK_VERSION`, the README version line, or the top CHANGELOG entry differ from `VERSION`. Tests read `VERSION` and never write a version number.
+
+**F90.i Text marks.** From F90 on, quoted texts in the spec are of two types. A `contract token` (a marker, an id form, a key name, an exit code, a stated limit) can be pinned. Wording (sentences, help text, notes) is checked only by its required parts. F90.c and F90.d texts are wording, except `malformed lines` and `decisions list:`, which are contract tokens.
+
+**F90.j Acceptance.**
+1. A list with one line of each G1 form, plus the lines `- D9 [2026-11-14] RETIRED [2026-11-25] (ended): [rule] x | why: y`, `- D10 [2026-11-14] DONE: x`, `D11 no dash`: the 3 last lines are malformed; `--check` prints `decisions list: 3 malformed lines (first: line <i>)`; no injected part holds D9, D10 or D11; the active count excludes them.
+2. After a merge with a shim that outputs `NO CHANGES`, the 3 malformed lines are still in the file at their positions.
+3. A list with no malformed line: `--check` prints no `malformed` text.
+4. The proof check reads both G2 forms; a planted subagent hit `<sid8>/<agent8>:<line>` opens with the same id.
+5. `grep -n "re.compile" hooks/postcompact-inject.py hooks/recall.py hooks/lossless_handoff/prove.py hooks/lossless_handoff/ledger.py` shows no pattern for decisions lines or recall ids outside `grammar.py` (a fallback copy is allowed only under F90.b).
+6. Each negative control of F90.g fails as stated.
+7. Change the `hooks=` line of `VERSION` only: the F90.h smoke check fails.
+8. Part 1 of the injected decisions list holds `do not edit decisions.md yourself`.
+9. `VERSION` holds `product=0.22.0` and `hooks=1.24.0`; `HOOK_VERSION` is 1.24.0 in all hook files; `install.sh` VERSION is 0.22.0.
+10. Invariants I1-I10 hold on the F90.f shape matrix (code-blind repo).
+
