@@ -1461,7 +1461,7 @@ Why: a cold review (2026-11-25) found that the tests pin exact text (39% of the 
   - resolved: `- D<n> [<date>] RESOLVED [<date>]: <reason> | was: <old text>`;
   - a header line (starts with `#`), a blank line, or a comment line (starts with `<!--`).
   `<n>` and `<m>` are integers of 1 or more. `<date>` is `YYYY-MM-DD`. Any other line is a **malformed line**.
-- G2 Recall hit id. `<sid8>:<line>` for a main transcript, or `<sid8>/<agent8>:<line>` for a subagent transcript (F57.b). `<sid8>` and `<agent8>` are 8 characters of `[0-9a-f-]` and `<line>` is an integer of 1 or more. Each module that reads a recall id (recall `open`, the proof check, the recall subagent text, auto-recall) uses one shared parser for G2.
+- G2 Recall hit id. `<sid8>:<line>` for a main transcript, or `<sid8>/<agent8>:<line>` for a subagent transcript (F57.b). Producers print 8 characters for `<sid8>` and `<agent8>`; consumers accept any prefix of `[A-Za-z0-9_-]+` (as `open` always did). `<line>` is an integer of 1 or more. Each module that reads a recall id (recall `open`, the proof check, the recall subagent text, auto-recall) uses one shared parser for G2.
 - G3 JSON state rows (health row, receipt row, proof row). The contract is the set of keys and their value types, not the key order. A new key may be added in any position.
 
 **F90.b One parser.** A new module `hooks/lossless_handoff/grammar.py` holds the G1 and G2 parsers. `ledger.py`, `postcompact-inject.py`, `recall.py` and `prove.py` use it, and they keep no own pattern for these formats. A hook that runs without the package (fallback path) may keep a copy only if a smoke check proves that the copy gives the same result as `grammar.py` on the G1 and G2 sample set.
