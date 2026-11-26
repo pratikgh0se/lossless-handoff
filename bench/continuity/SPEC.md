@@ -245,3 +245,63 @@ Slice 2 numbers for v3 must not be mixed with v4 numbers in one table.
 4. **Same facts as v4.** `gen.stream_version` maps every version 4 or newer to the v4 seed text. For one seed, v5 and v4 scripts are equal except the `gen_version` field. The probes and filler prompts are equal too. Only the filler line counts differ. A test proves it for seeds 1000-1004 and N 1, 3, 10, 30.
 
 **Limit.** The guard sends extra turns, so the turn count and cost of a v5 run can be a little higher than v4. Arm O has fewer files, so its size estimate can differ a little from the real size (the 60% margin covers this).
+
+## 16. Fair re-test presets (arm Af), 2026-11-26
+
+Why: the proof run (results/20261123T190206-proof) blocked arm A from reading `~/.claude/projects/**`. Plain Claude Code could not search its own transcripts, so the README calls it a "blocked baseline". The owner approved a staged 2-seed fair re-test: max about $88. Fable's design is below.
+
+**FR.1 Arm Af (A-fair).** Plain Claude Code, as arm A (no Lossless Handoff hooks), with these changes:
+- Af may read, grep and glob its OWN transcripts.
+- Remove the `~/.claude/projects` deny rules for Read, Grep, Glob and Bash for Af.
+- Trap: arm A also has `Bash(*lhbench*)`, and Af's own project folder name contains `lhbench-<run>-s<seed>-Af`. For Af, replace that rule with denies that cover only the Lossless Handoff state paths (`*lhbench-*-state*`) and the transcripts of other arms.
+- Keep the gen.py `delete_after` deletion of the S/E fact files. The fact must exist only in the transcript.
+
+**FR.2 Isolation from other arms.** Af must not read a transcript of another arm of the same seed: arm O has every fact with no compaction, and arm B holds them too.
+- Preferred: run Af with its own Claude config folder (for example `CLAUDE_CONFIG_DIR`, if the runner and the installed Claude Code support it), so that its projects folder holds only Af transcripts.
+- If that is not possible: run all Af sessions and probe forks of a run to the end before any O, Z or B session of the same seeds starts. Run `run.sh cleanup --all` first.
+- In both cases, add the post-run gate of FR.4. Document which method you used.
+
+**FR.3 Presets and seeds.**
+- New seed file `seeds-fair.txt` with 2 seeds that no earlier run used (3001 3002).
+- Sonnet, 400k window, 10 compactions, probes at N=10 only, hinted and neutral probes.
+- `run.sh fair-preflight`: Haiku, 1 seed, a short session, arms Af and B, cap $3. It must show:
+  - real compactions;
+  - B hooks that fire;
+  - at least 1 successful Af read of its own transcript;
+  - `used_lookup` recorded.
+  It prints PASS or FAIL for each of these items.
+- `run.sh fair-step1`: arms Af, O and Z on seeds-fair.txt, cap $55.
+- `run.sh fair-step2`: arm B (current installed version) on the same seeds, cap $45, with `--compare <step1 run id>`.
+- `--dry-run` prints the estimate for each preset and spends nothing.
+
+**FR.4 Pre-registered rule.** Add a `fair` block to thresholds.json, committed before any fair data exists, with the rule below.
+- Primary rule: B minus Af, hinted probes, N=10, pooled over 2 seeds, is 15 points or more, and B >= Af in 2 of 2 seeds.
+- Secondary rule: the same, on neutral probes.
+- Report the S/E types apart from R D X C M.
+- No bootstrap interval with 2 seeds: report counts.
+- INVALID gates:
+  - O >= 95% and Z <= 2%;
+  - parse rate >= 98%;
+  - 10 real compactions per main session;
+  - zero denied reads of Af's own transcript;
+  - zero Af reads of a path under another arm's project folder or a Lossless Handoff state folder. Read these from the Af tool_use inputs in the transcripts.
+- Stop rule, checked after fair-step1: if Af gets 90% or more of the hinted N=10 items, the primary rule cannot pass. Print `STOP: plain Claude Code with search scores <x>/<y>; step 2 not needed`, and write the summary.
+
+**FR.5 Report.** `summary.md` for the fair runs gives counts in this form: "Small test: 2 seeds, <y> hinted questions, Sonnet, 10 compactions. Plain Claude Code that can search its own transcripts: <x> of <y>. Lossless Handoff: <z> of <y>. Two seeds show a direction, not a proof." It never uses the word "validated". When the gap is under 15 points or mixed across seeds, it says "no clear difference".
+
+**FR.6 Tests ($0).**
+- Unit tests in bench/continuity (the style of the existing test_proof.py, and the Bash deny emulation if one exists):
+  - Af may read its own transcript path;
+  - Af may not read another arm's transcript path or a state path;
+  - the fair verdict and the stop rule on fixture result rows;
+  - the INVALID gates.
+- `run.sh fair-step1 --dry-run` and `run.sh fair-step2 --dry-run` work.
+- The selfcheck (runner.py `selfcheck`) gets a fair branch that expects an own-transcript read to SUCCEED for Af.
+
+### Implementation notes (this branch)
+
+- **FR.2 method: ordering.** The runner passes `CLAUDE_CONFIG_DIR` through only if the parent shell sets it. Every path in the runner (`PROJECTS`, transcript lookup, cleanup, selfcheck) is fixed to `~/.claude/projects`. A separate config folder also has its own login state. Nobody can confirm that it works without a paid run. So the runner uses the ordering method: in a run with arm Af, all Af sessions and their probe forks finish before any other arm starts. If an Af session is not done, the other arms do not start. Run `run.sh cleanup --all` before the run. Fair-step2 (arm B) starts after fair-step1 has finished.
+- **Scored types.** The rule pools R D X S E C M (as the proof test). The report also gives S and E apart from R D X C M. The types U and F are not planted in the fair presets.
+- **Hinted probes** are the `cued` phrasing. **Neutral probes** are the `neutral` phrasing.
+- **Reads gate.** Fork transcripts are deleted after each probe. So the runner scans the tool calls of every Af probe fork (and the main session) before the delete. It stores the result in the field `af_reads` of each Af row and of the Af session summary. A tool call that names another arm's project folder or a state folder counts as a violation, even when a deny rule blocked it.
+
