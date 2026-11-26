@@ -221,8 +221,13 @@ class Scan(unittest.TestCase):
                  ("Read", {"file_path": proj_dir("A", suffix="-nc") + "/a.jsonl"}, "x", False),
                  ("Bash", {"command": "grep -A 5 x %s/a.jsonl" % proj_dir("Af")}, "x", False)]
         r = fair.scan_reads(self.rec("PROBE-1", calls), "PROBE-1")
-        self.assertEqual(len(r["other"]), 3)
+        self.assertEqual(len(r["other"]), 2)                    # the two calls that succeeded: the gate
+        self.assertEqual(r["af_blocked_attempts"], 1)           # the denied call: counted, not a gate
         self.assertEqual(r["own_ok"], 1)       # the "-Af" folder is never taken for arm A
+
+    def test_blocked_by_deny_text_without_error_flag(self):
+        r = fair.scan_reads(self.rec("PROBE-1", [("Read", {"file_path": proj_dir("O") + "/a.jsonl"}, "Permission to use Read has been denied.", False)]), "PROBE-1")
+        self.assertEqual((r["other"], r["af_blocked_attempts"]), ([], 1))
 
     def test_only_records_after_the_marker_count(self):
         recs = self.rec(None, [("Bash", {"command": "cat %s/a.jsonl" % proj_dir("B")}, "x", False)]) + self.rec("PROBE-9", [])
@@ -376,6 +381,18 @@ class Gates(unittest.TestCase):
         sess = sessions()
         sess[0] = dict(sess[0], af_reads={"own_ok": 1, "own_denied": 0, "other": ["Read /x/lhbench-r-s3001-B-state/receipts.jsonl"], "calls": 5})
         self.invalid(self.v(make(), sess), "another arm")
+
+    def test_blocked_attempts_are_counted_but_not_a_gate(self):
+        rows = make()
+        rows[0] = dict(rows[0], arm="Af", af_reads={"own_ok": 1, "own_denied": 0, "other": [], "af_blocked_attempts": 2, "calls": 2}, fork_sid="blocked-1")
+        sess = sessions()
+        sess[0] = dict(sess[0], af_reads={"own_ok": 1, "own_denied": 0, "other": [], "af_blocked_attempts": 3, "calls": 5})
+        v = self.v(rows, sess)
+        self.assertEqual(v["verdict"], "PASS", v["gates"])
+        self.assertEqual(fair.blocked_total(rows, sess), 5)
+        md, _v = fair.section(rows, sess, CFG, TH)
+        self.assertIn("af_blocked_attempts", "\n".join(md))
+        self.assertIn("not a gate): 5.", "\n".join(md))
 
     def test_a_missing_control_is_invalid_not_a_pass(self):
         rows = [r for r in make() if r["arm"] != "O"]

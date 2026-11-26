@@ -53,7 +53,8 @@ def _result_text(b):
 def scan_reads(records, marker=None):
     """What the tool calls of one Af transcript did. Only records from the probe message (the one with `marker`) on count, because a fork copies the history.
     Returns {"own_ok": n, "own_denied": n, "other": [input text, ...], "calls": n}.
-    - other: a tool call whose input names a project folder of another arm or a state folder (OTHER_ARM_RE). Counted even if a rule blocked it.
+    - other: a tool call whose input names a project folder of another arm or a state folder (OTHER_ARM_RE) and that SUCCEEDED (the gate).
+    - af_blocked_attempts: the same kind of call whose result is an error or a denial. Counted, not a gate.
     - own_ok / own_denied: a tool call whose input names a transcript (".claude/projects" or ".jsonl") and not another arm. denied: the result is an error or a denial."""
     seen = marker is None
     uses, results = {}, {}
@@ -78,11 +79,15 @@ def scan_reads(records, marker=None):
                 order.append(b.get("id"))
             elif b.get("type") == "tool_result":
                 results[b.get("tool_use_id")] = (bool(b.get("is_error")), _result_text(b))
-    out = {"own_ok": 0, "own_denied": 0, "other": [], "calls": len(order)}
+    out = {"own_ok": 0, "own_denied": 0, "other": [], "af_blocked_attempts": 0, "calls": len(order)}
     for i in order:
         name, s = uses[i]
         if OTHER_ARM_RE.search(s):
-            out["other"].append("%s %s" % (name, s[:200]))
+            err, txt = results.get(i, (False, ""))
+            if err or any(mk in txt for mk in DENY_MARKERS):
+                out["af_blocked_attempts"] += 1       # blocked: cannot contaminate the answers, so no gate (counted only)
+            else:
+                out["other"].append("%s %s" % (name, s[:200]))      # SUCCEEDED: the gate
             continue
         if ".claude/projects" in s or ".jsonl" in s:
             err, txt = results.get(i, (False, ""))
@@ -141,6 +146,12 @@ def read_totals(rows, sessions):
     return own_denied, other
 
 
+def blocked_total(rows, sessions):
+    """Blocked attempts on another arm folder or a state folder (not a gate), over the Af forks (once each) and Af main sessions."""
+    forks = {(r.get("run"), r.get("fork_sid") or id(r)): r["af_reads"] for r in rows if r.get("arm") == "Af" and r.get("af_reads") is not None}
+    return sum(v.get("af_blocked_attempts", 0) for v in forks.values()) + sum((s.get("af_reads") or {}).get("af_blocked_attempts", 0) for s in sessions if s.get("arm") == "Af")
+
+
 def validity_gates(rows, sessions, th):
     """The INVALID gates of FR.4. A gate for an arm with no rows is left out (step 1 has no arm B yet), except the gates of arm Af."""
     present = _arms_present(rows)
@@ -168,7 +179,7 @@ def validity_gates(rows, sessions, th):
     den, other = read_totals(rows, sessions)
     has_reads = any(r.get("arm") == "Af" and r.get("af_reads") is not None for r in rows)
     out.append(_gate("Denied reads of the own transcript of Af", "= %d" % th["denied_own_reads_max"], "%d" % den, (den <= th["denied_own_reads_max"]) if has_reads else None))
-    out.append(_gate("Af tool calls on a folder of another arm or a state folder", "= %d" % th["other_arm_reads_max"], "%d%s" % (len(other), (" (e.g. %s)" % other[0][:80]) if other else ""),
+    out.append(_gate("Af tool calls that SUCCEEDED on a folder of another arm or a state folder", "= %d" % th["other_arm_reads_max"], "%d%s" % (len(other), (" (e.g. %s)" % other[0][:80]) if other else ""),
                      (len(other) <= th["other_arm_reads_max"]) if has_reads else None))
     return out
 
@@ -264,6 +275,7 @@ def section(rows, sessions, cfg, th_all):
     lines += ["", "Validity gates (any result but PASS makes the verdict INVALID):\n", "| Gate | Threshold | Measured | Result |", "|---|---|---|---|"]
     lines += ["| %s | %s | %s | %s |" % (g["gate"], g["threshold"], g["measured"], g["result"]) for g in v["gates"]]
     lines.append("")
+    lines.append("af_blocked_attempts (Af tool calls on a folder of another arm or a state folder that a deny rule blocked; not a gate): %d.\n" % blocked_total(rows, sessions))
     lines.append("Isolation method: ordering. All Af sessions and probe forks finish before any O, Z or B session of the same seeds starts (SPEC.md section 16). "
                  "No bootstrap interval is given: two seeds are too few.\n")
     return lines, v
