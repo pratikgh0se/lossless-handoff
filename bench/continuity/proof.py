@@ -20,8 +20,9 @@ SEED_FILE = "seeds-proof.txt"
 
 # ---- the seeds must be new
 
-def used_seeds(here=HERE, skip=(SEED_FILE,)):
-    """{seed: [where it was used]} from every seeds-*.txt (except the proof file), from the config.json of every run in results/ and of every fixture run."""
+def used_seeds(here=HERE, skip=(SEED_FILE,), skip_kinds=()):
+    """{seed: [where it was used]} from every seeds-*.txt (except the proof file), from the config.json of every run in results/ and of every fixture run.
+    skip_kinds: run kinds that do not count (the fair re-test: step 1 and step 2 use the same seeds on purpose)."""
     used = {}
     for f in sorted(glob.glob(os.path.join(here, "seeds*.txt"))):
         if os.path.basename(f) in skip:
@@ -35,20 +36,22 @@ def used_seeds(here=HERE, skip=(SEED_FILE,)):
                 cfg = json.load(open(f, encoding="utf-8"))
             except (OSError, ValueError):
                 continue
+            if cfg.get("kind") in skip_kinds:
+                continue
             for s in cfg.get("seeds") or []:
                 if isinstance(s, int):
                     used.setdefault(s, []).append(os.path.relpath(f, here))
     return used
 
 
-def check_seeds(seeds, here=HERE, want=4):
+def check_seeds(seeds, here=HERE, want=4, skip=(SEED_FILE,), skip_kinds=()):
     """Problems with the proof seeds, as a list of text lines. Empty list: the seeds are fine."""
     problems = []
     if len(seeds) != want:
         problems.append("the proof test needs exactly %d seeds, got %d" % (want, len(seeds)))
     if len(set(seeds)) != len(seeds):
         problems.append("the proof seeds are not all different: %s" % seeds)
-    used = used_seeds(here)
+    used = used_seeds(here, skip, skip_kinds)
     for s in seeds:
         if s in used:
             problems.append("seed %d was used before (%s)" % (s, ", ".join(used[s][:3])))

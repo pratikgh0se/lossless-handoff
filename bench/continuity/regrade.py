@@ -29,7 +29,7 @@ def compute_retention(rd, cfg, script):
     base = runner.work_base(cfg.get("work_base"))
     rows = []
     for name, st in sorted(state.get("sessions", {}).items()):
-        m = re.match(r"s(\d+)-([A-Z])$", name)
+        m = re.match(r"s(\d+)-([A-Z]f?)$", name)
         if not m or m.group(2) == "Z" or not st.get("sid"):
             continue
         seed, arm = int(m.group(1)), m.group(2)

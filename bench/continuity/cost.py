@@ -53,7 +53,7 @@ D3_FORKS = 15                    # probe forks: 5 types (R D X S E) x 3 phrasing
 D3_FORK_OUT = 800                # reply tokens of a probe fork (JSON of 6 answers)
 D3_SLACK = 1.2                   # retries, hook time, reads of tool calls: 20% on top
 # Arm factors on a design-3 unit. Assumed: R adds hook output of 3 snippets per cued prompt. K adds MCP calls, recall rules and reanchor text.
-ARM_FACTOR = {"A": 1.0, "B": 1.0, "R": 1.05, "K": 1.2}
+ARM_FACTOR = {"A": 1.0, "Af": 1.0, "B": 1.0, "R": 1.05, "K": 1.2}      # Af = arm A that may read its own transcripts (fair re-test): same factor, its search calls are inside the cost basis
 
 # ---- CALIBRATION from the first real preflight run (20261122T110446-preflight, Haiku, 1 seed, 30000 window, $2.92 in total).
 # Each ratio is real cost divided by the estimate of this file before the run. Real costs come from calls.jsonl (delta_usd) of that run.
@@ -331,10 +331,30 @@ def estimate_preflight(arms=("A", "B", "R", "K", "Z", "O"), conditions=("compact
     return total + sc + big_hi, lines
 
 
+def fair_preflight_unit(arm, n):
+    """USD of one fair-preflight session (Haiku, a short session with max(n) compactions, N=max(n) probes, types R,S). Basis: the real preflight4 compaction unit of arm O
+    ($0.0954, one compaction), scaled by the number of compactions, plus 50% for the search calls of Af and the hooks of B, plus the preflight slack."""
+    return PF4_O_COMPACT * PF4_SLACK * max(n) * 1.5
+
+
+def estimate_fair_preflight(arms, n):
+    """(total USD, lines) of run.sh fair-preflight: the sessions, the deny-rule selfcheck with its fair branch (arms A, B, Af, Haiku), and nothing else."""
+    lines, total = [], 0.0
+    for a in arms:
+        u = fair_preflight_unit(a, n)
+        total += u
+        lines.append("arm %s, with %d compactions (N=%d, types R,S, Haiku): $%.2f" % (a, max(n), max(n), u))
+    sc = PF_SELFCHECK * 1.5
+    lines.append("deny-rule selfcheck with the fair branch (Haiku): $%.2f" % sc)
+    return total + sc, lines
+
+
 def estimate_per_seed(cfg):
     """USD estimate of one seed of a run config, for the cost gate of the run. None if there is no estimate (the slice preset)."""
     kind = cfg.get("kind", "")
     arms, conds = cfg["arms"], cfg.get("conditions", ["compact"])
+    if kind == "fair-preflight":
+        return estimate_fair_preflight(arms, cfg["n"])[0]
     if kind.startswith("preflight"):
         return estimate_preflight(arms, conds, 4 if cfg.get("probe_design", 1) >= 4 else 3)[0]
     if kind == "slice":
@@ -350,6 +370,8 @@ def unit_estimate(cfg, arm, cond):
     if kind == "slice":
         return None
     arms = cfg["arms"]
+    if kind == "fair-preflight":
+        return fair_preflight_unit(arm, cfg["n"])
     if kind.startswith("preflight"):
         return preflight_unit(arm, cond, arms, 4 if cfg.get("probe_design", 1) >= 4 else 3)
     if cfg.get("probe_design", 1) >= 3:
