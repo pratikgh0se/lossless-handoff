@@ -4,6 +4,10 @@ Lossless Handoff, formerly claude-handoff.
 
 ## [Unreleased]
 
+### Tests
+
+- Mutation gate: replace 3 faults that changed nothing visible (M10 file mode under `umask 077`, M16 fallback redaction, M18 a limit that never binds) with visible faults of the same type. Add `test_mutation_gaps.py` to their headers. Score: 20/20. `tests.ref` points at the new code-blind tests (state modes under umask 022, redaction twice gives the same text, parts within the hard max with no lost line).
+
 ### Docs
 
 - Add the fair re-test result to the README and `docs/evidence.md` (claim C11): 2 seeds, 10 compactions. Plain Claude Code that can search its own chat files scored 41 of 50 (82%) with a hint and 29 of 40 (72%) without. Lossless Handoff scored 50 of 50 and 40 of 40. Two seeds show a direction, not a proof. The earlier 58% against 100% run stays as a line about a blocked baseline.

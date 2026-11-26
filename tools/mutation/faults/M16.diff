@@ -1,9 +1,13 @@
-# fault M16 | feature F65 | type redaction-not-idempotent | tests: test_f65_redaction.py
-diff --git a/hooks/lossless_handoff/redaction.py b/hooks/lossless_handoff/redaction.py
---- a/hooks/lossless_handoff/redaction.py
-+++ b/hooks/lossless_handoff/redaction.py
-@@ -64,3 +64,3 @@
+# fault M16 | feature F65 | type redaction-not-idempotent | tests: test_f65_redaction.py test_mutation_gaps.py
+diff --git a/hooks/recall.py b/hooks/recall.py
+--- a/hooks/recall.py
++++ b/hooks/recall.py
+@@ -140,7 +140,7 @@ def secret_spans(text, kv=True):
+                 spans.append((m.start(), m.end(), kind))
+                 continue
              s, e = m.start(grp), m.end(grp)
--            if text.startswith(("[REDACTED", _FB_MARK), s):
-+            if text.startswith(_FB_MARK, s):
+-            if text.startswith(("[REDACTED", MARK), s):
++            if text.startswith(MARK, s):
                  continue  # already masked: keep the function idempotent
+             if kind == "secret":
+                 if text[s] in "\"'" and e - s >= 2 and text[e - 1] == text[s]:
