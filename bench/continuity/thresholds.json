@@ -245,5 +245,26 @@
     "p2_min_seeds": 3,
     "validity_gates": "fresh-control F, oracle O, amnesia Z, parse rate, refused forks, missed checkpoints (the values above), and 4 seeds with A and B data at N=1 and N=10. A gate that does not pass makes the verdict INVALID, not FAIL.",
     "note": "Pre-registered before any proof data. P1 (loss): A at N=1 minus A at N=10 >= p1_min_drop_points (pooled) and A at N=10 below A at N=1 in at least p1_min_seeds seeds. P2 (fix): B minus A at N=10 >= p2_min_gain_points (pooled), the 95% bootstrap lower bound over seeds above p2_ci_lower_above, and B >= A at N=10 in at least p2_min_seeds seeds. Do not change after a run."
+  },
+  "fair": {
+    "registered": "2026-11-26",
+    "types": "R D X S E C M",
+    "seeds": 2,
+    "n": 10,
+    "primary_phrasing": "cued",
+    "secondary_phrasing": "neutral",
+    "min_gain_points": 15,
+    "min_seeds_b_ge_af": 2,
+    "oracle_min_accuracy": 0.95,
+    "amnesia_max_accuracy": 0.02,
+    "parse_rate_min": 0.98,
+    "compactions_per_main_session": 10,
+    "denied_own_reads_max": 0,
+    "other_arm_reads_max": 0,
+    "stop_af_min_rate": 0.9,
+    "se_types": "S E",
+    "other_types": "R D X C M",
+    "validity_gates": "O >= oracle_min_accuracy and Z <= amnesia_max_accuracy; parse rate >= parse_rate_min (arms Af, B, O); 10 real compactions in every main session of Af and B; zero denied reads of the own transcript of Af; zero Af tool calls that SUCCEEDED on a project folder of another arm or a Lossless Handoff state folder (blocked attempts are counted in af_blocked_attempts, not a gate). A gate that does not pass makes the verdict INVALID, not FAIL.",
+    "note": "Pre-registered before any fair data. Primary (hinted = cued probes, N=10, types R D X S E C M pooled over the 2 seeds): B minus Af >= min_gain_points and B >= Af in min_seeds_b_ge_af of 2 seeds. Secondary: the same on neutral probes. S and E are reported apart from R D X C M. No bootstrap interval with 2 seeds: counts only. Stop rule after step 1: if Af scores stop_af_min_rate or more of the hinted N=10 items, the primary rule cannot pass and step 2 is not needed. Do not change after a run."
   }
 }

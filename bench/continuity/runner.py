@@ -19,7 +19,7 @@ import sys, tempfile, threading, time, uuid
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
-import cost, design4, gates, gen, grade, proof  # noqa: E402
+import cost, design4, fair, gates, gen, grade, proof  # noqa: E402
 import math  # noqa: E402
 
 REPO = os.path.realpath(os.path.join(HERE, "..", ".."))
@@ -29,7 +29,8 @@ PROJECTS = os.path.join(HOME, ".claude", "projects")
 PREFIX = "lhbench-"
 TOOLS_PREFIX = "lhtools-"      # hooks copies of the arms, outside the lhbench-*-state folders
 ALL_TYPES = gen.TYPES + ["F"]
-ALL_ARMS = ("A", "B", "Z", "O", "R", "K", "G", "P")
+ALL_ARMS = ("A", "Af", "B", "Z", "O", "R", "K", "G", "P")
+FAIR_KINDS = ("fair-preflight", "fair-step1", "fair-step2")     # SPEC.md section 16. Arm Af = plain Claude Code that may read its OWN transcripts
 LH_ARMS = ("B", "R", "K", "G", "P")   # arms with Lossless Handoff hooks: B default install, R plus --auto-recall, K plus auto-recall, recall rules, recall MCP and reanchor
 MCP_TOOLS = "mcp__lossless-recall__search_earlier_chat mcp__lossless-recall__open_message"
 K_FILES = ("auto-recall.py", "recall-mcp.py", "reanchor.py")
@@ -124,6 +125,15 @@ KINDS = {
     # The proof recheck (run.sh proof-recheck): arm B only, the same settings as proof, used seeds allowed (a re-measure after F81, not a new proof). No PASS or FAIL.
     "proof-recheck": {"model": "sonnet", "window": 400000, "n": [1, 3, 10], "arms": "B", "seeds": 4, "seed_file": "seeds-proof.txt",
                       "conditions": "compact", "phrasings": "cued,neutral,nonliteral", "probe_design": 4, "selfcheck": True, "cost_basis": {"B": 17.39}},      # B per seed: middle of $16.85 (pilot rerun) to $17.93 (proof run)
+    # The fair re-test (SPEC.md section 16, thresholds.json block "fair"). Arm Af: plain Claude Code that may read its own transcripts. Isolation from the other arms: ordering
+    # (all Af sessions finish before any other arm starts; run.sh cleanup --all first). 2 new seeds (seeds-fair.txt), N=10 only, hinted (cued) and neutral probes.
+    # Cost basis: arm A of the proof run (about $19.59 per seed with N=1,3,10 and 3 phrasings, so a high estimate for Af); arm B of the recheck ($17.39 per seed).
+    "fair-preflight": {"model": "haiku", "window": 30000, "n": [2], "arms": "Af,B", "seeds": 1, "seed_file": "seeds-dev.txt", "types": "R,S", "conditions": "compact",
+                       "phrasings": "cued,neutral", "probe_design": 4, "selfcheck": True, "search_used": True, "fair": True, "budget_usd": 3.0},
+    "fair-step1": {"model": "sonnet", "window": 400000, "n": [10], "arms": "Af,O,Z", "seeds": 2, "seed_file": "seeds-fair.txt", "types": "R,D,X,S,E,C,M", "conditions": "compact",
+                   "phrasings": "cued,neutral", "probe_design": 4, "selfcheck": True, "search_used": True, "fair": True, "budget_usd": 55.0, "cost_basis": {"Af": 19.59}},
+    "fair-step2": {"model": "sonnet", "window": 400000, "n": [10], "arms": "B", "seeds": 2, "seed_file": "seeds-fair.txt", "types": "R,D,X,S,E,C,M", "conditions": "compact",
+                   "phrasings": "cued,neutral", "probe_design": 4, "selfcheck": True, "search_used": True, "fair": True, "budget_usd": 45.0, "cost_basis": {"B": 17.39}},
     "preflight4": {"model": "haiku", "window": 30000, "n": [1], "arms": "A,B,R,K,Z,O", "seeds": 1, "seed_file": "seeds-dev.txt", "types": "R,X",
                    "conditions": "compact,nocompact", "phrasings": "cued,neutral,nonliteral", "probe_design": 4, "nc_window": 120000,
                    "mcp_check": True, "selfcheck": True, "big_check": True},
@@ -385,13 +395,41 @@ READ_COMMANDS = ("cat", "grep", "egrep", "fgrep", "rg", "head", "tail", "ls", "f
                  "xxd", "strings", "cd", "open", "env", "sh", "bash", "zsh", "eval", "python3 -c", "python3 -m", "python3 -")
 
 
-def deny_rules(base, arm=None, shared=False):
+AF_OTHER_ARMS = tuple(a for a in ALL_ARMS if a != "Af")
+
+
+def af_deny_rules(base, seeds=None):
+    """FR.1: the rules of arm Af (A-fair). Plain Claude Code that may read, grep and glob its OWN transcripts, so no rule names ~/.claude/projects as a whole,
+    and not the broad Bash(*lhbench*) of arm A either (the own folder of Af, and so the folder of its own transcripts, is named lhbench-<run>-s<seed>-Af).
+    What stays denied: the state folders of Lossless Handoff, and the project folders (work folders and transcripts) of every other arm. Folder names end with
+    the arm letter (and -nc), so a rule for another arm never matches the own folder: "-A" is followed by an end of word, not by the "f" of "-Af".
+    A folder pattern has two forms: the work folder below the bench base, and the transcript folder below ~/.claude/projects (its name is the path with dashes)."""
+    proj = os.path.join(HOME, ".claude", "projects")
+    rules = []
+    for tool in ("Read", "Grep", "Glob"):
+        rules += ["%s(/%s/lhbench-*-state/**)" % (tool, base), "%s(/%s/lhbench-*-state*/**)" % (tool, proj), "%s(/%s/lhtools-*/**)" % (tool, base)]
+        for a in AF_OTHER_ARMS:
+            for suffix in ("", "-nc"):
+                rules += ["%s(/%s/lhbench-*-s*-%s%s/**)" % (tool, base, a, suffix), "%s(/%s/*lhbench-*-s*-%s%s/**)" % (tool, proj, a, suffix)]
+    rules += ["Bash(*lhbench-*-state*)", "Bash(*-state*)", "Bash(*lhtools-*)"]
+    # Bash patterns match the whole command, and * crosses everything. So the arm letter must follow the seed at once (-s3001-B): with -s*-B a flag such as
+    # `grep -B2` after the folder would match, and so would `grep -A 5`. The runner passes the seeds of the run.
+    for sd in (seeds or ["*"]):
+        for a in AF_OTHER_ARMS:
+            for tail in ("", "/*", " *", "'*", "\"*", "-nc*") if a == "A" else ("*",):
+                rules.append("Bash(*lhbench-*-s%s-%s%s)" % (sd, a, tail))
+    return rules
+
+
+def deny_rules(base, arm=None, shared=False, seeds=None):
     """shared=True (the project folder of arm A without compaction, which the views of B, R, K, G, P fork): only the rules that hold for every arm.
     The rules of the arm come with --settings (settings_json), so a view runs with the rules of its own arm. The cache prefix is unchanged: permissions are not in the prompt.
     Permission deny rules. They block direct reads of any transcript and of bench state folders.
     A project's own filler files stay readable, because they are in the cwd and not under these patterns.
     Arms with Lossless Handoff (LH_ARMS) get the narrow form for the bench and state folders: `python3 <state>/hooks/recall.py ...` is not denied."""
     proj = os.path.join(HOME, ".claude", "projects")
+    if arm == "Af" and not shared:
+        return af_deny_rules(base, seeds)
     rules = []
     for tool in ("Read", "Grep", "Glob"):
         rules += ["%s(~/.claude/projects/**)" % tool, "%s(/%s/**)" % (tool, proj),
@@ -557,6 +595,10 @@ class Session:
         base = ALLOWED_TOOLS if not action_dir else ALLOWED_TOOLS.replace(" Bash(python3:*)", "") + " Edit(//%s/**)" % action_dir
         return base + (" " + MCP_TOOLS + " " + TOOL_SEARCH if self.arm in RECALL_ARMS else "")
 
+    def deny_seeds(self):
+        """The seeds of the run (and the seed of this session): the Bash rules of arm Af name them (af_deny_rules)."""
+        return sorted(set(int(x) for x in (self.ctx.cfg.get("seeds") or [])) | {self.seed})
+
     # -- folders
     def refresh_deny(self):
         """A project folder that exists keeps the permission rules of the code that made it. When they differ from deny_rules now, write the current ones
@@ -566,7 +608,7 @@ class Session:
             s = json.load(open(p))
         except (OSError, ValueError):
             return False
-        want = deny_rules(work_base(self.ctx.cfg["work_base"]), self.arm, shared=(self.arm == "A" and self.cond == "nocompact"))
+        want = deny_rules(work_base(self.ctx.cfg["work_base"]), self.arm, shared=(self.arm == "A" and self.cond == "nocompact"), seeds=self.deny_seeds())
         if (s.get("permissions") or {}).get("deny") == want:
             return False
         s["permissions"] = dict(s.get("permissions") or {}, deny=want)
@@ -578,7 +620,7 @@ class Session:
             os.makedirs(os.path.join(self.proj, ".claude"))
             os.makedirs(self.statedir, exist_ok=True)
             settings = self.lh_cfg() if self.arm in LH_ARMS else {}
-            settings["permissions"] = {"deny": deny_rules(work_base(self.ctx.cfg["work_base"]), self.arm, shared=(self.arm == "A" and self.cond == "nocompact"))}
+            settings["permissions"] = {"deny": deny_rules(work_base(self.ctx.cfg["work_base"]), self.arm, shared=(self.arm == "A" and self.cond == "nocompact"), seeds=self.deny_seeds())}
             settings["autoMemoryEnabled"] = False
             write_json(os.path.join(self.proj, ".claude", "settings.json"), settings)
             # make the folder its own git root, so that recall.py cannot search outside it
@@ -841,6 +883,7 @@ class Session:
         if (cfg.get("probe_design", 1) >= 3 or cfg.get("search_used")) and fsid:      # design 3 and preflight: a search by recall.py, by the MCP tool, or by auto-recall counts for every arm
             used, kinds = grade.search_used(frecs, marker)
         calls_after = grade.lookup_calls(frecs, marker) if fsid else []   # kept: the fork transcript is deleted below
+        af_reads = fair.scan_reads(frecs, marker) if (self.arm == "Af" and fsid) else None      # FR.4 gates: own transcript reads, denied reads, other-arm paths (the fork transcript is deleted below)
         n_req, max_req = grade.request_stats(frecs, marker) if fsid else (None, None)       # per request: the cap is per request, not per fork
         if fsid:    # a later recall must not find this answer: delete the probe transcript
             ft = self.transcript(fsid)
@@ -863,7 +906,7 @@ class Session:
             self.ctx.append("results.jsonl", {
                 "run": cfg["run_id"], "gen_version": cfg["gen_version"], "seed": self.seed, "arm": self.arm,
                 "n_target": ckpt, "n_actual": n_actual, "precomputed_boundaries": pre, "type": ptype, "item": g["id"],
-                "epoch": epochs.get(g["id"]), "age": (ckpt - epochs[g["id"]] if self.arm in ("A", "B") and epochs.get(g["id"]) is not None else None),
+                "epoch": epochs.get(g["id"]), "age": (ckpt - epochs[g["id"]] if self.arm in ("A", "Af", "B") and epochs.get(g["id"]) is not None else None),
                 "fork_sid": fsid, "raw": raw, "parsed": g["parsed"], "parse_ok": g["parse_ok"], "correct": g["correct"],
                 "abstained": g["abstained"],
                 "used_lookup": used, "search_kinds": kinds, "lookup_calls": calls_after, "tokens": {"in": u.get("input_tokens"), "out": u.get("output_tokens")},
@@ -874,7 +917,8 @@ class Session:
                 **({k_: g[k_] for k_ in ("m1", "m2", "m3", "error_class", "lag", "alt_ok", "undo_last")} if self.d4 else {}),
                 **({"chunk": chunk[0], "runaway": bool(o.get("_runaway")), "refused": bool(o.get("_refused")), "guard_fired": "guard" in kinds, "free_form": bool(cfg.get("free_form")),
                                                           "requests": n_req, "max_request_output": max_req} if self.d4 else {}),
-                **({"action_file_found": action_text is not None, "tamper": tamper} if action_dir else {})})
+                **({"action_file_found": action_text is not None, "tamper": tamper} if action_dir else {}),
+                **({"af_reads": af_reads} if af_reads is not None else {})})
         if self.view_of is not None:
             st.setdefault("first_fork_cost_usd", round(o["_delta"], 6))      # K: the cache-miss check of the preflight
         st["done_forks"].append(fork_key(ckpt, ptype, phrasing, None if chunk is None else chunk[0]))
@@ -1394,6 +1438,8 @@ def session_summary(ctx, ss):
                     if isinstance(b, dict) and b.get("type") == "tool_use" and b.get("name") == "Read" and "led-" in json.dumps(b.get("input")):
                         reads += 1
         subs = sorted(glob.glob(os.path.join(main[:-6], "subagents", "agent-*.jsonl")))
+        if ss.arm == "Af":
+            out["af_reads"] = fair.scan_reads(read_jsonl(main))      # the whole main transcript: no marker (FR.4 gates)
         out["u_main_reads"] = reads
         out["subagent_files"] = len(subs)
         out["sub_boundaries"] = sum(count_boundaries(p)[0] for p in subs)
@@ -1474,7 +1520,7 @@ def check_session_gates(ctx):
     statuses = {n: st.get("status") for n, st in sess.items() if n != "big"}
     costs = {}
     for n, st in sess.items():
-        m = re.match(r"s(\d+)-([A-Z])(-nc)?$", n)
+        m = re.match(r"s(\d+)-([A-Z]f?)(-nc)?$", n)
         if m and st.get("status") in ("done", "invalid", "failed"):
             costs[n] = (st.get("cost", 0.0), cost.unit_estimate(ctx.cfg, m.group(2), "nocompact" if m.group(3) else "compact"))
     # a view (arm B, R or K forking arm A) is paid inside the unit of arm A: judge the sum
@@ -1707,6 +1753,12 @@ def build_cfg(kind, a):
         bad_seeds = proof.check_seeds(seeds, HERE, want=len(seeds) if a.seeds else 4)
         if bad_seeds:
             raise SystemExit("proof test: the seeds must be new. " + "; ".join(bad_seeds))
+    if kind in ("fair-step1", "fair-step2"):      # fair-preflight uses a dev seed, as preflight4. Step 1 and step 2 share seeds-fair.txt on purpose
+        bad_seeds = proof.check_seeds(seeds, HERE, want=len(seeds) if a.seeds else k["seeds"], skip=(os.path.basename(a.seed_file or k["seed_file"]),), skip_kinds=FAIR_KINDS)
+        if bad_seeds:
+            raise SystemExit("fair re-test: the seeds must be new. " + "; ".join(bad_seeds))
+    if kind == "fair-step2" and not getattr(a, "compare", None) and not a.dry_run:
+        raise SystemExit("fair-step2 needs --compare <run id of fair-step1>: the verdict compares arm B with arm Af and the controls of that run")
     types = [t for t in ((a.types or k.get("types") or "").split(",") if (a.types or k.get("types")) else ALL_TYPES)]
     bad = [t for t in types if t not in ALL_TYPES]
     arms = (a.arms or k["arms"]).split(",")
@@ -1767,6 +1819,10 @@ def build_cfg(kind, a):
         "allowed_tools": ALLOWED_TOOLS, "started": now_iso(),
         "command": " ".join(sys.argv),
     }
+    cfg["fair"] = bool(k.get("fair"))      # arm Af runs first (isolation by ordering, SPEC.md section 16)
+    if cfg["budget_usd"] is None and k.get("budget_usd"):       # the fair presets have a fixed cap (fair-preflight $3, step 1 $55, step 2 $45)
+        cfg["budget_usd"] = float(k["budget_usd"])
+        cfg["budget_preset"] = True
     if cfg["budget_usd"] is None:       # default budget: 1.5 x the estimate of the whole run (none for the slice preset)
         est = cost.estimate_per_seed(cfg)
         if est:
@@ -1792,6 +1848,13 @@ def work_units(cfg):
     return out
 
 
+def unit_phases(cfg, units):
+    """The groups of work units, in order. A fair run (FR.2, isolation by ordering): every unit of arm Af first, all the others after. Else one group."""
+    if cfg.get("fair") and any(u[1] == "Af" for u in units):
+        return [p for p in ([u for u in units if u[1] == "Af"], [u for u in units if u[1] != "Af"]) if p]
+    return [units]
+
+
 def execute(ctx):
     cfg = ctx.cfg
     snap0 = sha256_file(os.path.join(HOME, ".claude", "settings.json"))
@@ -1801,24 +1864,33 @@ def execute(ctx):
     ctx.save()
     try:
         if cfg.get("selfcheck") and "selfcheck" not in ctx.state:
-            ok_, lines_ = selfcheck_core(cfg["model"], cfg["lh_path"], cfg["work_base"])
+            ok_, lines_ = selfcheck_core(cfg["model"], cfg["lh_path"], cfg["work_base"], fair=bool(cfg.get("fair")))
             ctx.state["selfcheck"] = {"ok": ok_, "lines": lines_}
             ctx.save()
             if not ok_:
                 raise Fatal(("proof test stopped before any probe: " if cfg.get("kind") in ("proof", "proof-recheck") else "") + "deny-rule selfcheck failed: " + " | ".join(lines_)[:300])
         if cfg.get("big_check"):
             run_big_check(ctx)
-        with concurrent.futures.ThreadPoolExecutor(max_workers=cfg["jobs"]) as ex:
-            futs = [ex.submit(run_unit_gated, ctx, s, arm, cond) for s, arm, cond in units]
-            for f in futs:
-                try:
-                    f.result()
-                except Fatal as e:
-                    print("FATAL:", e, file=sys.stderr)
-                    code = 1
-                except Exception as e:  # a bug in one unit must not hide the others
-                    print("ERROR:", repr(e), file=sys.stderr)
-                    code = 1
+        for phase in unit_phases(cfg, units):
+            if phase and phase[0][1] != "Af" and any(u[1] == "Af" for u in units):
+                # FR.2 (isolation by ordering): another arm starts only when every Af session of this run is done, also after a resume
+                left = [n for n, st in ctx.state["sessions"].items() if n.endswith("-Af") and st.get("status") not in ("done", "invalid")]
+                left += ["s%d-Af" % u[0] for u in units if u[1] == "Af" and ("s%d-Af" % u[0]) not in ctx.state["sessions"]]
+                if left or ctx.stop.is_set() or code:
+                    print("fair re-test: the other arms do not start, because arm Af is not done (%s). Fix the cause, then run.sh resume %s" % (", ".join(sorted(set(left))) or "stopped", cfg["run_id"]), file=sys.stderr)
+                    code = code or 1
+                    break
+            with concurrent.futures.ThreadPoolExecutor(max_workers=cfg["jobs"]) as ex:
+                futs = [ex.submit(run_unit_gated, ctx, s, arm, cond) for s, arm, cond in phase]
+                for f in futs:
+                    try:
+                        f.result()
+                    except Fatal as e:
+                        print("FATAL:", e, file=sys.stderr)
+                        code = 1
+                    except Exception as e:  # a bug in one unit must not hide the others
+                        print("ERROR:", repr(e), file=sys.stderr)
+                        code = 1
     except KeyboardInterrupt:
         ctx.stop.set()
         code = 3
@@ -1861,13 +1933,23 @@ def cmd_run(a):
         print("dry run: no model call. run %s, kind %s, model %s, window %s, nc window %s (%s lines per filler file)" % (
             cfg["run_id"], cfg["kind"], cfg["model"], cfg["window"], cfg["nc_window"], cfg["nc_lines"]))
         print("units (seed, arm, condition):", len(units), "; conditions", cfg["conditions"], "; phrasings", cfg["phrasings"], "; probe design", cfg["probe_design"])
-        print("budget_usd: %s%s" % (cfg["budget_usd"], " (default: %.1f x the estimate of the whole run; the run pauses there, exit code 3)" % gates.DEFAULT_BUDGET_FACTOR if cfg.get("budget_default") else ""))
+        print("budget_usd: %s%s" % (cfg["budget_usd"], " (default: %.1f x the estimate of the whole run; the run pauses there, exit code 3)" % gates.DEFAULT_BUDGET_FACTOR if cfg.get("budget_default")
+                                    else (" (cap of the preset; the run pauses there, exit code 3)" if cfg.get("budget_preset") else "")))
+        if cfg.get("fair") and "Af" in cfg["arms"]:
+            print("isolation of arm Af (FR.2): ordering. All Af sessions and probe forks finish before any other arm starts. Run `run.sh cleanup --all` first.")
+        if cfg["kind"] == "fair-preflight":
+            tot, ln = cost.estimate_fair_preflight(cfg["arms"], cfg["n"])
+            print("ESTIMATE FOR THIS RUN (Haiku, assumptions in cost.py):\n" + "\n".join("  " + x for x in ln) + "\n  total about $%.2f (cap: $%.2f)" % (tot, cfg["budget_usd"]))
+            return 0
         c_ = {"levels": cfg.get("levels"), "seeds": len(cfg["seeds"]), "arms": cfg["arms"], "n": cfg["n"], "conditions": cfg["conditions"], "phrasings": cfg["phrasings"], "n_by_arm": cfg.get("n_by_arm"), "design": cfg["probe_design"], "cost_basis": cfg.get("cost_basis")}
         if cfg["kind"].startswith("preflight"):
             tot, ln = cost.estimate_preflight(cfg["arms"], cfg["conditions"], 4 if cfg.get("probe_design", 1) >= 4 else 3)
             print("ESTIMATE FOR THIS RUN (Haiku, assumptions in cost.py):\n" + "\n".join("  " + x for x in ln) + "\n  total about $%.2f (target: under $3)" % tot)
             return 0
-        print((cost.render3 if cfg["probe_design"] >= 3 else cost.render)("ESTIMATE FOR THIS RUN", c_)[1])
+        tot_, txt_ = (cost.render3 if cfg["probe_design"] >= 3 else cost.render)("ESTIMATE FOR THIS RUN", c_)
+        print(txt_)
+        if cfg.get("fair"):
+            print("  cap of the preset $%.0f; estimate $%.0f (%s of the cap)" % (cfg["budget_usd"], tot_, "%.0f%%" % (100 * tot_ / cfg["budget_usd"])))
         if cfg["probe_design"] >= 3:
             print("\n".join(cost.ASSUMPTIONS3))
         return 0
@@ -1957,12 +2039,48 @@ def cmd_cleanup(a):
 
 def cmd_selfcheck(a):
     """Tiny live check of the transcript deny rules, in arm A and arm B (and recall scope in arm B). A few cents."""
-    ok, lines = selfcheck_core(a.model, os.path.realpath(a.lh_path or REPO), a.work_base, echo=True)
+    ok, lines = selfcheck_core(a.model, os.path.realpath(a.lh_path or REPO), a.work_base, echo=True, fair=getattr(a, "fair", False))
     return 0 if ok else 1
 
 
-def selfcheck_core(model, lh_path, work_base_arg, echo=False):
-    """Returns (ok, lines)."""
+def fair_selfcheck_verdict(res, denials, tok_own, tok_other, own_dir, other_dir):
+    """The fair branch of the selfcheck (no model call here). Arm Af must READ its own transcript (the token of the own decoy is in the reply and no denial names the own folder),
+    and must NOT read the transcript of another arm (its token is not in the reply, and at least one denial names that folder)."""
+    names = lambda d: [x for x in denials if isinstance(x, dict) and d in json.dumps(x)]      # noqa: E731
+    return bool(tok_own in res and tok_other not in res and not names(own_dir) and names(other_dir))
+
+
+def fair_selfcheck(ctx, cfg, say):
+    """FR.6: arm Af reads its own transcript (must SUCCEED) and cannot read the transcript of another arm (must be DENIED). A few cents."""
+    tok_own, tok_other = "OWNTOK-" + uuid.uuid4().hex[:10].upper(), "OTHERARMTOK-" + uuid.uuid4().hex[:10].upper()
+    ss = Session(ctx, "chk-Af", 1, "Af", ctx.sess("chk-Af"))
+    ss.prepare()
+    sid = ss.st["sid"]
+    own_dir = os.path.dirname(ss.transcript(sid))
+    os.makedirs(own_dir, exist_ok=True)
+    own = os.path.join(own_dir, "decoy.jsonl")
+    open(own, "w").write(json.dumps({"cwd": ss.proj, "note": tok_own}) + "\n")
+    ob = Session(ctx, "chk-fair-O", 1, "O", ctx.sess("chk-fair-O"))        # a project folder of another arm, with a secret in its transcript folder
+    ob.prepare()
+    other_dir = os.path.dirname(ob.transcript(ob.st["sid"]))
+    os.makedirs(other_dir, exist_ok=True)
+    other = os.path.join(other_dir, "decoy.jsonl")
+    open(other, "w").write(json.dumps({"cwd": ob.proj, "note": tok_other}) + "\n")
+    ss.call("Remember the word ZEBRAQUARTZ. Reply only `ok`.", "turn", sid=sid, first=True)
+    prompt = ("Do these five things, each in its own tool call, and report each result in one short line. 1) Read the file %s with the Read tool. 2) Run `cat %s` with Bash. "
+              "3) Use Grep for `note` in %s. 4) Read the file %s with the Read tool. 5) Run `cat %s` with Bash. Report the output of each, and say DENIED if a tool was denied."
+              % (own, own, own_dir, other, other))
+    o = ss.call(prompt, "turn", sid=sid)
+    res, den = o.get("result") or "", o.get("permission_denials") or []
+    good = fair_selfcheck_verdict(res, den, tok_own, tok_other, own_dir, other_dir)
+    say("arm Af: own transcript read and other-arm transcript denied: %s (own token in reply: %s; other token in reply: %s; denied tools: %s)" % (
+        "OK" if good else "FAIL", tok_own in res, tok_other in res, sorted({x.get("tool_name") for x in den if isinstance(x, dict)})))
+    say("  reply:", res.replace("\n", " | ")[:600])
+    return good
+
+
+def selfcheck_core(model, lh_path, work_base_arg, echo=False, fair=False):
+    """Returns (ok, lines). fair=True adds the fair branch: arm Af reads its own transcript (must succeed) and not that of another arm."""
     out = []
 
     def say(*x):
@@ -2075,6 +2193,8 @@ def selfcheck_core(model, lh_path, work_base_arg, echo=False):
     say("arm B no-compaction view: the printed recall command in a fork: %s (Bash denials: %d; the word was found: %s)" % ("OK" if good else "DENIED OR NOT RUN", len(denials), found_))
     say("  reply:", res.replace("\n", " | ")[:300])
     ok_all = ok_all and good
+    if fair:
+        ok_all = fair_selfcheck(ctx, cfg, say) and ok_all
     shutil.rmtree(d, ignore_errors=True)
     say("selfcheck:", "PASS" if ok_all else "FAIL", "(clean up with: run.sh cleanup)")
     return ok_all, out
@@ -2096,6 +2216,7 @@ def main():
     sc = sp.add_parser("selfcheck")
     sc.add_argument("--model", default="haiku")
     sc.add_argument("--lh-path")
+    sc.add_argument("--fair", action="store_true", help="add the fair branch: arm Af must read its own transcript and must be denied the transcript of another arm")
     sc.add_argument("--work-base")
     c = sp.add_parser("cleanup")
     c.add_argument("--all", action="store_true", help="also delete folders of paused runs")

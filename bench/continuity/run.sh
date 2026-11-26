@@ -8,6 +8,9 @@
 #   run.sh litm4-oracle-check|litm4-calibrate|litm4-calibrate-l5|litm4-smoke|litm4-pilot|litm4-full-v3   probe design 4 (update chains with interference, no-compaction condition; compaction as in design 3)
 #   run.sh preflight4 [options]   the preflight with design 4 (Haiku). run.sh decide <run-id> prints the pick rule of a calibration run
 #   run.sh proof-recheck [--compare ID]  arm B only on the proof seeds after F81, about $70, no PASS or FAIL (add --dry-run for the estimate)
+#   run.sh fair-preflight [options]  the fair re-test check (Haiku, 1 seed, arms Af and B, cap $3). It ends with a PASS/FAIL list (fair.py preflight-check)
+#   run.sh fair-step1 [options]   fair re-test step 1: arms Af O Z on seeds-fair.txt, N=10, cap $55. It prints the stop rule at the end. Run `run.sh cleanup --all` first
+#   run.sh fair-step2 --compare <step1 run id> [options]   fair re-test step 2: arm B on the same seeds, cap $45 (add --dry-run to any fair preset for the estimate)
 #   run.sh proof   [options]      the proof test: 4 new seeds, arms A B O Z, N 1 3 10, about $165 (add --dry-run to only print the estimate). The live selfcheck runs first
 #   run.sh litm-smoke [options]   1 dev seed, arms A and R, no compaction only (about $12)
 #   run.sh litm-pilot [options]   lost-in-the-middle pilot: 2 dev seeds, arms A,B,R, both conditions, both phrasings (add --dry-run to only print the cost)
@@ -28,7 +31,7 @@ D="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cmd="${1:-}"
 [ $# -gt 0 ] && shift
 case "$cmd" in
-  slice|full|proof|proof-recheck|preflight|litm-smoke|litm-pilot|litm-full|litm3-smoke|litm3-nc-smoke|litm3-pilot|litm3-full|litm3-full-v3|litm3-full-v5|litm4-oracle-check|litm4-calibrate|litm4-calibrate-l5|litm4-smoke|litm4-pilot|litm4-full-v3|preflight4)
+  slice|full|proof|proof-recheck|fair-preflight|fair-step1|fair-step2|preflight|litm-smoke|litm-pilot|litm-full|litm3-smoke|litm3-nc-smoke|litm3-pilot|litm3-full|litm3-full-v3|litm3-full-v5|litm4-oracle-check|litm4-calibrate|litm4-calibrate-l5|litm4-smoke|litm4-pilot|litm4-full-v3|preflight4)
     python3 "$D/runner.py" run "$cmd" "$@"
     rc=$?
     if { [ "$cmd" = preflight ] || [ "$cmd" = preflight4 ]; } && [ "$rc" -ne 3 ] && [ "$rc" -ne 4 ]; then
@@ -38,6 +41,13 @@ case "$cmd" in
     if [ "$rc" -ne 3 ] && [ -n "$last" ] && [ -s "$D/results/$last/results.jsonl" ]; then
       python3 "$D/report.py" "$last" >/dev/null || rc=$((rc == 0 ? 1 : rc))
       echo "report: $D/results/$last/summary.md"
+      case " $* " in *" --dry-run "*) dry=1 ;; *) dry=0 ;; esac      # a dry run made no run folder: results/.last is an older run
+      if [ "$cmd" = fair-preflight ] && [ "$rc" -ne 4 ] && [ "$dry" -eq 0 ]; then
+        python3 "$D/fair.py" preflight-check "$last" || rc=1
+      fi
+      if [ "$cmd" = fair-step1 ] && [ "$dry" -eq 0 ]; then
+        python3 "$D/fair.py" stop-check "$last"
+      fi
     fi
     exit "$rc" ;;
   resume)

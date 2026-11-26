@@ -153,7 +153,7 @@ def build(run_id, draws=None):
     boot = Boot(max(S, 1), draws or th["bootstrap_draws"], th["bootstrap_rng_seed"], th["ci_level"]) if S else None
     ns = sorted({r["n_target"] for r in rows if r["arm"] in ("A", "B") and r["n_target"] > 0})
     arms = [a for a in ("A", "B") if any(r["arm"] == a for r in rows)]
-    names = {"A": "A plain", "B": "B Lossless Handoff", "Z": "Z no history", "O": "O no compaction"}
+    names = {"A": "A plain", "Af": "Af plain, may search its own transcripts", "B": "B Lossless Handoff", "Z": "Z no history", "O": "O no compaction"}
     out = {"run": run_id, "config": cfg, "spent_usd": round(state["spent"], 4), "status": state["status"], "tables": {}, "gates": [], "gain": []}
     md = []
     small = cfg["window"] < 100000
@@ -443,7 +443,7 @@ def build(run_id, draws=None):
     md.append("| Arm | Sessions | Main turns | Compactions | Turns per compaction | Main-turn cost per compaction | Cost per fork | Total cost |")
     md.append("|---|---|---|---|---|---|---|---|")
     cost_tab = {}
-    for a in ("A", "B", "O", "Z"):
+    for a in ("A", "Af", "B", "O", "Z"):
         ss = [s for s in sess if s["arm"] == a]
         if not ss:
             continue
@@ -509,6 +509,16 @@ def build(run_id, draws=None):
             md.append("")
             md += d4md
             out["design4"] = d4out
+    if cfg.get("kind") in ("fair-step1", "fair-step2", "fair-preflight"):      # the fair re-test: counts and the pre-registered rule first (fair.py), then the usual tables
+        import fair
+        rows_f, sess_f = list(rows_all), list(sess_all)
+        if cfg.get("compare"):       # step 2: the rows and sessions of step 1 (arm Af and the controls O and Z) next to arm B of this run
+            cdir = os.path.join(RESULTS, cfg["compare"])
+            rows_f = gates.dedupe_rows(load_jsonl(os.path.join(cdir, "results.jsonl"))) + rows_f
+            sess_f = load_jsonl(os.path.join(cdir, "sessions.jsonl")) + sess_f
+        fmd, fout = fair.section(rows_f, sess_f, cfg, th)
+        out["fair"] = fout
+        return out, "\n".join(head[:1] + [""] + fmd + [""] + head[1:] + md) + "\n"
     if cfg.get("kind") == "proof-recheck":      # no verdict: only the Recheck section, then the usual tables
         import proof
         other = None
