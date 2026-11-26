@@ -1513,6 +1513,7 @@ Why: the test review of 2026-11-25 found 3 gaps.
 **F91.a Proof failures in the check line.**
 - `--check` reports the data problem `proof: <k> failed checks in the last 7 days (latest: <check> at <ts>); see precompact-handoff.py --prove --days 7` when `proofs.jsonl` has 1 or more rows in the last 7 days with a check value `fail`.
 - The same text goes into the `HANDOFF CHECK:` line that the hooks already inject (the line that holds `claims:` and `decisions list:` today).
+- The once-only `proof failed: <n> checks; see proof-report.md.` notice (F47.c) stays as it is. When both apply, the line holds both texts. A check line is not a fixed string: tests check its parts (F90.i).
 - A `skip` is not a failure.
 - This is a data problem, not an install problem (F86.a).
 - With `--verbose`, `--check` adds up to 3 latest failures, each with the check name, the time and the first 100 characters of the detail, after `redact()`.
