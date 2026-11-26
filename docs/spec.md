@@ -1538,8 +1538,8 @@ Why: the test review of 2026-11-25 found 3 gaps.
   - tool-result content forms (string, list).
 - It writes `<state>/shapes.json` with the counts and the time.
 - The first run writes the baseline `<state>/shapes-baseline.json`.
-- Each next run prints the shapes that are new since the baseline, as `new record type: <t>` or `new key: <k>`, with names only, never values.
-- `--check --verbose` prints `info: transcript shapes: <n> new since <baseline date>` when `shapes.json` exists.
+- Each next run prints the shapes that are new since the PREVIOUS run (the `shapes.json` it replaces; on the first compare, the baseline), as `new record type: <t>` or `new key: <k>`, with names only, never values. So a second run with no change prints no `new` line. (Amended 2026-11-26.)
+- `--check --verbose` prints `info: transcript shapes: <n> new since <baseline date>` when `shapes.json` exists. Here `<n>` counts the shapes in `shapes.json` that are not in the baseline.
 - The nightly job (when installed with `--nightly`) runs the census once each night after the prove run.
 - The command makes no model call and reads no text content into its output.
 
