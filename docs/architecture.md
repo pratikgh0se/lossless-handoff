@@ -30,7 +30,7 @@ This page shows every part of Lossless Handoff, the Claude Code event that calls
 | Subagent rules | `hooks/postcompact-inject.py --subagent-start` | `SubagentStart` (timeout 10) | `decisions.md` | One `subagent_start` row in `health.jsonl`. It prints the active rules and the recall line to the new subagent. |
 | End-of-chat index | `hooks/recall.py session-end` | `SessionEnd` (timeout 5) | The transcript of the chat | The index in `recall/` |
 | Nightly index | `hooks/recall.py index --all --max-seconds 3000` | launchd, 03:30 (macOS) | All transcripts of all projects | The index in `recall/` |
-| Nightly reconcile and proof | `hooks/precompact-handoff.py --reconcile --prove --days 30` | launchd, 04:15 (macOS), only with `--nightly` | The transcripts, `health.jsonl`, `receipts.jsonl`, `hooks/claims.json` | `reconcile.json`, `proofs.jsonl`, `proof-report.md`, `claims-status.json`, `claims-report.md` |
+| Nightly reconcile, proof and shape census | `hooks/precompact-handoff.py --reconcile --prove --days 30 --shape-census` | launchd, 04:15 (macOS), only with `--nightly` | The transcripts, `health.jsonl`, `receipts.jsonl`, `hooks/claims.json` | `reconcile.json`, `proofs.jsonl`, `proof-report.md`, `claims-status.json`, `claims-report.md`, `samples/<ts>-<check>.json` (structure only, 50 at most), `shapes.json`, `shapes-baseline.json` |
 | Recall | `hooks/recall.py search`, `open`, `map`, `describe`, `user`, `handoffs` | None. The model runs it through Bash. | The index, the transcripts, `nodes.jsonl`, the handoff files | Nothing. Search is read-only. |
 | Summary nodes | `hooks/recall.py nodes`, and the `compact` inject hook | `SessionStart`, matcher `compact` | `compact_boundary` records in the transcript | `projects/<project>-<hash>/nodes.jsonl` |
 | Decisions list | `projects/<project>-<hash>/decisions.md` | Updated by `PreCompact`. Injected by `SessionStart` and `SubagentStart`. | n/a | n/a |
@@ -83,7 +83,7 @@ The model writes `<sid>-agent.md` itself with the Write tool. No hook sees that 
 
 ## PreCompact hook code layout
 
-`hooks/precompact-handoff.py` is the entry file. It keeps `HOOK_VERSION` and the command line switch (`--reconcile`, `--prove`, `--claims`, `--claims-lint`, `--recover`, `--ledger-maintain`, `--ledger-repair`). It loads the code from the folder `hooks/lossless_handoff/`.
+`hooks/precompact-handoff.py` is the entry file. It keeps `HOOK_VERSION` and the command line switch (`--reconcile`, `--prove`, `--shape-census`, `--claims`, `--claims-lint`, `--recover`, `--ledger-maintain`, `--ledger-repair`). It loads the code from the folder `hooks/lossless_handoff/`.
 
 | File in `hooks/lossless_handoff/` | What it holds |
 |---|---|
@@ -96,7 +96,7 @@ The model writes `<sid>-agent.md` itself with the Write tool. No hook sees that 
 | `redaction.py` | The fallback copy of the redaction code, `redact`, `redact_tree`, `write_handoff_files` |
 | `pipeline.py` | The main PreCompact pipeline, the health writer, `--recover` |
 | `reconcile.py` | The format drift scan and `--reconcile` |
-| `prove.py` | The receipt checks and `--prove` |
+| `prove.py` | The receipt checks, `--prove`, the failure samples and `--shape-census` (F91) |
 | `claims.py` | The claims register: `--claims`, `--claims-lint` |
 
 `lossless_handoff/__init__.py` runs each file in the namespace of the entry file, by path and in a fixed order (the order of the old single file). The parts share one namespace. They are not importable alone and they are not separate Python modules. So every function is still a name of `precompact-handoff.py`, and a caller that loads the entry file with `importlib` can still call it or set a global such as `HANDOFFS_DIR`. If the folder is missing or broken, the entry file prints one line on stderr and exits 0. The hook never breaks a session. `install.sh` installs the folder and lists its files in `.handoff-manifest.json`. `uninstall.sh` removes it.

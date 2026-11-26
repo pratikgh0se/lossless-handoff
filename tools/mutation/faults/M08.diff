@@ -1,0 +1,9 @@
+# fault M08 | feature F72 | type folder-fallback-off | tests: test_f72_hooks_home.py
+diff --git a/hooks/postcompact-inject.py b/hooks/postcompact-inject.py
+--- a/hooks/postcompact-inject.py
++++ b/hooks/postcompact-inject.py
+@@ -92,3 +92,3 @@
+     h = hooks_home()
+-    return [os.path.join(h, name)] if h else [first, second]
++    return [os.path.join(h, name)] if h else [first]
+

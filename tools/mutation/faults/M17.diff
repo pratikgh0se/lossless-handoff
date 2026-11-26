@@ -1,0 +1,9 @@
+# fault M17 | feature F37 | type handoff-parts-count-reduced | tests: test_f90_invariants.py
+diff --git a/hooks/postcompact-inject.py b/hooks/postcompact-inject.py
+--- a/hooks/postcompact-inject.py
++++ b/hooks/postcompact-inject.py
+@@ -79,3 +79,3 @@
+ NAMES_MAX = 150    # the section-name list in a continuation line is cut to this many chars
+-MAX_PARTS = 3      # F37.6
++MAX_PARTS = 2      # F37.6
+ HOOK_VERSION = "1.25.0"

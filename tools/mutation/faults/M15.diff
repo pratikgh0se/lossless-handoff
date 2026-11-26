@@ -1,0 +1,9 @@
+# fault M15 | feature F65 | type redaction-value-filter-too-strict | tests: test_f65_redaction.py
+diff --git a/hooks/lossless_handoff/redaction.py b/hooks/lossless_handoff/redaction.py
+--- a/hooks/lossless_handoff/redaction.py
++++ b/hooks/lossless_handoff/redaction.py
+@@ -46,3 +46,3 @@
+     digits, not a call or an index (get_secret(name), os.environ[...]) and not a variable reference."""
+-    if len(v) < 8 or v.isdigit() or re.fullmatch(r"[A-Za-z_.]+", v):
++    if len(v) < 80 or v.isdigit() or re.fullmatch(r"[A-Za-z_.]+", v):
+         return False

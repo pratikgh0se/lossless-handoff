@@ -6,7 +6,7 @@
 
 This documentation uses ASD-STE100 Simplified Technical English.
 
-Current versions: product 0.22.0 (`install.sh`), hooks 1.24.0 (`HOOK_VERSION` in `hooks/precompact-handoff.py`, `hooks/postcompact-inject.py`, `hooks/auto-recall.py`, `hooks/recall-mcp.py`, `hooks/reanchor.py`, `hooks/claim-guard.py`, `hooks/history-guard.py` and `hooks/action-guard.py`).
+Current versions: product 0.23.0 (`install.sh`), hooks 1.25.0 (`HOOK_VERSION` in `hooks/precompact-handoff.py`, `hooks/postcompact-inject.py`, `hooks/auto-recall.py`, `hooks/recall-mcp.py`, `hooks/reanchor.py`, `hooks/claim-guard.py`, `hooks/history-guard.py` and `hooks/action-guard.py`).
 
 ![plain Claude Code that can search its own transcripts, at 10 compactions: 82%](https://img.shields.io/badge/plain%20Claude%20Code%20(can%20search%20transcripts)%20at%2010%20compactions-82%25-c0392b) ![Lossless Handoff at 10 compactions: 100%](https://img.shields.io/badge/Lossless%20Handoff%20at%2010%20compactions-100%25-0b7a75) ![2 seeds, small benchmark](https://img.shields.io/badge/fair%20re--test-2%20seeds-8197a0)
 

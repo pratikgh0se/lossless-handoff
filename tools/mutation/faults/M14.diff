@@ -1,0 +1,9 @@
+# fault M14 | feature F42 | type ledger-maintenance-adds-entries | tests: test_f42_lossless_rules.py
+diff --git a/hooks/lossless_handoff/ledger.py b/hooks/lossless_handoff/ledger.py
+--- a/hooks/lossless_handoff/ledger.py
++++ b/hooks/lossless_handoff/ledger.py
+@@ -307,3 +307,3 @@
+     today = datetime.date.today().isoformat()
+-    if allow_new:
++    if True:
+         for ln in lines:

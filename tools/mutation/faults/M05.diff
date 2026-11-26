@@ -1,0 +1,9 @@
+# fault M05 | feature F87 | type recall-leaves-its-project | tests: test_f90_invariants.py test_f87_safety.py
+diff --git a/hooks/recall.py b/hooks/recall.py
+--- a/hooks/recall.py
++++ b/hooks/recall.py
+@@ -128,3 +128,3 @@
+     p = os.path.realpath(path)
+-    return p == root_real or p.startswith(root_real.rstrip(os.sep) + os.sep)
++    return True
+

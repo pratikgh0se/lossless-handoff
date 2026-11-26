@@ -1,0 +1,9 @@
+# fault M13 | feature F90 | type ledger-merge-reuses-an-id | tests: test_f39_ledger.py test_f88_decisions.py
+diff --git a/hooks/lossless_handoff/ledger.py b/hooks/lossless_handoff/ledger.py
+--- a/hooks/lossless_handoff/ledger.py
++++ b/hooks/lossless_handoff/ledger.py
+@@ -304,3 +304,3 @@
+     st = {"add": 0, "kind": 0, "resolved": 0, "superseded": 0}
+-    prev_max = max(list(prev) + list(extra_ids or ()) or [0])  # F90.c: ids of kept lines count, so no id is reused
++    prev_max = max(list(prev) or [0])  # F90.c: ids of kept lines count, so no id is reused
+     lines = [(ln or "").strip() for ln in (out_text or "").splitlines()]

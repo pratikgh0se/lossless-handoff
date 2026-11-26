@@ -36,6 +36,14 @@ Claude Code can also precompute a compaction. PreCompact runs when Claude Code b
 
 Restart open Claude Code sessions after you install: hooks load when a session starts. The longer write-up is [docs/handoff-reliability.md](handoff-reliability.md).
 
+## Live canary and shape census
+
+Two alarms tell you when the live system breaks or when Claude Code changes its transcript format (hooks 1.25.0, spec F91).
+
+- **Proof failures in `--check`.** If `proofs.jsonl` has a failed check from the last 7 days, `--check` reports `proof: <k> failed checks in the last 7 days (latest: <check> at <ts>); see precompact-handoff.py --prove --days 7`. It is a data problem, so it gives no installer advice. A `skip` is not a failure. The once-only `proof failed:` notice stays; when both apply, the line holds both texts. `--check --verbose` adds the 3 latest failures (detail cut to 100 characters, after redaction) and the count of samples.
+- **Failure samples.** When `--prove` writes a failed check, it also writes `samples/<ts>-<check>.json` in the state folder (mode 0600). A sample holds structure only: record types, sorted top-level keys, content forms, text lengths and a reason code. It holds no text, ids, paths or values. The 50 newest samples stay.
+- **Shape census.** `python3 ~/.claude/hooks/precompact-handoff.py --shape-census [--days 30]` counts record types, top-level keys, content block types and tool-result forms in your transcripts (main and subagent). It writes `shapes.json`. The first run writes `shapes-baseline.json`. Each next run prints `new record type: <t>` or `new key: <k>` for names that are new since the previous run. It makes no model call and prints names only. `--check --verbose` prints `info: transcript shapes: <n> new since <baseline date>`; to accept the new shapes, delete `shapes-baseline.json`. With `--nightly`, the 04:15 job runs the census after the prove run.
+
 ## Subagents
 
 When a subagent compacts, Claude Code fires the hooks with `agent_id` set, but with the `session_id` and `transcript_path` of the parent. Before 1.10.0, that looked like a main-session compaction and no subagent handoff was written. Now each compacting subagent gets its own handoff. The hooks build it from its own transcript (`<session>/subagents/agent-<agent_id>.jsonl` next to the parent transcript) and store it in `<sid>-a-<agent_id>` files.

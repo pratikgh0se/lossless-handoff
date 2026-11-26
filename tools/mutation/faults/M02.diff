@@ -1,0 +1,9 @@
+# fault M02 | feature F90 | type open-strips-trailing-whitespace | tests: test_f90_invariants.py
+diff --git a/hooks/recall.py b/hooks/recall.py
+--- a/hooks/recall.py
++++ b/hooks/recall.py
+@@ -204,3 +204,3 @@
+     if exact and s == t:  # F90 I1: `open` keeps text without a reminder byte for byte, trailing whitespace included
+-        return t
++        return t.rstrip()
+     return s.strip()

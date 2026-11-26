@@ -1,0 +1,9 @@
+# fault M11 | feature F90 | type grammar-accepts-id-zero | tests: test_f90_grammar.py
+diff --git a/hooks/lossless_handoff/grammar.py b/hooks/lossless_handoff/grammar.py
+--- a/hooks/lossless_handoff/grammar.py
++++ b/hooks/lossless_handoff/grammar.py
+@@ -49,3 +49,3 @@
+                  "why": m.group(4) if form == "act" else None}
+-    if d["id"] < 1:
++    if d["id"] < 0:
+         return None

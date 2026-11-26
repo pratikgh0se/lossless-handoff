@@ -1,0 +1,9 @@
+# fault M07 | feature F89 | type rule-closed-with-no-checked-quote | tests: test_f89_rule_resolve.py
+diff --git a/hooks/lossless_handoff/ledger.py b/hooks/lossless_handoff/ledger.py
+--- a/hooks/lossless_handoff/ledger.py
++++ b/hooks/lossless_handoff/ledger.py
+@@ -336,3 +336,3 @@
+             why, quote = um.group(1).strip(), um.group(2).replace('\\"', '"').strip()
+-            if not user_texts or not why or not rule_quote_ok(quote, user_texts) or " | was: " in why + quote:
++            if not user_texts or not why or " | was: " in why + quote:
+                 rst["rule_resolve_rejected"] += 1

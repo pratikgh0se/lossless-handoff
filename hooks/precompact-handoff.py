@@ -13,7 +13,7 @@ if os.environ.get("HANDOFF_HOOK_CHILD"):  # spawned by our own summary call: nev
     sys.exit(0)
 
 _T0 = time.monotonic()
-HOOK_VERSION = "1.24.0"
+HOOK_VERSION = "1.25.0"
 # The steer text stays in this file: the smoke test reads it from here.
 STEER_TEXT = """Lossless Handoff guidance for this summary:
 - Quote the user's own words for every decision, rule and correction, with the date if known.
@@ -54,18 +54,22 @@ try:
         ledger_maintain(_a[_i + 1] if _i + 1 < len(_a) else os.getcwd())
     elif "--recover" in sys.argv[1:]:
         recover()
-    elif "--reconcile" in sys.argv[1:] or "--prove" in sys.argv[1:]:
+    elif "--reconcile" in sys.argv[1:] or "--prove" in sys.argv[1:] or "--shape-census" in sys.argv[1:]:
         _a = sys.argv[1:]
         _days = 7
+        _days_given = False
         try:
             if "--days" in _a and int(_a[_a.index("--days") + 1]) >= 1:
                 _days = int(_a[_a.index("--days") + 1])
+                _days_given = True
         except Exception:
             pass
         if "--reconcile" in _a:
             reconcile(_days)
         if "--prove" in _a:
             prove(_days)
+        if "--shape-census" in _a:  # F91.c: after the prove run
+            shape_census(_days if _days_given else 30)
     elif "--claims-lint" in sys.argv[1:]:
         _a = sys.argv[1:]
         _i = _a.index("--claims-lint")

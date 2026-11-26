@@ -78,7 +78,7 @@ HARD_MAX = 9900    # each part's total output (warning + header + content + cont
 INLINE_MAX = 9700  # content target per part
 NAMES_MAX = 150    # the section-name list in a continuation line is cut to this many chars
 MAX_PARTS = 3      # F37.6
-HOOK_VERSION = "1.24.0"
+HOOK_VERSION = "1.25.0"
 
 
 def hooks_home():
@@ -1201,6 +1201,32 @@ def check_mode(verbose=False):
     except Exception as e:
         log_error(e)
     mark("latest proof run has no failed check")
+    pf = []  # F91.a: (ts, check, detail) of each failed check in the last 7 days, oldest first
+    try:
+        cutoff = time.time() - 7 * 86400
+        with open(os.path.join(HANDOFFS_DIR, "proofs.jsonl"), encoding="utf-8", errors="replace") as f:
+            for ln in f:
+                try:
+                    o = json.loads(ln)
+                    t = datetime.datetime.strptime(o["ts"], "%Y-%m-%dT%H:%M:%SZ").replace(
+                        tzinfo=datetime.timezone.utc).timestamp()
+                except Exception:
+                    continue
+                if not isinstance(o.get("checks"), dict) or t < cutoff:
+                    continue
+                dd = o.get("details") if isinstance(o.get("details"), dict) else {}
+                for cname, v in o["checks"].items():
+                    if v == "fail":
+                        pf.append((o["ts"], str(cname), str(dd.get(cname) or "")))
+        pf.sort(key=lambda x: x[0])
+        if pf:
+            data.append(f"proof: {len(pf)} failed checks in the last 7 days (latest: {pf[-1][1]} at {pf[-1][0]}); "
+                        "see precompact-handoff.py --prove --days 7")
+    except FileNotFoundError:
+        pass
+    except Exception as e:
+        log_error(e)
+    mark("no proof failure in the last 7 days")
     try:  # F48.d: failing or stale claims, shown once per change of the set
         cs = read_json(os.path.join(HANDOFFS_DIR, "claims-status.json"))
         if cs:
@@ -1259,6 +1285,32 @@ def check_mode(verbose=False):
             for n, raw in bad_lines[:3]:
                 shown = _red(raw.strip())[:120] if _red else "(text hidden: recall.py did not load)"
                 sys.stdout.write(f"info: malformed line {n}: {shown}\n")
+        if pf:  # F91.a: the 3 latest failures, the detail cut to 100 characters after redact()
+            try:
+                import importlib.util
+                _s2 = importlib.util.spec_from_file_location("lh_recall_redact2", recall_path())
+                _m2 = importlib.util.module_from_spec(_s2)
+                _s2.loader.exec_module(_m2)
+                _red2 = _m2.redact
+            except Exception:
+                _red2 = None
+            for pts, pname, pdet in reversed(pf[-3:]):
+                shown = _red2(pdet)[:100] if _red2 else "(text hidden: recall.py did not load)"
+                sys.stdout.write(f"info: proof failure: {pname} at {pts}: {shown}\n")
+        try:  # F91.b: the count of structure-only samples
+            ns_ = len([x for x in os.listdir(os.path.join(HANDOFFS_DIR, "samples")) if x.endswith(".json")])
+        except OSError:
+            ns_ = 0
+        sys.stdout.write(f"info: failure samples: {ns_}\n")
+        try:  # F91.c: shapes that are new since the baseline
+            sj = read_json(os.path.join(HANDOFFS_DIR, "shapes.json"))
+            if sj:
+                bj = read_json(os.path.join(HANDOFFS_DIR, "shapes-baseline.json")) or sj
+                nnew = sum(1 for g in ("record_types", "keys", "block_types")
+                           for n in (sj.get(g) or {}) if n not in (bj.get(g) or {}))
+                sys.stdout.write(f"info: transcript shapes: {nnew} new since {str(bj.get('ts') or '?')[:10]}\n")
+        except Exception as e:
+            log_error(e)
         try:
             import importlib.util
             spec = importlib.util.spec_from_file_location("lh_recall_check",os.path.join(hooks_dir, "recall.py"))

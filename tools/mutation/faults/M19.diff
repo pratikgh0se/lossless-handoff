@@ -1,0 +1,9 @@
+# fault M19 | feature F44 | type installer-recall-rule-without-wildcard | tests: test_f64_minimal_install.py test_f86_check_advice.py
+diff --git a/install.sh b/install.sh
+--- a/install.sh
++++ b/install.sh
+@@ -441,3 +441,3 @@
+ allow_rule = "Edit(~/.local/state/claude-handoffs/**)"
+-recall_rule = "Bash(python3 ~/.claude/hooks/recall.py:*)"
++recall_rule = "Bash(python3 ~/.claude/hooks/recall.py)"
+ marker_path = os.path.join(hooks_dir, ".claude-handoff-install.json")

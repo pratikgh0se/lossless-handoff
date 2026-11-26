@@ -2,7 +2,7 @@
 # Lossless Handoff installer (formerly claude-handoff): copies the hooks and merges them into ~/.claude/settings.json.
 set -euo pipefail
 
-VERSION="0.22.0"
+VERSION="0.23.0"
 usage() {
   cat <<EOF
 Lossless Handoff $VERSION (formerly claude-handoff)
@@ -992,7 +992,7 @@ else
 fi
 
 # 4b. nightly reconcile and proof job
-RECON_CMD="python3 $HOOKS_DIR/precompact-handoff.py --reconcile --prove --days 30"
+RECON_CMD="python3 $HOOKS_DIR/precompact-handoff.py --reconcile --prove --days 30 --shape-census"
 if [ "$NIGHTLY" != 1 ]; then
   :
 elif [ "$(uname)" = "Darwin" ]; then
@@ -1015,6 +1015,7 @@ elif [ "$(uname)" = "Darwin" ]; then
     <string>--prove</string>
     <string>--days</string>
     <string>30</string>
+    <string>--shape-census</string>
   </array>
   <key>StartCalendarInterval</key>
   <dict>
