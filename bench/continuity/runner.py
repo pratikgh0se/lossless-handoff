@@ -14,7 +14,7 @@ It never touches ~/.claude settings or hooks, ~/.local/state/claude-handoffs, or
 Exit: 0 finished, 1 a session failed, 2 usage error, 3 paused (budget reached; resume later).
 """
 import calendar
-import argparse, concurrent.futures, datetime, glob, hashlib, json, os, re, shutil, signal, subprocess
+import argparse, concurrent.futures, copy, datetime, glob, hashlib, json, os, re, shutil, signal, subprocess
 import sys, tempfile, threading, time, uuid
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -497,6 +497,28 @@ def classify_result(text):
     return "ran"
 
 
+def transcript_answer(frecs, marker):
+    """FR.7 answer fallback. The final result of `claude -p` can be a late turn (for example after a background Bash task: "The background grep has finished"),
+    while the real JSON answer sits in an earlier assistant message of the fork. Returns the text of the LAST assistant message after the probe prompt
+    (the user record with the marker) that parses for grading (grade.find_answers is not None), or None."""
+    seen, texts = False, []
+    for r in frecs:
+        m = r.get("message") if isinstance(r, dict) else None
+        c = m.get("content") if isinstance(m, dict) else None
+        if not seen:
+            if r.get("type") == "user" and marker in (c if isinstance(c, str) else json.dumps(c)):
+                seen = True
+            continue
+        if r.get("type") == "assistant" and isinstance(c, list):
+            t = "".join(b.get("text", "") for b in c if isinstance(b, dict) and b.get("type") == "text")
+            if t.strip():
+                texts.append(t)
+    for t in reversed(texts):
+        if grade.find_answers(t) is not None:
+            return t
+    return None
+
+
 class Session:
     def __init__(self, ctx, name, seed, arm, st, cond="compact"):
         self.ctx, self.name, self.seed, self.arm, self.st, self.cond = ctx, name, seed, arm, st, cond
@@ -510,6 +532,7 @@ class Session:
         self.script = ctx.script3(seed) if (cond == "nocompact" and cfg.get("probe_design", 1) >= 3) else ctx.script(seed)
         self.d3 = self.script.get("design") in (3, 4)
         self.d4 = self.script.get("design") == 4
+        self.row_extra = {}     # FR.7: fields added to every probe row (a reprobe sets reprobe: True)
         self.view_of = None     # design 3, no compaction, arms B R K: the main session of arm A, which this arm forks
         ov = {"CLAUDE_CODE_AUTO_COMPACT_WINDOW": str(self.window), "RECALL_EMBED_URL": "http://127.0.0.1:9", MEMORY_ENV: "1", "DISABLE_AUTOUPDATER": "1"}
         if cond == "nocompact":
@@ -864,14 +887,19 @@ class Session:
             except OSError:
                 action_text = None
             tamper = diff_snapshot(action_before, snapshot_dir(self.proj))
+        frecs = read_jsonl(self.transcript(fsid)) if fsid else []       # read before grading (FR.7 fallback) and before the delete below
+        raw_source, raw_result = "result", None
         if self.d4 and o.get("_refused"):
             graded = design4.refused_rows(items)          # a safety filter refused the fork: an outcome, left out of the accuracy (class refused)
         elif self.d4 and o.get("_runaway"):
             graded = design4.runaway_rows(items)          # the fork hit the output cap: a probe outcome, every item is wrong (class runaway)
         else:
+            if not action_dir and fsid and grade.find_answers(raw) is None:
+                alt = transcript_answer(frecs, marker)      # FR.7: the result is a late turn; grade the last assistant message that parses. A row that parses today is not touched.
+                if alt is not None:
+                    raw_source, raw_result, raw = "transcript", raw, alt
             graded = (design4.grade_action(items, action_text, script) if action_dir else design4.grade_level(items, raw, script)) if self.d4 else grade.grade(ptype, items, raw)
         epochs = {x["id"]: x.get("epoch") for x in items}
-        frecs = read_jsonl(self.transcript(fsid)) if fsid else []
         used = grade.lookup_used(frecs, marker) if fsid else False
         view_fields = {}
         if self.view_of is not None and fsid:       # B, R and K fork the session of arm A: did the SessionStart hooks of the arm run at the start of the fork?
@@ -918,7 +946,8 @@ class Session:
                 **({"chunk": chunk[0], "runaway": bool(o.get("_runaway")), "refused": bool(o.get("_refused")), "guard_fired": "guard" in kinds, "free_form": bool(cfg.get("free_form")),
                                                           "requests": n_req, "max_request_output": max_req} if self.d4 else {}),
                 **({"action_file_found": action_text is not None, "tamper": tamper} if action_dir else {}),
-                **({"af_reads": af_reads} if af_reads is not None else {})})
+                **({"af_reads": af_reads} if af_reads is not None else {}),
+                "raw_source": raw_source, **({"raw_result": raw_result} if raw_result is not None else {}), **self.row_extra})
         if self.view_of is not None:
             st.setdefault("first_fork_cost_usd", round(o["_delta"], 6))      # K: the cache-miss check of the preflight
         st["done_forks"].append(fork_key(ckpt, ptype, phrasing, None if chunk is None else chunk[0]))
@@ -1572,7 +1601,7 @@ def check_gates(ctx):
     for s in read_jsonl(os.path.join(ctx.dir, "sessions.jsonl")):
         last[s["name"]] = s
     costs = {n: st.get("cost", 0.0) for n, st in ctx.state["sessions"].items() if n != "big" and int(n[1:].split("-")[0]) in fin}
-    return gates.abort_reasons(list(last.values()), read_jsonl(os.path.join(ctx.dir, "results.jsonl")), cost.estimate_per_seed(ctx.cfg), fin, costs,
+    return gates.abort_reasons(list(last.values()), gates.drop_replaced(read_jsonl(os.path.join(ctx.dir, "results.jsonl")), gates.replaced_set(ctx.dir)), cost.estimate_per_seed(ctx.cfg), fin, costs,
                                expected=expected_forks(ctx.cfg, fin),
                                haiku_l12=str(ctx.cfg.get("kind", "")).startswith("preflight") and ctx.cfg.get("probe_design", 1) >= 4)
 
@@ -1997,6 +2026,89 @@ def cmd_resume(a):
     return execute(ctx)
 
 
+def reprobe_plan(run_dir, cfg, state, seed, arm, ptype, phrasing, n=None):
+    """FR.7. Check what a reprobe needs and return (session name, old rows, checkpoint). Raise Fatal with a clear message when it cannot run.
+    A reprobe forks the kept main session of the unit: arm Z has none, and design 4 (chunks, no-compaction condition) is not supported."""
+    if arm == "Z":
+        raise Fatal("reprobe: arm Z has no main session to fork. Nothing to re-run.")
+    if cfg.get("probe_design", 1) >= 4 and "nocompact" in (cfg.get("conditions") or []):
+        raise Fatal("reprobe: this run has the no-compaction condition (design 4 chunks). Reprobe supports the compaction condition only.")
+    name = "s%d-%s" % (seed, arm)
+    st0 = state.get("sessions", {}).get(name)
+    if not st0 or not st0.get("sid"):
+        raise Fatal("reprobe: run %s has no session %s (sessions: %s)" % (cfg["run_id"], name, ", ".join(sorted(state.get("sessions", {}))) or "none"))
+    rows = [r for r in gates.load_rows(run_dir) if r.get("seed") == seed and r.get("arm") == arm and r.get("type") == ptype and r.get("phrasing", "cued") == phrasing
+            and r.get("condition", "compact") == "compact" and "chunk" not in r]
+    if not rows:
+        raise Fatal("reprobe: no probe rows of seed %s, arm %s, type %s, phrasing %s in %s" % (seed, arm, ptype, phrasing, run_dir))
+    ckpts = sorted({r["n_target"] for r in rows})
+    if n is None and len(ckpts) > 1:
+        raise Fatal("reprobe: these rows come from several checkpoints %s. Pass --n <checkpoint>." % ckpts)
+    ckpt = ckpts[0] if n is None else n
+    old = [r for r in rows if r["n_target"] == ckpt]
+    if not old:
+        raise Fatal("reprobe: no rows at checkpoint %s (found %s)" % (n, ckpts))
+    return name, old, ckpt
+
+
+def cmd_reprobe(a):
+    """Re-run ONE probe fork from the kept main session of the unit (FR.7). Same items, prompt, settings and deny rules as the original probe.
+    Appends the new rows with reprobe: true; the keys of the replaced rows go to reprobed.jsonl; no old row is deleted. Works for a run that a gate stopped."""
+    run_dir = os.path.join(RESULTS, a.run_id)
+    if not os.path.isfile(os.path.join(run_dir, "config.json")):
+        print("no such run:", a.run_id, file=sys.stderr)
+        return 2
+    cfg = json.load(open(os.path.join(run_dir, "config.json"), encoding="utf-8"))
+    state = json.load(open(os.path.join(run_dir, "state.json"), encoding="utf-8"))
+    try:
+        name, old, ckpt = reprobe_plan(run_dir, cfg, state, a.seed, a.arm, a.type, a.phrasing, a.n)
+        ctx = Ctx(run_dir, cfg)
+        st = copy.deepcopy(ctx.state["sessions"][name])      # a copy: the state of the unit and its cost stay as they are
+        ss = Session(ctx, name, a.seed, a.arm, st, "compact")
+        main_t = ss.transcript(st["sid"])
+        if not os.path.isdir(ss.proj) or not os.path.isfile(main_t):
+            raise Fatal("reprobe: the main session transcript is gone: %s. The temp folder of the run was deleted (run.sh cleanup, or a reboot), so the fork cannot start "
+                        "from the checkpoint. Nothing was run and nothing was written." % main_t)
+        ss.proj = os.path.realpath(ss.proj)
+        main_t = ss.transcript(st["sid"])
+        n_b, pre = count_boundaries(main_t)
+        if n_b != ckpt:
+            raise Fatal("reprobe: the main session now has %d compactions, the probe ran at %d. A fork would not be the same probe. Nothing was run." % (n_b, ckpt))
+        calls = read_jsonl(os.path.join(run_dir, "calls.jsonl"))
+        forks = [c["delta_usd"] for c in calls if c.get("name") == name and c.get("kind") == "fork" and isinstance(c.get("delta_usd"), (int, float))]
+        est = sum(forks) / len(forks) if forks else None
+        age = parent_age_s(calls, st["sid"])
+        cap = cfg.get("call_cap_usd")
+        print("reprobe %s: run %s, session %s, checkpoint %d, %d old rows (%d correct) to replace" % (
+            "DRY RUN (no model call)" if a.dry_run else "starts", a.run_id, name, ckpt, len(old), sum(1 for r in old if r.get("correct"))))
+        print("estimate: one fork, %s; cap of the call $%s%s" % (
+            ("about $%.2f (mean of %d earlier forks of %s in calls.jsonl)" % (est, len(forks), name)) if est is not None else "no earlier fork to measure",
+            cap, ("; the main session was last used %d s ago, so a cold prompt cache can make this fork write the whole history (about $1.1 on Sonnet at 300k tokens)" % age)
+            if age is not None and age > CACHE_TTL_S else ""))
+        if a.dry_run:
+            return 0
+        ss.refresh_deny()
+        ctx.cfg["budget_usd"] = None        # one fork, capped by call_cap_usd: the budget of the original run does not apply
+        ss.row_extra = {"reprobe": True}
+        st["boundaries"], st["precomputed"] = n_b, pre
+        n_before = len(read_jsonl(os.path.join(run_dir, "results.jsonl")))
+        ss.probe(a.type, ckpt, fork_of=st["sid"], phrasing=a.phrasing)
+    except (Fatal, CallError, Pause, SafetyRefusal) as e:
+        print("reprobe stopped: %s" % e, file=sys.stderr)
+        return 1
+    new = read_jsonl(os.path.join(run_dir, "results.jsonl"))[n_before:]
+    new = [r for r in new if r.get("reprobe")]
+    if not new:
+        print("reprobe: the fork made no rows. Nothing is marked.", file=sys.stderr)
+        return 1
+    for r in old:
+        ctx.append(gates.REPROBED_FILE, {"seed": r["seed"], "arm": r["arm"], "condition": r.get("condition", "compact"), "phrasing": r.get("phrasing", "cued"), "type": r["type"],
+                                         "n_target": r["n_target"], "item": r.get("item"), "fork_sid": r.get("fork_sid"), "replaced_by": new[0].get("fork_sid"), "ts": now_iso()})
+    print("reprobe done: %d new rows (%d correct, %d parsed, raw_source %s); %d old rows marked in %s" % (
+        len(new), sum(1 for r in new if r.get("correct")), sum(1 for r in new if r.get("parse_ok")), new[0].get("raw_source"), len(old), gates.REPROBED_FILE))
+    return 0
+
+
 def cmd_cleanup(a):
     """Delete only the bench's own folders: <base>/lhbench-* and ~/.claude/projects/<slug(base/lhbench-)>*.
     Folders of a paused or running run stay, unless --all. Nothing else is touched."""
@@ -2212,8 +2324,16 @@ def main():
     rs.add_argument("--jobs", type=int, default=None)
     rs.add_argument("--ignore-gates", action="store_true", help="continue after a gate stopped the run (fix the cause first; needs --i-know)")
     rs.add_argument("--i-know", action="store_true", help="confirm --ignore-gates")
+    rp = sp.add_parser("reprobe", help="FR.7: re-run one probe fork from the kept main session (a harness parse failure)")
+    rp.add_argument("run_id")
+    rp.add_argument("--seed", type=int, required=True)
+    rp.add_argument("--arm", required=True)
+    rp.add_argument("--type", required=True)
+    rp.add_argument("--phrasing", required=True)
+    rp.add_argument("--n", type=int, default=None, help="checkpoint (only when the rows come from several checkpoints)")
+    rp.add_argument("--dry-run", action="store_true", help="print the estimate, then stop. No model call")
     sp.add_parser("estimate")
-    sc = sp.add_parser("selfcheck")
+    sc =sp.add_parser("selfcheck")
     sc.add_argument("--model", default="haiku")
     sc.add_argument("--lh-path")
     sc.add_argument("--fair", action="store_true", help="add the fair branch: arm Af must read its own transcript and must be denied the transcript of another arm")
@@ -2223,7 +2343,7 @@ def main():
     c.add_argument("--dry-run", action="store_true")
     c.add_argument("--work-base")
     a = ap.parse_args()
-    return {"run": cmd_run, "resume": cmd_resume, "cleanup": cmd_cleanup, "selfcheck": cmd_selfcheck, "estimate": cmd_estimate}[a.cmd](a)
+    return {"run": cmd_run, "resume": cmd_resume, "reprobe": cmd_reprobe, "cleanup": cmd_cleanup, "selfcheck": cmd_selfcheck, "estimate": cmd_estimate}[a.cmd](a)
 
 
 if __name__ == "__main__":

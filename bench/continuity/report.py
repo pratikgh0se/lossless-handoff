@@ -144,7 +144,7 @@ def build(run_id, draws=None):
     state = json.load(open(os.path.join(rd, "state.json"), encoding="utf-8"))
     th = json.load(open(os.path.join(HERE, "thresholds.json"), encoding="utf-8"))
     import gates
-    rows_all = gates.dedupe_rows(load_jsonl(os.path.join(rd, "results.jsonl")))      # a restarted session wrote its rows twice
+    rows_all = gates.load_rows(rd)      # a restarted session wrote its rows twice (dedupe); a reprobe replaced some rows (FR.7)
     rows = [r for r in rows_all if r.get("phrasing", "cued") == "cued" and r.get("condition", "compact") == "compact"]   # old tables: cued probes, with compactions
     sess_all = load_jsonl(os.path.join(rd, "sessions.jsonl"))
     sess = [s for s in sess_all if s.get("condition", "compact") == "compact"]
@@ -490,6 +490,10 @@ def build(run_id, draws=None):
     head = ["# Continuity benchmark: run %s\n" % run_id,
             "**Controls: %s. Cost: $%.4f. Status: %s.** %s\n" % (controls, state["spent"], state["status"], label),
             "Command: `%s`. Seeds: %s. Types: %s. Arms: %s.\n" % (cfg["command"], ",".join(map(str, cfg["seeds"])), ",".join(cfg["types"]), ",".join(cfg["arms"]))]
+    rp_line = gates.reprobe_line(rd)       # FR.7: the summary and the verdict use the reprobe rows; say so
+    if rp_line:
+        head.append(rp_line + "\n")
+        out["reprobed"] = rp_line
     if cfg.get("probe_design", 1) >= 2:
         head.append("Probe design: %d. The cued head of design 2 has an added cue sentence, so its cued tables are not comparable with Wave 1 and Wave 2 (probe design 1).\n" % cfg["probe_design"])
     if ag.dropped:
@@ -514,7 +518,7 @@ def build(run_id, draws=None):
         rows_f, sess_f = list(rows_all), list(sess_all)
         if cfg.get("compare"):       # step 2: the rows and sessions of step 1 (arm Af and the controls O and Z) next to arm B of this run
             cdir = os.path.join(RESULTS, cfg["compare"])
-            rows_f = gates.dedupe_rows(load_jsonl(os.path.join(cdir, "results.jsonl"))) + rows_f
+            rows_f = gates.load_rows(cdir) + rows_f
             sess_f = load_jsonl(os.path.join(cdir, "sessions.jsonl")) + sess_f
         fmd, fout = fair.section(rows_f, sess_f, cfg, th)
         out["fair"] = fout
@@ -523,7 +527,7 @@ def build(run_id, draws=None):
         import proof
         other = None
         if cfg.get("compare"):
-            other = gates.dedupe_rows(load_jsonl(os.path.join(RESULTS, cfg["compare"], "results.jsonl")))
+            other = gates.load_rows(os.path.join(RESULTS, cfg["compare"]))
         pmd, pout = proof.recheck_section(rows_all, cfg, other)
         out["recheck"] = pout
         return out, "\n".join(head[:1] + [""] + pmd + [""] + head[1:] + md) + "\n"

@@ -19,6 +19,7 @@
 #   run.sh retrieval-gate [--level L] [--seeds FILE] [--hooks-dir DIR]   offline retrieval gate (F76, $0): the hooks of a folder on synthetic transcripts
 #   run.sh estimate               print the pilot cost and the full cost of the lost-in-the-middle design (no model call)
 #   run.sh resume  <run-id> [--budget-usd X] [--jobs N]
+#   run.sh reprobe <run-id> --seed S --arm X --type T --phrasing P [--dry-run]   (FR.7: re-run one probe fork from the kept main session; the new rows replace the old ones in the summary)
 #   run.sh report  <run-id> [--publish] [--draws N]
 #   run.sh regrade <run-id|results-folder>   (grade the stored raw replies again, rebuild the report, no model call)
 #   run.sh aa      <run-id-1> <run-id-2> [--arm A|B] [--draws N]   (A/A noise floor)
@@ -59,6 +60,19 @@ case "$cmd" in
       python3 "$D/report.py" "$id" >/dev/null || rc=$((rc == 0 ? 1 : rc))
       echo "report: $D/results/$id/summary.md"
     fi
+    exit "$rc" ;;
+  reprobe)
+    [ $# -ge 1 ] || { echo "usage: run.sh reprobe <run-id> --seed S --arm X --type T --phrasing P [--dry-run]" >&2; exit 2; }
+    id="$1"; shift
+    python3 "$D/runner.py" reprobe "$id" "$@"
+    rc=$?
+    case " $* " in *" --dry-run "*) ;; *)
+      if [ "$rc" -eq 0 ] && [ -s "$D/results/$id/results.jsonl" ]; then
+        python3 "$D/report.py" "$id" >/dev/null || rc=1
+        echo "report: $D/results/$id/summary.md"
+        python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); import gates; l = gates.reprobe_line(sys.argv[2]); l and print(l)' "$D" "$D/results/$id"
+      fi ;;
+    esac
     exit "$rc" ;;
   regrade) exec python3 "$D/regrade.py" "$@" ;;
   aa)      exec python3 "$D/report.py" aa "$@" ;;

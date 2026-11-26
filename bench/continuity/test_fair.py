@@ -572,6 +572,148 @@ class ReportSmoke(unittest.TestCase):
             report.RESULTS = old
 
 
+class Reprobe(unittest.TestCase):
+    """FR.7: the answer fallback of probe(), the reprobe rows in the summary, and the clear error of a missing main session. No model call."""
+
+    def cfg(self):
+        import argparse
+        ap = argparse.ArgumentParser()
+        runner.parse_common(ap)
+        cfg = runner.build_cfg("fair-step1", ap.parse_args(["--dry-run"]))
+        cfg["run_id"] = "fx-reprobe"
+        return cfg
+
+    def session(self, root):
+        rd = os.path.join(root, "run")
+        os.makedirs(rd, exist_ok=True)
+        ctx = runner.Ctx(rd, self.cfg())
+        ss = runner.Session(ctx, "s3002-Af", 3002, "Af", ctx.sess("s3002-Af"))
+        ss.st.update({"boundaries": 10, "sid": "main-sid"})
+        ss.proj = os.path.join(root, "proj")
+        os.makedirs(ss.proj, exist_ok=True)
+        return ctx, ss
+
+    def run_probe(self, root, result, msgs):
+        """probe() of type E with a stubbed claude call. msgs: assistant texts of the fork transcript. Returns the rows written."""
+        ctx, ss = self.session(root)
+        tp = os.path.join(root, "fork.jsonl")
+        ss.transcript = lambda sid: tp
+        marker = "PROBE-3002-Af-10-E"
+        recs = [{"type": "user", "message": {"role": "user", "content": "old history, no marker"}},
+                {"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": '{"answers": [{"id": "OLD"}]}'}]}},
+                {"type": "user", "message": {"role": "user", "content": "question " + marker}}]
+        recs += [{"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": t}]}} for t in msgs]
+        open(tp, "w").write("\n".join(json.dumps(r) for r in recs) + "\n")
+        ss.call = lambda *a, **k: {"result": result, "session_id": "fork1", "usage": {"input_tokens": 1, "output_tokens": 2}, "_delta": 0.5, "permission_denials": []}
+        ss.probe("E", 10, fork_of="main-sid", phrasing="cued")
+        self.assertFalse(os.path.exists(tp), "the fork transcript is deleted after grading, as before")
+        return runner.read_jsonl(os.path.join(ctx.dir, "results.jsonl"))
+
+    def answer_for(self, root, ok=True):
+        import gen
+        _c, ss = self.session(root)
+        items = gen.select(ss.script, "E", runner.need_epoch(ss.ctx.cfg, "Af", 10))
+        return json.dumps({"answers": [{"id": it["id"], "proceed": False, "reason_code": it["ecode"] if ok else "X"} for it in items]}), len(items)
+
+    def test_fallback_takes_the_last_parsable_assistant_message(self):
+        import tempfile
+        root = tempfile.mkdtemp()
+        good, n = self.answer_for(root)
+        late = "The background grep I started earlier has finished. I already have the answers."
+        rows = self.run_probe(root, late, ['{"answers": [{"id": "x"}] first, broken', good, "thinking again", late])
+        self.assertEqual(len(rows), n)
+        self.assertTrue(all(r["raw_source"] == "transcript" and r["parse_ok"] and r["correct"] for r in rows))
+        self.assertEqual(rows[0]["raw"], good)
+        self.assertEqual(rows[0]["raw_result"], late)
+        self.assertNotIn("reprobe", rows[0])
+
+    def test_two_parsable_messages_take_the_last(self):
+        import tempfile
+        root = tempfile.mkdtemp()
+        good, _n = self.answer_for(root)
+        bad, _n = self.answer_for(root, ok=False)
+        rows = self.run_probe(root, "done", [bad, good, "ok done"])
+        self.assertTrue(all(r["raw_source"] == "transcript" and r["correct"] for r in rows))
+
+    def test_no_parsable_message_keeps_the_result(self):
+        import tempfile
+        rows = self.run_probe(tempfile.mkdtemp(), "no json here", ["still no json"])
+        self.assertTrue(all(r["raw_source"] == "result" and not r["parse_ok"] and r["raw"] == "no json here" and "raw_result" not in r for r in rows))
+
+    def test_a_row_that_parses_today_is_unchanged(self):
+        import tempfile
+        root = tempfile.mkdtemp()
+        bad, _n = self.answer_for(root, ok=False)
+        better, _n = self.answer_for(root, ok=True)
+        rows = self.run_probe(root, bad, [better, "late turn"])
+        self.assertTrue(all(r["raw_source"] == "result" and r["raw"] == bad and r["parse_ok"] and not r["correct"] for r in rows))
+
+    def make_run(self, root, rows, replaced=()):
+        rd = os.path.join(root, "fx-reprobe")
+        os.makedirs(rd)
+        json.dump(self.cfg(), open(os.path.join(rd, "config.json"), "w"))
+        json.dump({"spent": 1.0, "status": "done", "sessions": {"s3002-Af": {"status": "done", "sid": "main-sid"}}}, open(os.path.join(rd, "state.json"), "w"))
+        open(os.path.join(rd, "results.jsonl"), "w").write("\n".join(json.dumps(r) for r in rows) + "\n")
+        open(os.path.join(rd, "sessions.jsonl"), "w").write("")
+        open(os.path.join(rd, "calls.jsonl"), "w").write("")
+        if replaced:
+            open(os.path.join(rd, "reprobed.jsonl"), "w").write("\n".join(json.dumps(r) for r in replaced) + "\n")
+        return rd
+
+    def test_summary_uses_reprobe_rows_and_prints_the_line(self):
+        import tempfile
+        import gates
+        import report
+        root = tempfile.mkdtemp()
+        rows = make(af=0.5, b=0.9, with_b=False)
+        old = [r for r in rows if r["arm"] == "Af" and r["seed"] == 3002 and r["type"] == "E" and r["phrasing"] == "cued"][:4]
+        for r in old:
+            r.update(parse_ok=False, correct=False, raw="late turn")
+        new = [dict(r, parse_ok=True, correct=True, reprobe=True, raw_source="transcript", fork_sid="new-%d" % i) for i, r in enumerate(old)]
+        marks = [{"seed": r["seed"], "arm": r["arm"], "condition": "compact", "phrasing": "cued", "type": "E", "n_target": 10, "item": r["item"], "fork_sid": r["fork_sid"]} for r in old]
+        rd = self.make_run(root, rows + new, marks)
+        eff = gates.load_rows(rd)
+        self.assertEqual(len(eff), len(rows))
+        self.assertEqual(len([r for r in eff if r.get("reprobe")]), 4)
+        self.assertEqual(len(open(os.path.join(rd, "results.jsonl")).read().splitlines()), len(rows) + 4, "no old row is deleted")
+        self.assertEqual(gates.reprobe_line(rd), "reprobed: 4 probe rows (harness parse failure); old result 0/4, new result 4/4")
+        old_root = report.RESULTS
+        report.RESULTS = root
+        try:
+            _out, text = report.build("fx-reprobe")
+        finally:
+            report.RESULTS = old_root
+        self.assertIn("reprobed: 4 probe rows (harness parse failure); old result 0/4, new result 4/4", text)
+        rd2 = os.path.join(tempfile.mkdtemp(), "fx")      # no reprobe: no line, rows unchanged
+        os.makedirs(rd2)
+        open(os.path.join(rd2, "results.jsonl"), "w").write(json.dumps(rows[0]) + "\n")
+        self.assertIsNone(gates.reprobe_line(rd2))
+        self.assertEqual(gates.load_rows(rd2), [rows[0]])
+
+    def test_missing_main_session_is_a_clear_error(self):
+        import argparse, contextlib, io, tempfile
+        root = tempfile.mkdtemp()
+        rows = [row(3002, "Af", "E", i, False, "cued", 10, parse_ok=False) for i in range(1, 5)]
+        rd = self.make_run(root, rows)
+        old = runner.RESULTS
+        runner.RESULTS = root
+        try:
+            a = argparse.Namespace(run_id="fx-reprobe", seed=3002, arm="Af", type="E", phrasing="cued", n=None, dry_run=True)
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err):
+                rc = runner.cmd_reprobe(a)
+            self.assertEqual(rc, 1)
+            self.assertIn("main session transcript is gone", err.getvalue())
+            self.assertIn("Nothing was run", err.getvalue())
+            err2 = io.StringIO()
+            with contextlib.redirect_stderr(err2):
+                self.assertEqual(runner.cmd_reprobe(argparse.Namespace(run_id="fx-reprobe", seed=3002, arm="Z", type="E", phrasing="cued", n=None, dry_run=True)), 1)
+            self.assertIn("arm Z", err2.getvalue())
+            self.assertFalse(os.path.exists(os.path.join(rd, "reprobed.jsonl")))
+        finally:
+            runner.RESULTS = old
+
+
 def inspect_src(mod):
     import inspect
     return inspect.getsource(mod)
