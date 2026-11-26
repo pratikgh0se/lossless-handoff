@@ -124,6 +124,17 @@ The command exits 1 unless every marker is known and `pass`. An unknown, `fail`,
 
 **Three counts.** The numbers 217, 188 of 192 and 196 of 200 are three different counts. 217 is all compactions with a handoff over 32 days (2026-11-16). 188 of 192 is the reconcile of 2026-11-17 and 196 of 200 is the nightly run of 2026-11-18, both over 30 days for main compactions. The two rates have the same 4 misses; only the windows and the totals differ.
 
+## Mutation gate (2026-11-26)
+
+The mutation gate (`tools/mutation/run.sh`, spec F91.d) plants 20 faults in the code. It checks whether the tests catch each one.
+
+- The first run caught 15 of 20 with smoke only, and 17 of 20 with smoke plus the code-blind files.
+- The 3 survivors were equivalent mutants: they changed nothing that a user or caller can see. PR #75 replaced them with visible faults of the same type.
+- 2 new code-blind tests closed real gaps: state file modes under `umask 022`, and redaction run twice gives the same text.
+- The final score is 20 of 20.
+
+Limits: 20 faults is a small sample. A score of 20 of 20 does not show that the tests catch every fault. CI does not run the gate. It is a manual or weekly command.
+
 ## The claims register
 
 Each claim has one marker. The README holds no markers. This page holds all of them. Status and numbers are in the `--claims` table.
