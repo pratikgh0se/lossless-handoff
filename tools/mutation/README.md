@@ -28,6 +28,10 @@ For each fault, `run.sh` copies the repo to a temp folder, applies the diff, run
 
 At the end it prints `mutation score: <caught>/<total>`. A `survived` line means no test noticed the fault: add a test or tighten one.
 
+A fault must change behaviour that a user or caller can see. If a survived fault changes nothing visible (an equivalent mutant), replace it with a visible fault of the same type. Examples: a file mode inside a hook that already sets `umask 077`, a limit that a smaller limit always overrides, or code in a fallback path that a normal install never runs.
+
+Score on 2026-11-26 (smoke plus the code-blind files in the headers): 20/20.
+
 ## Add a fault
 
 1. Write a diff with 1 line of change and 1 line of context on each side. Test it with `git apply --check`.

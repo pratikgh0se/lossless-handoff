@@ -1,9 +1,9 @@
-# fault M10 | feature F87 | type files-written-with-open-modes | tests: test_state_modes_0600.py
-diff --git a/hooks/lossless_handoff/runtime.py b/hooks/lossless_handoff/runtime.py
---- a/hooks/lossless_handoff/runtime.py
-+++ b/hooks/lossless_handoff/runtime.py
-@@ -7,3 +7,3 @@
-     # Mode 0600: the files hold redacted chat content. The temp file is private, so os.replace also fixes an old file.
+# fault M10 | feature F87 | type files-written-with-open-modes | tests: test_state_modes_0600.py test_mutation_gaps.py
+diff --git a/hooks/guard_common.py b/hooks/guard_common.py
+--- a/hooks/guard_common.py
++++ b/hooks/guard_common.py
+@@ -383,3 +383,3 @@
+     tmp = "%s.tmp%d" % (path, os.getpid())
 -    with os.fdopen(os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w", encoding="utf-8") as f:
 +    with os.fdopen(os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o666), "w", encoding="utf-8") as f:
-         f.write(text)
+         json.dump(st, f)

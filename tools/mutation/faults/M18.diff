@@ -1,4 +1,4 @@
-# fault M18 | feature F37 | type handoff-part-target-over-limit | tests: test_f90_invariants.py
+# fault M18 | feature F37 | type handoff-part-target-over-limit | tests: test_f90_invariants.py test_mutation_gaps.py
 diff --git a/hooks/postcompact-inject.py b/hooks/postcompact-inject.py
 --- a/hooks/postcompact-inject.py
 +++ b/hooks/postcompact-inject.py
@@ -7,3 +7,8 @@ diff --git a/hooks/postcompact-inject.py b/hooks/postcompact-inject.py
 -INLINE_MAX = 9700  # content target per part
 +INLINE_MAX = 9990  # content target per part
  NAMES_MAX = 150    # the section-name list in a continuation line is cut to this many chars
+@@ -174,3 +174,3 @@
+         reserve = len(cont_line(k, "9" * len(str(len(rest))), "x" * NAMES_MAX, path)) + 1
+-        budget = min(INLINE_MAX - len(head), HARD_MAX - len(head) - reserve)
++        budget = min(INLINE_MAX - len(head), HARD_MAX - len(head))
+         need = agent_end(rest) if k == 1 else 1
