@@ -4,6 +4,10 @@ Lossless Handoff, formerly claude-handoff.
 
 ## [Unreleased]
 
+### Docs
+
+- Add the fair re-test result to the README and `docs/evidence.md` (claim C11): 2 seeds, 10 compactions. Plain Claude Code that can search its own chat files scored 41 of 50 (82%) with a hint and 29 of 40 (72%) without. Lossless Handoff scored 50 of 50 and 40 of 40. Two seeds show a direction, not a proof. The earlier 58% against 100% run stays as a line about a blocked baseline.
+
 ## [0.22.0] - 2026-11-25
 
 One grammar for each shared format (hooks 1.24.0). Spec: F90 in `docs/spec.md`.
