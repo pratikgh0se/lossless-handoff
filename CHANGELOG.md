@@ -4,14 +4,6 @@ Lossless Handoff, formerly claude-handoff.
 
 ## [Unreleased]
 
-### Tests
-
-- Mutation gate: replace 3 faults that changed nothing visible (M10 file mode under `umask 077`, M16 fallback redaction, M18 a limit that never binds) with visible faults of the same type. Add `test_mutation_gaps.py` to their headers. Score: 20/20. `tests.ref` points at the new code-blind tests (state modes under umask 022, redaction twice gives the same text, parts within the hard max with no lost line).
-
-### Docs
-
-- Add the fair re-test result to the README and `docs/evidence.md` (claim C11): 2 seeds, 10 compactions. Plain Claude Code that can search its own chat files scored 41 of 50 (82%) with a hint and 29 of 40 (72%) without. Lossless Handoff scored 50 of 50 and 40 of 40. Two seeds show a direction, not a proof. The earlier 58% against 100% run stays as a line about a blocked baseline.
-
 ## [0.23.0] - 2026-11-26
 
 A live canary, a shape census and a mutation gate (hooks 1.25.0). Spec: F91 in `docs/spec.md`.
@@ -23,6 +15,15 @@ A live canary, a shape census and a mutation gate (hooks 1.25.0). Spec: F91 in `
 - `precompact-handoff.py --shape-census [--days 30]` counts record types, top-level keys, content block types and tool-result forms in your transcripts. It writes `shapes.json` and, on the first run, `shapes-baseline.json`, and prints `new record type:` and `new key:` lines for names that are not in the baseline. It makes no model call and prints names only. `--check --verbose` prints `info: transcript shapes: <n> new since <date>`.
 - The nightly job (`--nightly`) runs the census after the prove run.
 - `tools/mutation/`: about 20 seeded faults and `run.sh`, a manual or weekly gate that measures whether the tests catch faults. CI does not run it.
+
+### Tests
+
+- Mutation gate: replace 3 faults that changed nothing visible (M10 file mode under `umask 077`, M16 fallback redaction, M18 a limit that never binds) with visible faults of the same type. Add `test_mutation_gaps.py` to their headers. Score: 20/20. `tests.ref` points at the new code-blind tests (state modes under umask 022, redaction twice gives the same text, parts within the hard max with no lost line).
+
+### Docs
+
+- Add the fair re-test result to the README and `docs/evidence.md` (claim C11): 2 seeds, 10 compactions. Plain Claude Code that can search its own chat files scored 41 of 50 (82%) with a hint and 29 of 40 (72%) without. Lossless Handoff scored 50 of 50 and 40 of 40. Two seeds show a direction, not a proof. The earlier 58% against 100% run stays as a line about a blocked baseline.
+- Add the F91 checks to the README: `--check` reports failed proof checks, a nightly shape census, and the mutation gate score (20 of 20, 2026-11-26). Add the section "Mutation gate (2026-11-26)" to `docs/evidence.md`.
 
 ## [0.22.0] - 2026-11-25
 
