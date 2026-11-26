@@ -28,6 +28,58 @@ def dedupe_rows(rows):
     return [r for r in rows if (r.get("attempt") or 0) == top[(r.get("seed"), r.get("arm"), r.get("condition", "compact"))]]
 
 
+REPROBED_FILE = "reprobed.jsonl"      # FR.7: one line for each old probe row that a reprobe replaced. Old rows stay in results.jsonl.
+
+
+def _jl(path):
+    out = []
+    try:
+        for ln in open(path, encoding="utf-8"):
+            try:
+                out.append(json.loads(ln))
+            except ValueError:
+                pass
+    except OSError:
+        pass
+    return out
+
+
+def replaced_key(r):
+    """Key of one probe row for the reprobe mark: the fork key, the item and the id of the fork that made the row."""
+    return (r.get("seed"), r.get("arm"), r.get("condition", "compact"), r.get("phrasing", "cued"), r.get("type"), r.get("n_target"), r.get("item"), r.get("fork_sid"))
+
+
+def replaced_set(run_dir):
+    return {replaced_key(x) for x in _jl(os.path.join(run_dir, REPROBED_FILE))}
+
+
+def drop_replaced(rows, replaced):
+    """The rows without the ones that a reprobe replaced (FR.7). With an empty set the list comes back unchanged."""
+    if not replaced:
+        return rows
+    return [r for r in rows if replaced_key(r) not in replaced]
+
+
+def load_rows(run_dir):
+    """The probe rows of a run folder that the summary and the verdict use: results.jsonl without restarted rows (dedupe_rows) and without rows
+    that a reprobe replaced (reprobed.jsonl, FR.7)."""
+    return drop_replaced(dedupe_rows(_jl(os.path.join(run_dir, "results.jsonl"))), replaced_set(run_dir))
+
+
+def reprobe_line(run_dir):
+    """The summary line of FR.7, or None when the run has no reprobe. a/b: old rows (correct/total), c/d: the reprobe rows that are in use."""
+    rep = replaced_set(run_dir)
+    if not rep:
+        return None
+    rows = dedupe_rows(_jl(os.path.join(run_dir, "results.jsonl")))
+    old = [r for r in rows if replaced_key(r) in rep and not r.get("reprobe")]
+    new = [r for r in rows if r.get("reprobe") and replaced_key(r) not in rep]
+    if not new:
+        return None
+    return "reprobed: %d probe rows (harness parse failure); old result %d/%d, new result %d/%d" % (
+        len(new), sum(1 for r in old if r.get("correct")), len(old), sum(1 for r in new if r.get("correct")), len(new))
+
+
 def fork_keys(rows):
     return {(r.get("seed"), r.get("arm"), r.get("condition", "compact"), r.get("phrasing", "cued"), r.get("type"), r.get("n_target")) for r in rows}
 

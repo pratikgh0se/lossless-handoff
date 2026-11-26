@@ -63,7 +63,7 @@ class Run:
         self.rd = rd
         self.cfg = json.load(open(os.path.join(rd, "config.json"), encoding="utf-8"))
         self.state = json.load(open(os.path.join(rd, "state.json"), encoding="utf-8"))
-        self.rows = gates.dedupe_rows(jl(os.path.join(rd, "results.jsonl")))
+        self.rows = gates.drop_replaced(gates.dedupe_rows(jl(os.path.join(rd, "results.jsonl"))), gates.replaced_set(rd))      # FR.7
         last = {}
         for s in jl(os.path.join(rd, "sessions.jsonl")):
             last[s["name"]] = s

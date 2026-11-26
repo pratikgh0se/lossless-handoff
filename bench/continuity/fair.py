@@ -310,7 +310,7 @@ def _load(run_id):
     cfg = json.load(open(os.path.join(rd, "config.json"), encoding="utf-8"))
     sys.path.insert(0, HERE)
     import gates
-    rows = gates.dedupe_rows(_jl(os.path.join(rd, "results.jsonl")))
+    rows = gates.load_rows(rd)      # without restarted rows and without rows that a reprobe replaced (FR.7)
     return rd, cfg, rows, _jl(os.path.join(rd, "sessions.jsonl"))
 
 
@@ -326,6 +326,9 @@ def main(argv):
         return 0 if all(st == "PASS" for _l, st, _d in res) else 1
     th = json.load(open(os.path.join(HERE, "thresholds.json"), encoding="utf-8"))
     stop, x, y = stop_rule(rows, th)
+    import gates
+    if gates.reprobe_line(rd):
+        print(gates.reprobe_line(rd))
     print(STOP_FMT % (x, y) if stop else "go on: plain Claude Code with search scores %d/%d (stop rule at %s)" % (x, y, _pct(th["fair"]["stop_af_min_rate"])))
     return 0
 
