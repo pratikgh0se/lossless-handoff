@@ -1503,3 +1503,81 @@ Why: a cold review (2026-11-25) found that the tests pin exact text (39% of the 
 9. `VERSION` holds `product=0.22.0` and `hooks=1.24.0`; `HOOK_VERSION` is 1.24.0 in all hook files; `install.sh` VERSION is 0.22.0.
 10. Invariants I1-I10 hold on the F90.f shape matrix (code-blind repo).
 
+## F91 Live canary, shape census and mutation gate (2026-11-26)
+
+Why: the test review of 2026-11-25 found 3 gaps.
+- From 2026-11-18 to 2026-11-24, `proofs.jsonl` held 12 failures of the lossless check. No alert reached a chat, so a bug stayed live for a week.
+- Test fixtures use about 8 record types and 10 keys. Real transcripts use 29 record types and 148 keys. Nothing reports when Claude Code adds a new shape.
+- Nothing measures whether the tests catch faults. In a hand check, 3 of 10 planted faults passed both suites.
+
+**F91.a Proof failures in the check line.**
+- `--check` reports the data problem `proof: <k> failed checks in the last 7 days (latest: <check> at <ts>); see precompact-handoff.py --prove --days 7` when `proofs.jsonl` has 1 or more rows in the last 7 days with a check value `fail`.
+- The same text goes into the `HANDOFF CHECK:` line that the hooks already inject (the line that holds `claims:` and `decisions list:` today).
+- The once-only `proof failed: <n> checks; see proof-report.md.` notice (F47.c) stays as it is. When both apply, the line holds both texts. A check line is not a fixed string: tests check its parts (F90.i).
+- A `skip` is not a failure.
+- This is a data problem, not an install problem (F86.a).
+- With `--verbose`, `--check` adds up to 3 latest failures, each with the check name, the time and the first 100 characters of the detail, after `redact()`.
+
+**F91.b Structure-only sample of a failure.**
+- When the prove run writes a `fail` row, it also writes `<state>/samples/<ts>-<check>.json`, mode 0600.
+- The sample holds only structure from the transcript lines that the failed check used (at most 20 lines):
+  - the record `type`;
+  - the sorted top-level keys;
+  - for `message.content`: `string`, or the list of block types;
+  - the text lengths, as numbers;
+  - the check name and the reason code.
+- A sample holds no text, no ids, no paths and no values.
+- Keep at most 50 samples; delete the oldest first.
+- `--check --verbose` prints the count of samples.
+
+**F91.c Shape census.**
+- Command: `python3 precompact-handoff.py --shape-census [--days 30]`. It scans the transcripts of the last `--days` days, main and subagent, and counts these:
+  - record types;
+  - top-level keys;
+  - `message.content` block types;
+  - tool-result content forms (string, list).
+- It writes `<state>/shapes.json` with the counts and the time.
+- The first run writes the baseline `<state>/shapes-baseline.json`.
+- Each next run prints the shapes that are new since the PREVIOUS run (the `shapes.json` it replaces; on the first compare, the baseline), as `new record type: <t>` or `new key: <k>`, with names only, never values. So a second run with no change prints no `new` line. (Amended 2026-11-26.)
+- `--check --verbose` prints `info: transcript shapes: <n> new since <baseline date>` when `shapes.json` exists. Here `<n>` counts the shapes in `shapes.json` that are not in the baseline.
+- The nightly job (when installed with `--nightly`) runs the census once each night after the prove run.
+- The command makes no model call and reads no text content into its output.
+
+**F91.d Mutation gate.**
+- `tools/mutation/` holds about 20 seeded faults, each a small unified diff against `hooks/`, plus `tools/mutation/run.sh`.
+- For each fault, `run.sh`:
+  1. copies the repo to a temp folder;
+  2. applies the diff;
+  3. runs `tests/smoke.sh`;
+  4. if the env var `LH_TESTS_DIR` is set, runs the code-blind files that the fault's header line names;
+  5. writes one line `<fault id> <feature> <fault type> caught|survived`.
+- At the end it prints `mutation score: <caught>/<total>`.
+- The faults must include the 10 types of the 2026-11-25 hand check:
+  - the proof check drops a recall id form;
+  - `open` strips trailing whitespace;
+  - a tool result keeps only its first block;
+  - a part limit is raised;
+  - recall leaves its project;
+  - a secret shape is not masked;
+  - a rule is closed with no checked quote;
+  - the folder fallback is off;
+  - the auto-recall cap is doubled;
+  - files are written with open modes.
+- They must also include 10 more faults across the grammar, the ledger merge, redaction, the handoff parts and the installer.
+- Each diff must apply to the current main.
+- The gate is a manual or weekly command. CI does not run it.
+- `run.sh --list` prints the ids, features and types only.
+
+**F91.e Version.** VERSION `product=0.23.0`, `hooks=1.25.0`.
+
+**F91.f Acceptance.**
+1. A `proofs.jsonl` with 2 fail rows in the last 7 days and 1 fail row 9 days old: `--check` prints `proof: 2 failed checks in the last 7 days`, and the injected `HANDOFF CHECK:` line holds `proof: 2 failed`.
+2. Only `pass` and `skip` rows: no `proof:` problem text.
+3. A prove run that fails on a fixture writes one sample file with mode 0600. The sample holds the record types and the keys, and it holds no string from the fixture text (test this with a unique token in the fixture).
+4. 55 failures give 50 sample files.
+5. The census over a fixture with a record type `x-new` that is not in the baseline prints `new record type: x-new`. A second run with no change prints no `new` line.
+6. The census output and `shapes.json` hold no fixture text token.
+7. `tools/mutation/run.sh --list` prints 20 or more faults, and each of the 10 named types is present. Each diff applies with `git apply --check` on main.
+8. `run.sh` on a fault that smoke catches prints `caught` for it.
+9. `HOOK_VERSION` and `install.sh` match `VERSION`.
+

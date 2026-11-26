@@ -1,0 +1,9 @@
+# fault M12 | feature F90 | type grammar-accepts-line-zero | tests: test_f90_grammar.py
+diff --git a/hooks/lossless_handoff/grammar.py b/hooks/lossless_handoff/grammar.py
+--- a/hooks/lossless_handoff/grammar.py
++++ b/hooks/lossless_handoff/grammar.py
+@@ -75,3 +75,3 @@
+     m = _RID_RE.match(s or "")
+-    if not m or int(m.group(3)) < 1:
++    if not m or int(m.group(3)) < 0:
+         return None

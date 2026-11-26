@@ -3497,8 +3497,13 @@ PY
   [ "$(grep -vc '^ok: \|^info: \|^HANDOFF CHECK: all ok ([0-9]* checks)$' <<<"$o" || true)" = 0 ] && tail -n 1 <<<"$o" | grep -q '^HANDOFF CHECK: all ok ([0-9]* checks)$' || fail "F86.4: verbose: $o"
   grep -q '^info: recall rule o' <<<"$o" && grep -q '^info: recall covers [0-9]* sessions for ' <<<"$o" && grep -q '^info: claude on PATH: \(yes\|no\)$' <<<"$o" || fail "F86.b: info lines: $o"
   # F86.e.1: only a failed proof
-  printf '%s\n' '{"ts":"2026-11-25T00:00:00Z","checks":{"lossless":"fail"}}' >"$D/st86/proofs.jsonl"
-  [ "$(CK)" = "HANDOFF CHECK: proof failed: 1 checks; see proof-report.md." ] || fail "F86.1: $(CK)"
+  # F91.a: the fixture ts is now, so the check does not depend on the date; the line holds both texts
+  printf '{"ts":"%s","checks":{"lossless":"fail"}}\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >"$D/st86/proofs.jsonl"
+  o="$(CK)"
+  case "$o" in "HANDOFF CHECK: "*) ;; *) fail "F86.1: $o" ;; esac
+  grep -qF "proof failed: 1 checks; see proof-report.md" <<<"$o" || fail "F86.1: old notice missing: $o"
+  grep -qF "proof: 1 failed checks in the last 7 days (latest: lossless at " <<<"$o" || fail "F86.1/F91.1: new text missing: $o"
+  [ "$(grep -c '^HANDOFF CHECK: ' <<<"$o")" = 1 ] || fail "F86.1: more than one line: $o"
   rm -rf "$D/st86"; mkdir -p "$D/st86"
   # F86.e.2: a missing hook file and 2 missed compactions
   printf '%s\n' '{"ts":"2026-11-25T00:00:00Z","missed_interactive":2,"days":7}' >"$D/st86/reconcile.json"
@@ -4115,6 +4120,101 @@ printf 'product=%s\nhooks=9.9.9\n' "$PVER" > "$T/v90.txt"
 printf 'product=9.9.9\nhooks=%s\n' "$HVER" > "$T/v90.txt"
 ! f90_versions_ok "$ROOT" "$T/v90.txt" || fail "F90.7: a changed product= line did not fail the check"
 ok "F90.h, F90.7, F90.9: VERSION is the one source; a changed line fails the check"
+
+# F91: live canary (proof failures in --check), failure samples, shape census, mutation gate
+D91="$T/f91"; mkdir -p "$D91"
+python3 - "$D91" <<'PY'
+import datetime, json, os, sys
+d = sys.argv[1]
+now = datetime.datetime.now(datetime.timezone.utc)
+iso = lambda dt: dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+D = datetime.timedelta
+def prow(dt, v):
+    return json.dumps({"ts": iso(dt), "checks": {"lossless": v}, "details": {"lossless": "line 3: x"}})
+def state(name):
+    p = os.path.join(d, name); os.makedirs(p, exist_ok=True); os.chmod(p, 0o700); return p
+open(os.path.join(state("st1"), "proofs.jsonl"), "w").write("\n".join(
+    [prow(now - D(hours=2), "fail"), prow(now - D(days=2), "fail"), prow(now - D(days=9), "fail")]) + "\n")
+open(os.path.join(state("st2"), "proofs.jsonl"), "w").write("\n".join(
+    [prow(now - D(hours=2), "pass"), prow(now - D(days=1), "skip")]) + "\n")
+# a transcript whose hook context never arrives after the boundary: the delivered check fails
+tok = "ZQTOKEN91UNIQUE"
+bts = iso(now - D(hours=3))
+recs = [{"type": "user", "uuid": "u1", "timestamp": iso(now - D(hours=4)), "cwd": d, "message": {"role": "user", "content": "before " + tok}},
+        {"type": "system", "subtype": "compact_boundary", "uuid": "b1", "timestamp": bts},
+        {"type": "user", "uuid": "u2", "timestamp": iso(now - D(hours=2)), "cwd": d,
+         "message": {"role": "user", "content": [{"type": "text", "text": "after " + tok}]}},
+        {"type": "assistant", "uuid": "u3", "timestamp": iso(now - D(hours=2)), "message": {"role": "assistant", "content": [{"type": "text", "text": tok}]}}]
+tp = os.path.join(d, "tr.jsonl")
+open(tp, "w").write("\n".join(json.dumps(r) for r in recs) + "\n")
+for name, n in (("st3", 1), ("st4", 55)):
+    rows = [{"ts": iso(now - D(hours=1) + D(seconds=i)), "sid": "sid%04d" % i, "agent_id": None, "key": "k%d" % i,
+             "transcript": tp, "part1_head": "HEAD-NOT-IN-THE-TRANSCRIPT", "boundary_ts": bts, "handoff_sha256": None} for i in range(n)]
+    open(os.path.join(state(name), "receipts.jsonl"), "w").write("\n".join(json.dumps(r) for r in rows) + "\n")
+PY
+# F91.f.1 and F91.f.2
+o="$(HANDOFF_STATE_DIR="$D91/st1" python3 "$H/postcompact-inject.py" --check 2>&1)"
+grep -qF "proof: 2 failed checks in the last 7 days (latest: lossless at " <<<"$o" || fail "F91.1: $o"
+grep -q '^HANDOFF CHECK: .*proof: 2 failed' <<<"$o" || fail "F91.1: the HANDOFF CHECK line: $o"
+o="$(HANDOFF_STATE_DIR="$D91/st2" python3 "$H/postcompact-inject.py" --check 2>&1)"
+! grep -qF "proof:" <<<"$o" || fail "F91.2: pass and skip rows gave proof text: $o"
+# F91.f.3 and F91.f.4
+HANDOFF_STATE_DIR="$D91/st3" python3 "$ROOT/hooks/precompact-handoff.py" --prove --days 7 >"$D91/prove3.out" 2>&1
+python3 - "$D91/st3" <<'PY'
+import glob, json, os, stat, sys
+fs = glob.glob(os.path.join(sys.argv[1], "samples", "*.json"))
+assert len(fs) == 1, fs
+assert stat.S_IMODE(os.stat(fs[0]).st_mode) == 0o600
+raw = open(fs[0]).read()
+assert "ZQTOKEN91UNIQUE" not in raw and "HEAD-NOT-IN-THE-TRANSCRIPT" not in raw, raw
+o = json.loads(raw)
+assert o["check"] == "delivered" and o["reason"] == "not_delivered", o
+ln = o["lines"]
+assert ln and ln[0]["type"] == "user" and "message" in ln[0]["keys"] and ln[0]["keys"] == sorted(ln[0]["keys"]), o
+assert ln[0]["content"] == ["text"] and all(isinstance(n, int) for x in ln for n in x["text_lengths"]), o
+PY
+HANDOFF_STATE_DIR="$D91/st4" python3 "$ROOT/hooks/precompact-handoff.py" --prove --days 7 >"$D91/prove4.out" 2>&1
+[ "$(ls "$D91/st4/samples" | wc -l | tr -d ' ')" = 50 ] || fail "F91.4: 55 failures did not give 50 samples"
+o="$(HANDOFF_STATE_DIR="$D91/st3" python3 "$H/postcompact-inject.py" --check --verbose 2>&1)"
+grep -q '^info: failure samples: 1$' <<<"$o" && grep -q '^info: proof failure: delivered at ' <<<"$o" || fail "F91.b: verbose: $o"
+ok "F91.1-F91.4: proof failures in --check, structure-only samples, at most 50"
+# F91.f.5 and F91.f.6: the census
+mkdir -p "$HOME/.claude/projects/-f91cen"
+CEN="$HOME/.claude/projects/-f91cen"
+printf '%s\n' '{"type":"user","uuid":"c1","message":{"role":"user","content":"census ZQCENSUS91TOKEN"}}' \
+  '{"type":"assistant","uuid":"c2","message":{"role":"assistant","content":[{"type":"text","text":"ZQCENSUS91TOKEN"}]}}' >"$CEN/cen0.jsonl"
+CE() { HANDOFF_STATE_DIR="$D91/st5" python3 "$ROOT/hooks/precompact-handoff.py" --shape-census "$@"; }
+o="$(CE)"
+[ -f "$D91/st5/shapes.json" ] && [ -f "$D91/st5/shapes-baseline.json" ] || fail "F91.5: the first run did not write shapes.json and the baseline"
+! grep -q '^new ' <<<"$o" || fail "F91.5: the first run printed a new shape: $o"
+o="$(CE)"
+! grep -q '^new ' <<<"$o" || fail "F91.5: a run with no change printed a new shape: $o"
+printf '%s\n' '{"type":"x-new","uuid":"c3","text":"ZQCENSUS91TOKEN"}' >"$CEN/cen1.jsonl"
+o="$(CE --days 30)"
+grep -qx 'new record type: x-new' <<<"$o" || fail "F91.5: x-new not reported: $o"
+! grep -q 'ZQCENSUS91TOKEN' <<<"$o" || fail "F91.6: the census output holds fixture text"
+o="$(CE)"
+! grep -q '^new ' <<<"$o" || fail "F91.5: a second run with no change printed a new shape: $o"
+! grep -q 'ZQCENSUS91TOKEN' "$D91/st5/shapes.json" "$D91/st5/shapes-baseline.json" || fail "F91.6: shapes.json holds fixture text"
+o="$(HANDOFF_STATE_DIR="$D91/st5" python3 "$H/postcompact-inject.py" --check --verbose 2>&1)"
+grep -q '^info: transcript shapes: [1-9][0-9]* new since [0-9-]*$' <<<"$o" || fail "F91.c: verbose shapes line: $o"
+ok "F91.5, F91.6: the census reports a new record type once, and holds names and counts only"
+# F91.f.7, F91.f.8: the mutation gate (a mutated copy skips these two checks: LH_MUTATION_RUN)
+o="$(bash "$ROOT/tools/mutation/run.sh" --list)"
+[ "$(wc -l <<<"$o" | tr -d ' ')" -ge 20 ] || fail "F91.7: fewer than 20 faults"
+for ty in proof-check-drops-recall-id-form open-strips-trailing-whitespace tool-result-keeps-first-block part-limit-raised \
+          recall-leaves-its-project secret-shape-not-masked rule-closed-with-no-checked-quote folder-fallback-off \
+          auto-recall-cap-doubled files-written-with-open-modes; do
+  grep -q " $ty\$" <<<"$o" || fail "F91.7: no fault of type $ty"
+done
+if [ -z "${LH_MUTATION_RUN:-}" ]; then
+  bash "$ROOT/tools/mutation/run.sh" --check-diffs >"$D91/diffs.out" 2>&1 || fail "F91.7: a fault diff does not apply: $(grep FAIL "$D91/diffs.out")"
+  o="$(env -u LH_TESTS_DIR bash "$ROOT/tools/mutation/run.sh" M20 2>&1)"
+  grep -qx 'M20 F46 installer-allow-rule-too-wide caught' <<<"$o" && grep -qx 'mutation score: 1/1' <<<"$o" || fail "F91.8: $o"
+fi
+ok "F91.7, F91.8: 20 or more faults, the 10 named types, each diff applies, a fault that smoke catches prints caught"
+f90_versions_ok "$ROOT" "$ROOT/VERSION" && [ "$(grep -c -- '--shape-census' "$ROOT/install.sh")" -ge 2 ] || fail "F91.9: versions, or the nightly census, differ"
+ok "F91.9: HOOK_VERSION and install.sh match VERSION; the nightly job runs the census"
 
 "$ROOT/uninstall.sh" >"$T/un.out"
 python3 - "$S" "$T/original.json" <<'PY'

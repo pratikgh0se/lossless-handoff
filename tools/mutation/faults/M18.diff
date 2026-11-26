@@ -1,0 +1,9 @@
+# fault M18 | feature F37 | type handoff-part-target-over-limit | tests: test_f90_invariants.py
+diff --git a/hooks/postcompact-inject.py b/hooks/postcompact-inject.py
+--- a/hooks/postcompact-inject.py
++++ b/hooks/postcompact-inject.py
+@@ -77,3 +77,3 @@
+ HARD_MAX = 9900    # each part's total output (warning + header + content + continuation line) stays <= this
+-INLINE_MAX = 9700  # content target per part
++INLINE_MAX = 9990  # content target per part
+ NAMES_MAX = 150    # the section-name list in a continuation line is cut to this many chars

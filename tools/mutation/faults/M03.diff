@@ -1,0 +1,9 @@
+# fault M03 | feature F90 | type tool-result-keeps-first-block | tests: test_f90_invariants.py test_f44_recall.py
+diff --git a/hooks/recall.py b/hooks/recall.py
+--- a/hooks/recall.py
++++ b/hooks/recall.py
+@@ -219,3 +219,3 @@
+     if isinstance(c, list):
+-        return "\n".join(b.get("text", "") for b in c if isinstance(b, dict) and isinstance(b.get("text"), str))
++        return "\n".join(b.get("text", "") for b in c[:1] if isinstance(b, dict) and isinstance(b.get("text"), str))
+     return ""

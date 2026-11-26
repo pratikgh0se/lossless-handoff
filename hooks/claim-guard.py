@@ -12,7 +12,7 @@ The log has no reply text and no prompt text. Never fails: any error means exit 
 """
 import json, os, re, sys, time
 
-HOOK_VERSION = "1.24.0"
+HOOK_VERSION = "1.25.0"
 HOME = os.path.expanduser("~")
 STATE_DIR = (os.environ.get("HANDOFF_STATE_DIR") or "").strip() or os.path.join(HOME, ".local", "state", "claude-handoffs")
 CUES = ["as we decided", "we decided", "as you said", "you said", "we agreed", "as agreed", "as discussed",

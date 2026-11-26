@@ -1,0 +1,9 @@
+# fault M06 | feature F87 | type secret-shape-not-masked | tests: test_f65_redaction.py test_f87_safety.py
+diff --git a/hooks/recall.py b/hooks/recall.py
+--- a/hooks/recall.py
++++ b/hooks/recall.py
+@@ -49,3 +49,3 @@
+     ("aws", re.compile(r"(?<![A-Za-z0-9_-])(?:AKIA|ASIA)[0-9A-Z]{16}"), 0),
+-    ("github", re.compile(r"(?<![A-Za-z0-9_-])gh[pousr]_[A-Za-z0-9]{20,}"), 0),
++    ("github", re.compile(r"(?<![A-Za-z0-9_-])gh[pou]_[A-Za-z0-9]{20,}"), 0),
+     ("github", re.compile(r"(?<![A-Za-z0-9_-])github_pat_[A-Za-z0-9_]{20,}"), 0),

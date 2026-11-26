@@ -9,7 +9,7 @@ Health: one row per tool call in recall-mcp.jsonl (ts, tool, hits, ms; no query 
 """
 import contextlib, json, os, sys, time
 
-HOOK_VERSION = "1.24.0"
+HOOK_VERSION = "1.25.0"
 SERVER_NAME = "lossless-recall"
 HOME = os.path.expanduser("~")
 

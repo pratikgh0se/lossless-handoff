@@ -1,0 +1,9 @@
+# fault M20 | feature F46 | type installer-allow-rule-too-wide | tests: test_f68_f71_install.py
+diff --git a/install.sh b/install.sh
+--- a/install.sh
++++ b/install.sh
+@@ -440,3 +440,3 @@
+ subagent_cmd = "python3 %s/postcompact-inject.py --subagent-start" % hooks_dir  # F58.c
+-allow_rule = "Edit(~/.local/state/claude-handoffs/**)"
++allow_rule = "Edit(~/.local/state/**)"
+ recall_rule = "Bash(python3 ~/.claude/hooks/recall.py:*)"

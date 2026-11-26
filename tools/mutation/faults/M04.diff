@@ -1,0 +1,9 @@
+# fault M04 | feature F37 | type part-limit-raised | tests: test_f90_invariants.py
+diff --git a/hooks/postcompact-inject.py b/hooks/postcompact-inject.py
+--- a/hooks/postcompact-inject.py
++++ b/hooks/postcompact-inject.py
+@@ -76,3 +76,3 @@
+ LIMIT = 10000      # additionalContext of ONE hook must stay under this (Claude Code spills larger values to a file)
+-HARD_MAX = 9900    # each part's total output (warning + header + content + continuation line) stays <= this
++HARD_MAX = 19900   # each part's total output (warning + header + content + continuation line) stays <= this
+ INLINE_MAX = 9700  # content target per part

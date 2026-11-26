@@ -1,0 +1,9 @@
+# fault M09 | feature F67 | type auto-recall-cap-doubled | tests: test_f67_auto_recall.py
+diff --git a/hooks/auto-recall.py b/hooks/auto-recall.py
+--- a/hooks/auto-recall.py
++++ b/hooks/auto-recall.py
+@@ -53,3 +53,3 @@
+                "can be rejected, a dry run or undone. This can be partial; search for the rest.")
+-MAX_IDENTS, PER_IDENT_CAP, TOTAL_CAP = 3, 2000, 4000
++MAX_IDENTS, PER_IDENT_CAP, TOTAL_CAP = 3, 4000, 8000
+ HYPHEN_WORD_RE = re.compile(r"[a-z]+(?:-[a-z]+)+")

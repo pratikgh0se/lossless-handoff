@@ -8,6 +8,18 @@ Lossless Handoff, formerly claude-handoff.
 
 - Add the fair re-test result to the README and `docs/evidence.md` (claim C11): 2 seeds, 10 compactions. Plain Claude Code that can search its own chat files scored 41 of 50 (82%) with a hint and 29 of 40 (72%) without. Lossless Handoff scored 50 of 50 and 40 of 40. Two seeds show a direction, not a proof. The earlier 58% against 100% run stays as a line about a blocked baseline.
 
+## [0.23.0] - 2026-11-26
+
+A live canary, a shape census and a mutation gate (hooks 1.25.0). Spec: F91 in `docs/spec.md`.
+
+### Added
+
+- `--check` reports `proof: <k> failed checks in the last 7 days (latest: <check> at <ts>); see precompact-handoff.py --prove --days 7` when `proofs.jsonl` has a failed check in the last 7 days. It is a data problem. The once-only `proof failed:` notice stays; when both apply, the line holds both texts. `--check --verbose` adds the 3 latest failures (detail cut to 100 characters, after `redact()`) and the count of samples.
+- A failed prove check writes a structure-only sample to `<state>/samples/<ts>-<check>.json` (mode 0600): record types, sorted keys, content forms, text lengths and a reason code. No text, ids, paths or values. At most 50 samples stay.
+- `precompact-handoff.py --shape-census [--days 30]` counts record types, top-level keys, content block types and tool-result forms in your transcripts. It writes `shapes.json` and, on the first run, `shapes-baseline.json`, and prints `new record type:` and `new key:` lines for names that are not in the baseline. It makes no model call and prints names only. `--check --verbose` prints `info: transcript shapes: <n> new since <date>`.
+- The nightly job (`--nightly`) runs the census after the prove run.
+- `tools/mutation/`: about 20 seeded faults and `run.sh`, a manual or weekly gate that measures whether the tests catch faults. CI does not run it.
+
 ## [0.22.0] - 2026-11-25
 
 One grammar for each shared format (hooks 1.24.0). Spec: F90 in `docs/spec.md`.

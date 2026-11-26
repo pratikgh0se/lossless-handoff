@@ -471,6 +471,8 @@ def prove(days=7):
                "boundary_ts": rc.get("boundary_ts"), "checks": checks, "details": details}
         new_rows.append(row)
         have[k] = row
+        if "fail" in checks.values():
+            write_failure_samples(rc, run_ts, checks, details)  # F91.b
     if new_rows:
         try:
             os.makedirs(HANDOFFS_DIR, mode=0o700, exist_ok=True)
@@ -526,5 +528,202 @@ def prove(days=7):
             write_atomic(os.path.join(HANDOFFS_DIR, "claims-status.json"),
                          json.dumps({"ts": run_ts, "claims": [{k: c[k] for k in ("id", "value", "rate", "as_of", "status")} for c in st]}))
             write_atomic(os.path.join(HANDOFFS_DIR, "claims-report.md"), claims_table(st))
+    except Exception as e:
+        log_error("unknown", e)
+
+
+# ---------------------------------------------------------------- F91 failure samples and shape census
+# Nothing below reads text into its output: only names (record types, keys, block types), counts and lengths.
+
+SAMPLE_MAX = 50
+_NAME_RE = re.compile(r"^[A-Za-z0-9_.:-]{1,60}$")
+
+
+def _safe_name(v):
+    return v if isinstance(v, str) and _NAME_RE.match(v) else "?"
+
+
+def _fail_reason(why):
+    """F91.b: a reason code from a detail text. The detail may hold chat text, so only known forms give a code."""
+    w = re.sub(r"^line \d+: ", "", str(why or ""))
+    for key, code in (("recall found no hit", "recall_no_hit"), ("recall printed no message", "open_no_message"),
+                      ("recall printed different text", "text_differs"), ("recall error", "recall_error"),
+                      ("not in own transcript", "quote_not_found"), ("no hook context after the boundary", "not_delivered"),
+                      ("format_drift", "format_drift")):
+        if w.startswith(key):
+            return code
+    if w.startswith("lost "):
+        return "ids_lost"
+    if "active again" in w:
+        return "superseded_active"
+    return "other"
+
+
+def _record_shape(o):
+    """Structure of one transcript record: type, sorted top-level keys, content form, text lengths. No values."""
+    sh = {"type": _safe_name(o.get("type")), "keys": sorted(_safe_name(k) for k in o), "content": None, "text_lengths": []}
+    msg = o.get("message")
+    c = msg.get("content") if isinstance(msg, dict) else None
+    if isinstance(c, str):
+        sh["content"] = "string"
+        sh["text_lengths"] = [len(c)]
+    elif isinstance(c, list):
+        sh["content"] = [_safe_name(b.get("type")) if isinstance(b, dict) else "?" for b in c]
+        sh["text_lengths"] = [len(b["text"]) for b in c if isinstance(b, dict) and isinstance(b.get("text"), str)]
+    return sh
+
+
+def _sample_lines(check, rc, why):
+    """Line numbers (1-based, at most 20) of the transcript lines that a failed check used."""
+    tp = rc.get("transcript")
+    if not isinstance(tp, str) or not os.path.isfile(tp):
+        return []
+    m = re.match(r"line (\d+):", str(why or ""))
+    if m:
+        return [int(m.group(1))]
+    if check == "right_agent":
+        return [n for n, _t, role, _x in _plain_messages(tp) if role == "user"][:20]
+    if check == "delivered":
+        last = None
+        with open(tp, encoding="utf-8", errors="replace") as f:
+            for n, line in enumerate(f, 1):
+                if "compact_boundary" in line:
+                    try:
+                        o = json.loads(line)
+                    except Exception:
+                        continue
+                    if is_boundary(o) and o.get("timestamp") == rc.get("boundary_ts"):
+                        last = n
+        return list(range(last + 1, last + 21)) if last else []
+    return []
+
+
+def _prune_samples(sdir):
+    def key(name):
+        m = re.match(r"^(\d{8}T\d{6}Z)-[a-z_]+?(?:-(\d+))?\.json$", name)
+        return (m.group(1), int(m.group(2) or 1), name) if m else ("", 0, name)
+    names = sorted((n for n in os.listdir(sdir) if n.endswith(".json")), key=key)
+    for n in names[:max(0, len(names) - SAMPLE_MAX)]:
+        try:
+            os.remove(os.path.join(sdir, n))
+        except OSError:
+            pass
+
+
+def write_failure_samples(rc, run_ts, checks, details):
+    """F91.b: one structure-only file <state>/samples/<ts>-<check>.json for each failed check. Never raises."""
+    try:
+        sdir = os.path.join(HANDOFFS_DIR, "samples")
+        compact = re.sub(r"[^0-9TZ]", "", str(run_ts))
+        for check, v in checks.items():
+            if v != "fail":
+                continue
+            why = details.get(check, "")
+            shapes = []
+            try:
+                wanted = set(_sample_lines(check, rc, why))
+                if wanted:
+                    with open(rc.get("transcript"), encoding="utf-8", errors="replace") as f:
+                        for n, line in enumerate(f, 1):
+                            if n in wanted:
+                                try:
+                                    o = json.loads(line)
+                                except Exception:
+                                    continue
+                                if isinstance(o, dict):
+                                    shapes.append(_record_shape(o))
+                shapes = shapes[:20]
+            except Exception as e:
+                log_error("unknown", e)
+            os.makedirs(sdir, mode=0o700, exist_ok=True)
+            base, i = f"{compact}-{check}", 1
+            path = os.path.join(sdir, base + ".json")
+            while os.path.exists(path):
+                i += 1
+                path = os.path.join(sdir, f"{base}-{i}.json")
+            write_atomic(path, json.dumps({"check": check, "reason": _fail_reason(why), "ts": str(run_ts), "lines": shapes}))
+        if os.path.isdir(sdir):
+            _prune_samples(sdir)
+    except Exception as e:
+        log_error("unknown", e)
+
+
+def _census_files(days):
+    pd = os.path.join(os.path.expanduser("~"), ".claude", "projects")
+    cutoff = time.time() - days * 86400
+    out = []
+    for p in glob.glob(os.path.join(pd, "*", "*.jsonl")) + glob.glob(os.path.join(pd, "*", "*", "subagents", "*.jsonl")):
+        try:
+            if os.path.getmtime(p) >= cutoff:
+                out.append(p)
+        except OSError:
+            continue
+    return sorted(out)
+
+
+def shape_census(days=30):
+    """F91.c: count record types, top-level keys, content block types and tool-result forms in the transcripts of the
+    last `days` days. Writes shapes.json; the first run also writes shapes-baseline.json; prints the names that are new
+    since the previous run (the shapes.json it replaces; the baseline when there is none). No model call. Prints names
+    and counts only. Never raises."""
+    try:
+        cnt = {"record_types": {}, "keys": {}, "block_types": {}, "tool_result_forms": {}}
+
+        def bump(group, name):
+            cnt[group][name] = cnt[group].get(name, 0) + 1
+        files = _census_files(days)
+        for p in files:
+            try:
+                with open(p, encoding="utf-8", errors="replace") as f:
+                    for line in f:
+                        try:
+                            o = json.loads(line)
+                        except Exception:
+                            continue
+                        if not isinstance(o, dict):
+                            continue
+                        bump("record_types", _safe_name(o.get("type")))
+                        for k in o:
+                            bump("keys", _safe_name(k))
+                        msg = o.get("message")
+                        c = msg.get("content") if isinstance(msg, dict) else None
+                        if isinstance(c, list):
+                            for b in c:
+                                if not isinstance(b, dict):
+                                    continue
+                                bump("block_types", _safe_name(b.get("type")))
+                                if b.get("type") == "tool_result":
+                                    rcn = b.get("content")
+                                    bump("tool_result_forms", "string" if isinstance(rcn, str) else "list" if isinstance(rcn, list) else "other")
+            except Exception as e:
+                log_error("unknown", e)
+        now_ts = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        cur = dict(cnt, ts=now_ts, days=days, files=len(files))
+        os.makedirs(HANDOFFS_DIR, mode=0o700, exist_ok=True)
+
+        def _load(name):
+            try:
+                with open(os.path.join(HANDOFFS_DIR, name), encoding="utf-8") as f:
+                    o = json.load(f)
+                return o if isinstance(o, dict) else None
+            except Exception:
+                return None
+        prev = _load("shapes.json")  # the file this run replaces
+        base = _load("shapes-baseline.json")
+        write_atomic(os.path.join(HANDOFFS_DIR, "shapes.json"), json.dumps(cur, sort_keys=True))
+        if base is None:
+            write_atomic(os.path.join(HANDOFFS_DIR, "shapes-baseline.json"), json.dumps(cur, sort_keys=True))
+            base = cur
+            _out(f"shape census: baseline written ({len(cnt['record_types'])} record types, {len(cnt['keys'])} keys, "
+                 f"{len(files)} files)")
+        else:
+            _out(f"shape census: {len(cnt['record_types'])} record types, {len(cnt['keys'])} keys, {len(files)} files")
+        if prev is not None:
+            base = prev  # new since the previous run; the baseline only when there is no previous file
+        for group, label in (("record_types", "record type"), ("keys", "key"), ("block_types", "block type")):
+            old = base.get(group) if isinstance(base.get(group), dict) else {}
+            for name in sorted(cnt[group]):
+                if name not in old:
+                    _out(f"new {label}: {name}")
     except Exception as e:
         log_error("unknown", e)

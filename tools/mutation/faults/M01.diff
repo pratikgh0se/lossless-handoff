@@ -1,0 +1,9 @@
+# fault M01 | feature F90 | type proof-check-drops-recall-id-form | tests: test_f90_grammar.py test_f47_proof_receipts.py
+diff --git a/hooks/lossless_handoff/prove.py b/hooks/lossless_handoff/prove.py
+--- a/hooks/lossless_handoff/prove.py
++++ b/hooks/lossless_handoff/prove.py
+@@ -151,3 +151,3 @@
+                 m = parse_recall_hit(ln)  # F90: G2, both forms, one parser
+-                if m and (m[1] or m[0]) == sid8 and bool(m[1]) == sub:
++                if m and not m[1] and m[0] == sid8 and bool(m[1]) == sub:
+                     hits[m[2]] = (m[0] + "/" + m[1]) if m[1] else m[0]
