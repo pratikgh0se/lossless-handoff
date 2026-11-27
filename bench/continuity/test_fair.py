@@ -1363,6 +1363,167 @@ class Fair6Report(unittest.TestCase):
             report.RESULTS = old
 
 
+SEEDS6X = [4007, 4008]
+X8_LABEL = "secondary: 2 seeds added after registration; does not change the verdict"
+
+
+def make_seeds(seeds, af, b, with_b=True):
+    """Rows for the given seeds x 3 phrasings x 25 items. af, b: correct items of 25 for each seed (the same for all phrasings)."""
+    rows = []
+    for si, s in enumerate(seeds):
+        for ph in ("cued", "neutral", "told"):
+            for arm, k in (("Af", af[si]), ("B", b[si]), ("O", 25), ("Z", 0)):
+                if arm == "B" and not with_b:
+                    continue
+                n = 0
+                for t, cnt in PER_TYPE.items():
+                    for i in range(1, cnt + 1):
+                        n += 1
+                        extra = {"used_lookup": True} if arm == "Af" else {}
+                        rows.append(row6(s, arm, t, i, n <= k, ph, **extra))
+    return rows
+
+
+def sessions_seeds(seeds, with_b=True, version="2.1.0"):
+    out = []
+    for s in seeds:
+        out.append({"name": "s%d-Af" % s, "arm": "Af", "seed": s, "condition": "compact", "boundaries": 10, "claude_version": version, "hook_sha256": None,
+                    "af_reads": {"own_ok": 4, "own_denied": 0, "other": [], "calls": 40}})
+        if with_b:
+            out.append({"name": "s%d-B" % s, "arm": "B", "seed": s, "condition": "compact", "boundaries": 10, "claude_version": version, "hook_sha256": dict(HOOKS), "hook_receipts": 3})
+    return out
+
+
+class Fair6xPresets(unittest.TestCase):
+    def dry(self, kind, *extra):
+        p = subprocess.run([sys.executable, os.path.join(HERE, "runner.py"), "run", kind, "--dry-run", *extra], capture_output=True, text=True, timeout=120)
+        self.assertEqual(p.returncode, 0, p.stderr[-300:])
+        return p.stdout
+
+    def test_seed_file(self):
+        self.assertEqual([int(x) for x in open(os.path.join(HERE, "seeds-fair6x.txt")).read().split()], SEEDS6X)
+
+    def test_presets_load(self):
+        for kind, arms, budget, basis in (("fair6x-step1", "Af,O,Z", 45.0, {"Af": 18.20, "O": 0.83, "Z": 0.19}), ("fair6x-step2", "B", 40.0, {"B": 15.95})):
+            k = runner.KINDS[kind]
+            ref = runner.KINDS[kind.replace("fair6x", "fair6")]
+            self.assertEqual((k["arms"], k["seeds"], k["seed_file"], k["budget_usd"], k["cost_basis"]), (arms, 2, "seeds-fair6x.txt", budget, basis))
+            for key in ("model", "window", "n", "types", "conditions", "phrasings", "probe_design", "selfcheck", "search_used", "fair", "jobs"):
+                self.assertEqual(k[key], ref[key], key)
+            self.assertIn(kind, runner.FAIR_KINDS)
+
+    def test_run_sh(self):
+        sh = open(os.path.join(HERE, "run.sh")).read()
+        head = sh.split("case")[1].split(")")[0]
+        for k in ("fair6x-step1", "fair6x-step2"):
+            self.assertIn(k, head)
+            self.assertIn("run.sh " + k, sh)
+        self.assertNotIn("fair6x-step1 ]", sh)      # the stop check never runs for fair6x
+        self.assertEqual(subprocess.run(["bash", "-n", os.path.join(HERE, "run.sh")]).returncode, 0)
+
+    def test_dry_run_step1(self):
+        out = self.dry("fair6x-step1")
+        self.assertIn("arms Af,O,Z", out)
+        self.assertIn("2 seeds", out)
+        self.assertIn("budget_usd: 45.0", out)
+        total = float(re.search(r"total about \$(\d+)", out).group(1))
+        self.assertLessEqual(total, 45)
+        self.assertAlmostEqual(total, 38, delta=1)
+
+    def test_dry_run_step2(self):
+        out = self.dry("fair6x-step2", "--compare", "20261128T000000-fair6x-step1")
+        self.assertIn("budget_usd: 40.0", out)
+        total = float(re.search(r"total about \$(\d+)", out).group(1))
+        self.assertLessEqual(total, 40)
+        self.assertAlmostEqual(total, 32, delta=1)
+
+    def test_no_stop_rule_for_fair6x(self):
+        import io, contextlib, tempfile
+        rd = os.path.join(tempfile.mkdtemp(), "fx")
+        os.makedirs(rd)
+        json.dump({"kind": "fair6x-step1", "seeds": SEEDS6X}, open(os.path.join(rd, "config.json"), "w"))
+        open(os.path.join(rd, "results.jsonl"), "w").write("\n".join(json.dumps(r) for r in make_seeds(SEEDS6X, (24, 24), (0, 0), with_b=False)) + "\n")
+        open(os.path.join(rd, "sessions.jsonl"), "w").write("")
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            self.assertEqual(fair.main(["stop-check", rd]), 0)
+        self.assertNotIn("STOP", buf.getvalue())
+        self.assertIn("no stop rule", buf.getvalue())
+
+    def test_section6x_has_counts_gates_and_no_verdict_or_stop(self):
+        md, v = fair.section6x(make_seeds(SEEDS6X, (10, 10), (20, 20)), sessions_seeds(SEEDS6X), CFG, TH, meta=META)
+        text = "\n".join(md)
+        self.assertIn(X8_LABEL, text)
+        self.assertNotIn("STOP", text)
+        self.assertNotIn("Verdict", text)
+        for ph in ("cued", "neutral", "told"):
+            self.assertIn("| %s |" % ph, text)
+        self.assertIn("Validity gates", text)
+        self.assertFalse(v["invalid"], v["invalid_gates"])
+        self.assertEqual(v["seeds"], SEEDS6X)
+
+
+class Fair6xNew8(unittest.TestCase):
+    def rows(self, af8, b8):
+        return make_seeds(SEEDS6 + SEEDS6X, af8, b8)
+
+    def test_all_eight_positive_gives_p_1_over_256(self):
+        sx = sessions_seeds(SEEDS6X)
+        lines, out = fair.new8(self.rows((10,) * 8, (20,) * 8), sx, TH, META)
+        text = "\n".join(lines)
+        self.assertIn(X8_LABEL, lines[0])
+        self.assertIn("8 seeds, 256 sign patterns", text)
+        for ph in ("cued", "neutral", "told"):
+            r = out["rules"][ph]
+            self.assertEqual(len(r["seeds"]), 8)
+            self.assertEqual((r["af"], r["b"], r["k"]), ((80, 200), (160, 200), 8))
+            self.assertEqual(r["p"].numerator, 1)
+            self.assertEqual(r["p"].denominator, 256)
+            self.assertAlmostEqual(r["gain_points"], 40.0)
+        self.assertIn("p 1/256", text)
+        self.assertFalse(out["invalid"], out["invalid_gates"])
+        self.assertNotIn("INVALID", text)
+
+    def test_failed_gate_on_extra_seeds_marks_secondary_invalid(self):
+        sx = sessions_seeds(SEEDS6X, version="2.1.0")
+        sx[0] = dict(sx[0], claude_version="2.2.0")
+        lines, out = fair.new8(self.rows((10,) * 8, (20,) * 8), sx, TH, META)
+        self.assertTrue(out["invalid"])
+        self.assertTrue(any("INVALID" in x for x in lines))
+        self.assertIn(X8_LABEL, lines[0])
+
+    def test_command_reads_four_run_folders(self):
+        import io, contextlib, tempfile
+        root = tempfile.mkdtemp()
+        parts = {"s1": (SEEDS6, "fair6-step1"), "s2": (SEEDS6, "fair6-step2"), "x1": (SEEDS6X, "fair6x-step1"), "x2": (SEEDS6X, "fair6x-step2")}
+        dirs = []
+        for name, (seeds, kind) in parts.items():
+            rd = os.path.join(root, name)
+            os.makedirs(rd)
+            rows = make_seeds(seeds, (10,) * len(seeds), (20,) * len(seeds))
+            rows = [r for r in rows if (r["arm"] == "B") == kind.endswith("step2")]
+            json.dump({"kind": kind, "seeds": seeds, "live_recall_sha256": "cc33"}, open(os.path.join(rd, "config.json"), "w"))
+            open(os.path.join(rd, "results.jsonl"), "w").write("\n".join(json.dumps(r) for r in rows) + "\n")
+            sess = [s for s in sessions_seeds(seeds) if (s["arm"] == "B") == kind.endswith("step2")]
+            open(os.path.join(rd, "sessions.jsonl"), "w").write("\n".join(json.dumps(s) for s in sess) + "\n")
+            dirs.append(rd)
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            self.assertEqual(fair.main(["new8"] + dirs), 0)
+        text = buf.getvalue()
+        self.assertIn(X8_LABEL, text)
+        self.assertIn("p 1/256", text)
+
+    def test_fair6_verdict_is_unchanged(self):
+        v = fair.verdict6(make6(), sessions6(), TH, meta=META)
+        self.assertEqual(v["verdict"], "PASS")
+        self.assertEqual(len(v["primary"]["seeds"]), 6)
+        self.assertEqual(v["primary"]["p"].denominator, 64)
+        v2 = fair.verdict6(make6() + make_seeds(SEEDS6X, (10, 10), (20, 20)), sessions6() + sessions_seeds(SEEDS6X), TH, meta=META)
+        self.assertEqual(v2["verdict"], v["verdict"])      # extra seeds in the rows never enter the 6-seed verdict
+        self.assertEqual(v2["primary"]["af"], v["primary"]["af"])
+
+
 def inspect_src(mod):
     import inspect
     return inspect.getsource(mod)
