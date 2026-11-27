@@ -32,6 +32,19 @@ def load_jsonl(path):
     return out
 
 
+def _run_meta(run_dir):
+    """FR.8.5 'no live install': the live recall.py hash of the config and the settings-changed flag of the state of one run folder."""
+    try:
+        c = json.load(open(os.path.join(run_dir, "config.json"), encoding="utf-8"))
+    except (OSError, ValueError):
+        c = {}
+    try:
+        s = json.load(open(os.path.join(run_dir, "state.json"), encoding="utf-8"))
+    except (OSError, ValueError):
+        s = {}
+    return {"live_recall_sha256": c.get("live_recall_sha256"), "settings_hash_changed": bool(s.get("settings_hash_changed"))}
+
+
 class Agg:
     """Counts of correct and total items for each (arm, type, n, seed). Cells with a wrong n_actual are dropped."""
 
@@ -513,6 +526,18 @@ def build(run_id, draws=None):
             md.append("")
             md += d4md
             out["design4"] = d4out
+    if cfg.get("kind") in ("fair6-step1", "fair6-step2"):      # FR.8: the 6-seed replication. Its own section (fair.section6); the fair section above does not change
+        import fair
+        rows_f, sess_f = list(rows_all), list(sess_all)
+        meta = []
+        for d_ in [os.path.join(RESULTS, cfg["compare"])] if cfg.get("compare") else []:      # step 2: the rows, sessions and run metadata of step 1 next to arm B of this run
+            rows_f = gates.load_rows(d_) + rows_f
+            sess_f = load_jsonl(os.path.join(d_, "sessions.jsonl")) + sess_f
+            meta.append(_run_meta(d_))
+        meta.append(_run_meta(rd))
+        fmd, fv = fair.section6(rows_f, sess_f, cfg, th, meta=meta, old_rows=fair.old_fair_rows(RESULTS))
+        out["fair6"] = json.loads(json.dumps(fv, default=str))
+        return out, "\n".join(head[:1] + [""] + fmd + [""] + head[1:] + md) + "\n"
     if cfg.get("kind") in ("fair-step1", "fair-step2", "fair-preflight"):      # the fair re-test: counts and the pre-registered rule first (fair.py), then the usual tables
         import fair
         rows_f, sess_f = list(rows_all), list(sess_all)

@@ -319,7 +319,8 @@ def probe_prompt(ptype, script, marker, ckpt=None, items=None, phrasing="cued", 
         return nonliteral_probe_prompt(ptype, script, marker, items)
     if items is None:
         items = script["fresh"][str(ckpt)] if ptype == "F" else script["items"][ptype]
-    head = "[%s] Answer from this session's history only. Do not guess.%s\n" % (marker, CUED_HEAD_TAIL if cue else "")
+    # FR.8.6: told = the cued head plus one sentence that tells the model to search. For cued the text is unchanged (a test pins the bytes).
+    head = "[%s] Answer from this session's history only. Do not guess.%s%s\n" % (marker, CUED_HEAD_TAIL if cue else "", TOLD_SENTENCE if phrasing == "told" else "")
     if ptype == "C":
         body = "\n".join("%d. %s" % (x["id"], x["statement"]) for x in items)
         head += ("For each statement below, say if it conflicts with an earlier decision in this session. "
@@ -344,7 +345,8 @@ E_NOTE = " For error codes the main field is reason_code. Always set proceed to 
 # These helpers read a script. They never change a script, so every old seed gives the same script and the same old probe text.
 FILL_PER_EPOCH = 6                       # nominal filler turns after the plant turns of each epoch
 POSITIONS = ("start", "middle", "end")
-PHRASINGS = ("cued", "neutral", "nonliteral")   # nonliteral: probe design 3 only, no-compaction condition
+PHRASINGS = ("cued", "neutral", "nonliteral", "told")   # nonliteral: probe design 3 only, no-compaction condition. told: FR.8 (the fair6 presets and fair-preflight)
+TOLD_SENTENCE = " If a value is not in your context, search the transcript files of this session before you answer."
 NEUTRAL_TYPES = ("R", "D", "X", "S", "E")  # C and M ask about the past by their nature, so they have a cued probe only
 PLANT_KIND = {"R": "stmt", "D": "stmt", "X": "stmt", "C": "stmt", "S": "S", "E": "E", "U": "U"}
 # Cue phrases of the auto-recall hook (contract F67.b). A neutral probe must hold none of them.

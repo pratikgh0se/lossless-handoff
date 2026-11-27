@@ -166,16 +166,18 @@ def estimate3(seeds, arms, n, conditions, phrasings=("cued", "neutral", "nonlite
                     a, u, "main session once, plus its forks" if a == "A" else "forks of the session of arm A only"))
         elif a == "Z":
             if "compact" in conditions:
-                per_seed += Z_UNIT * mult
-                lines.append("arm Z (no history, one run): $%.2f per seed" % (Z_UNIT * mult))
+                zu = float(basis["Z"]) if basis and "Z" in basis else Z_UNIT * mult      # measured basis (fair6 presets), else the model
+                per_seed += zu
+                lines.append("arm Z (no history, one run): $%.2f per seed" % zu)
             if "nocompact" in conditions:
                 zc = (D4_CONTROL_USD if design >= 4 else D3_CONTROL_USD)["Z"] * (ACTION_SCALE(phrasings) if design >= 4 else 1.0)
                 per_seed += zc
                 lines.append("arm Z, design %d amnesia forks: $%.2f per seed" % (design, zc))
         elif a == "O":
             if "compact" in conditions:
-                per_seed += O_UNIT * mult
-                lines.append("arm O (oracle, short session, one run): $%.2f per seed" % (O_UNIT * mult))
+                ou = float(basis["O"]) if basis and "O" in basis else O_UNIT * mult      # measured basis (fair6 presets), else the model
+                per_seed += ou
+                lines.append("arm O (oracle, short session, one run): $%.2f per seed" % ou)
             if "nocompact" in conditions:
                 oc = (D4_CONTROL_USD if design >= 4 else D3_CONTROL_USD)["O"] * (ACTION_SCALE(phrasings) if design >= 4 else 1.0)
                 per_seed += oc

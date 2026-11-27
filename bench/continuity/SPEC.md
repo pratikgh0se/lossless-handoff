@@ -312,3 +312,73 @@ Found live in fair-step1: in 4 Af probe rows (seed 3002, type E, cued), the fork
 - **Hinted probes** are the `cued` phrasing. **Neutral probes** are the `neutral` phrasing.
 - **Reads gate.** Fork transcripts are deleted after each probe. So the runner scans the tool calls of every Af probe fork (and the main session) before the delete. It stores the result in the field `af_reads` of each Af row and of the Af session summary. A tool call that names another arm's project folder or a state folder and that SUCCEEDED makes the run INVALID. A blocked call (error or deny) is only counted in `af_blocked_attempts`.
 
+## FR.8 Fair replication (6 seeds), 2026-11-27
+
+Why: the fair re-test (FR.1-FR.7, seeds 3001 3002) shows a direction only. The owner approved preparing a 6-seed confirmatory run (about $220, cap $243) before the weekly reset. A check of the 2-seed data found that every hinted Af error came from a fork that did not search. Each Af fork that searched was right. So FR.8 also measures `told` probes.
+
+**FR.8.1 Seeds.** New file `seeds-fair6.txt`: 4001 4002 4003 4004 4005 4006. No seeds-*.txt and no results/*/config.json holds them. `proof.check_seeds` (or the equivalent check) must accept them.
+
+**FR.8.2 Presets.** Copy fair-step1 and fair-step2. Add both to FAIR_KINDS (or the equivalent) and to the run.sh case list and its usage text. Run the stop check after fair6-step1.
+- `fair6-step1`: arms Af,O,Z; seeds from seeds-fair6.txt (6); phrasings cued,neutral,told; budget_usd 130; cost_basis Af 18.20, O 0.83, Z 0.19.
+- `fair6-step2 --compare <step1 id>`: arm B; the same seeds and phrasings; budget_usd 110; cost_basis B 15.95.
+- Default `--jobs 3`.
+- Keep everything else from the fair presets: Sonnet, 400k, N=10, types R,D,X,S,E,C,M, probe design 4, selfcheck, isolation by ordering, FR.7 fallback.
+- `fair-preflight` also runs the `told` phrasing.
+- `--dry-run` works for both new presets and prints the estimate.
+
+**FR.8.3 Primary rule (confirmatory, the 6 new seeds only).** Hinted (cued) probes, N=10.
+- d_s = rate(B) − rate(Af) of seed s. G = pooled B − pooled Af, in points. k = the number of seeds with d_s >= 0.
+- p = an exact one-sided sign-flip test on the mean of d_s: take all 64 sign patterns, and count the share with mean >= the observed mean. Use no random numbers. The smallest p is 1/64.
+- PASS: G >= 15 and p <= 0.05 and k >= 5.
+- FAIL: G < 5 or k <= 3.
+- Else: "no clear difference". If p <= 0.05, add the line "gain of <G> points, below the registered 15".
+- Also print a 95% percentile bootstrap interval over seeds: 10000 draws, rng seed 20261127. It is not a gate. Label it "6 seeds: this interval is too narrow; description only".
+
+**FR.8.4 Secondary results (these never change the verdict).**
+- The same rule on neutral probes.
+- The pooled 8 seeds (3001, 3002 and the 6 new seeds), with the same statistics (256 patterns). Label: "not confirmatory: 2 of these seeds set the plan; other LH commit".
+- The S and E types apart from R D X C M: counts only.
+- Told probes (FR.8.6): counts, G and p.
+- Af search rate: the forks with used_lookup, of all forks, per phrasing. Also Af accuracy with and without a lookup.
+
+**FR.8.5 INVALID gates.** All FR.4 gates, on 6 seeds, and also:
+- every seed has Af, B, O and Z rows (O and Z run on all 6 seeds);
+- one `claude_version` in all sessions of both steps;
+- one hook sha256 in all B sessions;
+- no live install between the registration commit and the end of step 2.
+- A row that does not parse after the FR.7 fallback counts as wrong. Reprobe only a fork with a harness parse failure, one time, with the same rule for each arm. Never reprobe a wrong answer.
+
+**FR.8.6 Told probes.**
+- New phrasing `told`: the cued head plus the sentence " If a value is not in your context, search the transcript files of this session before you answer."
+- It uses the same 25 items per seed as cued, for all four arms.
+- Told forks start after the cued and neutral forks.
+- The cued and neutral prompts must stay byte-identical to before (add a test).
+- Report line: "When the prompt tells plain Claude Code to search: <x> of 150. Lossless Handoff: <z> of 150."
+- If told Af is 90% or more, the summary says: "The gain is that no instruction is necessary."
+
+**FR.8.7 Stop rule after step 1.** If hinted Af has fewer than 23 errors of 150 (Af >= 128), G cannot reach 15. Then print `STOP: plain Claude Code with search scores <x>/150; the primary rule cannot pass`. Do not start step 2 automatically; the owner decides.
+
+**FR.8.8 Report.** Use the FR.5 wording with "6 new seeds, 150 hinted questions". Print the counts, G, k and p. Never write "validated" or "proof".
+
+**FR.8.9 Tests ($0).** Verdict fixtures for:
+- PASS, FAIL, and no clear difference;
+- the p of 6 of 6 (1/64);
+- a 5-of-6 case;
+- the stop rule at 127 and at 128;
+- each new INVALID gate;
+- the seed check;
+- both dry runs;
+- byte-identical cued and neutral prompts.
+
+**thresholds.json.** Set version 8, and add "v8 adds the fair6 block, committed before any fair6 data" to the note. Add this block (the `fair` block does not change):
+```json
+"fair6": {"registered": "2026-11-27", "seed_file": "seeds-fair6.txt", "seeds": 6, "n": 10, "types": "R D X S E C M",
+  "primary_phrasing": "cued", "secondary_phrasings": "neutral told", "min_gain_points": 15, "fail_below_points": 5,
+  "test": "exact one-sided sign-flip on the mean of the per-seed differences, 64 patterns", "p_max": 0.05,
+  "min_seeds_b_ge_af": 5, "fail_max_seeds_b_ge_af": 3, "bootstrap_draws": 10000, "bootstrap_rng_seed": 20261127, "bootstrap_is_gate": false,
+  "stop_af_min_correct_of_150": 128, "told_af_note_min_rate": 0.9, "pooled8": "secondary only, seeds 3001 3002 added",
+  "oracle_min_accuracy": 0.95, "amnesia_max_accuracy": 0.02, "parse_rate_min": 0.98, "compactions_per_main_session": 10,
+  "same_claude_version": true, "same_hook_sha256_arm_b": true, "reprobe": "harness parse failure only, one time, each arm",
+  "note": "Primary uses the 6 new seeds only. Do not change after a run."}
+```
+

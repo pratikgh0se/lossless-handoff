@@ -30,7 +30,8 @@ PREFIX = "lhbench-"
 TOOLS_PREFIX = "lhtools-"      # hooks copies of the arms, outside the lhbench-*-state folders
 ALL_TYPES = gen.TYPES + ["F"]
 ALL_ARMS = ("A", "Af", "B", "Z", "O", "R", "K", "G", "P")
-FAIR_KINDS = ("fair-preflight", "fair-step1", "fair-step2")     # SPEC.md section 16. Arm Af = plain Claude Code that may read its OWN transcripts
+FAIR6_KINDS = ("fair6-step1", "fair6-step2")      # SPEC.md FR.8: the 6-seed confirmatory replication, same code paths as fair-step1 and fair-step2
+FAIR_KINDS = ("fair-preflight", "fair-step1", "fair-step2") + FAIR6_KINDS     # SPEC.md section 16. Arm Af = plain Claude Code that may read its OWN transcripts
 LH_ARMS = ("B", "R", "K", "G", "P")   # arms with Lossless Handoff hooks: B default install, R plus --auto-recall, K plus auto-recall, recall rules, recall MCP and reanchor
 MCP_TOOLS = "mcp__lossless-recall__search_earlier_chat mcp__lossless-recall__open_message"
 K_FILES = ("auto-recall.py", "recall-mcp.py", "reanchor.py")
@@ -129,11 +130,18 @@ KINDS = {
     # (all Af sessions finish before any other arm starts; run.sh cleanup --all first). 2 new seeds (seeds-fair.txt), N=10 only, hinted (cued) and neutral probes.
     # Cost basis: arm A of the proof run (about $19.59 per seed with N=1,3,10 and 3 phrasings, so a high estimate for Af); arm B of the recheck ($17.39 per seed).
     "fair-preflight": {"model": "haiku", "window": 30000, "n": [2], "arms": "Af,B", "seeds": 1, "seed_file": "seeds-dev.txt", "types": "R,S", "conditions": "compact",
-                       "phrasings": "cued,neutral", "probe_design": 4, "selfcheck": True, "search_used": True, "fair": True, "budget_usd": 3.0},
+                       "phrasings": "cued,neutral,told", "probe_design": 4, "selfcheck": True, "search_used": True, "fair": True, "budget_usd": 3.0},      # FR.8.2: told too
     "fair-step1": {"model": "sonnet", "window": 400000, "n": [10], "arms": "Af,O,Z", "seeds": 2, "seed_file": "seeds-fair.txt", "types": "R,D,X,S,E,C,M", "conditions": "compact",
                    "phrasings": "cued,neutral", "probe_design": 4, "selfcheck": True, "search_used": True, "fair": True, "budget_usd": 55.0, "cost_basis": {"Af": 19.59}},
     "fair-step2": {"model": "sonnet", "window": 400000, "n": [10], "arms": "B", "seeds": 2, "seed_file": "seeds-fair.txt", "types": "R,D,X,S,E,C,M", "conditions": "compact",
                    "phrasings": "cued,neutral", "probe_design": 4, "selfcheck": True, "search_used": True, "fair": True, "budget_usd": 45.0, "cost_basis": {"B": 17.39}},
+    # FR.8 (SPEC.md, thresholds.json block "fair6"): the same as fair-step1 and fair-step2 on 6 new seeds (seeds-fair6.txt), with the told phrasing, jobs 3.
+    "fair6-step1": {"model": "sonnet", "window": 400000, "n": [10], "arms": "Af,O,Z", "seeds": 6, "seed_file": "seeds-fair6.txt", "types": "R,D,X,S,E,C,M", "conditions": "compact",
+                    "phrasings": "cued,neutral,told", "probe_design": 4, "selfcheck": True, "search_used": True, "fair": True, "budget_usd": 130.0, "jobs": 3,
+                    "cost_basis": {"Af": 18.20, "O": 0.83, "Z": 0.19}},
+    "fair6-step2": {"model": "sonnet", "window": 400000, "n": [10], "arms": "B", "seeds": 6, "seed_file": "seeds-fair6.txt", "types": "R,D,X,S,E,C,M", "conditions": "compact",
+                    "phrasings": "cued,neutral,told", "probe_design": 4, "selfcheck": True, "search_used": True, "fair": True, "budget_usd": 110.0, "jobs": 3,
+                    "cost_basis": {"B": 15.95}},
     "preflight4": {"model": "haiku", "window": 30000, "n": [1], "arms": "A,B,R,K,Z,O", "seeds": 1, "seed_file": "seeds-dev.txt", "types": "R,X",
                    "conditions": "compact,nocompact", "phrasings": "cued,neutral,nonliteral", "probe_design": 4, "nc_window": 120000,
                    "mcp_check": True, "selfcheck": True, "big_check": True},
@@ -850,7 +858,7 @@ class Session:
             st["done_forks"].append(fork_key(ckpt, ptype, phrasing))
             self.ctx.save()
             return
-        marker = "PROBE-%d-%s-%d-%s%s" % (self.seed, self.arm, ckpt, ptype, {"neutral": "n", "nonliteral": "l", "action": "a"}.get(phrasing, "")) + ("" if chunk is None else "c%d" % chunk[0])
+        marker = "PROBE-%d-%s-%d-%s%s" % (self.seed, self.arm, ckpt, ptype, {"neutral": "n", "nonliteral": "l", "action": "a", "told": "t"}.get(phrasing, "")) + ("" if chunk is None else "c%d" % chunk[0])
         if ptype == "F":
             items = script["fresh"][str(ckpt)]
         elif self.d4:
@@ -978,13 +986,20 @@ def diff_snapshot(before, after):
 def fork_key(ckpt, ptype, phrasing="cued", chunk=None):
     """Key of a finished probe fork in the state file. A cued key is the old key, so old state files still work. Design 4: a chunk key
     ends with :c<n>; the key without a chunk means that all chunks of the (type, phrasing) are done."""
-    return "%d:%s" % (ckpt, ptype) + (":" + phrasing if phrasing in ("neutral", "nonliteral", "action") else "") + ("" if chunk is None else ":c%d" % chunk)
+    return "%d:%s" % (ckpt, ptype) + (":" + phrasing if phrasing in ("neutral", "nonliteral", "action", "told") else "") + ("" if chunk is None else ":c%d" % chunk)
 
 
 def probe_plan(cfg, ptype, d3=False):
-    """Phrasings to ask for a probe type. Neutral exists for R D X S E only. Old runs have cued only."""
-    ph = [p for p in cfg.get("phrasings", ["cued"]) if p == "cued" or ((ptype in gen.NEUTRAL_TYPES or ptype in design4.LEVELS or ptype == "CT") and (p == "neutral" or d3))]
+    """Phrasings to ask for a probe type. Neutral exists for R D X S E only. Told (FR.8.6) exists for every type of design 1 and 2, as cued does. Old runs have cued only."""
+    ph = [p for p in cfg.get("phrasings", ["cued"]) if p == "cued" or (p == "told" and not d3) or ((ptype in gen.NEUTRAL_TYPES or ptype in design4.LEVELS or ptype == "CT") and (p == "neutral" or d3))]
     return ph or ["cued"]
+
+
+def probe_order(cfg, types, d3=False):
+    """[(type, phrasing)] in the order of the probe forks of one checkpoint. Told forks (FR.8.6) come after all cued and neutral forks.
+    Without told the order is the old one (for each type, its phrasings)."""
+    plan = [(t, ph) for t in types for ph in probe_plan(cfg, t, d3=d3)]
+    return [x for x in plan if x[1] != "told"] + [x for x in plan if x[1] == "told"]
 
 
 def recall_log_fired(rows, fsid):
@@ -1413,11 +1428,10 @@ def checkpoint(ctx, ss, target):
     if n != target:
         st["missed"].append({"target": target, "actual": n})
         return
-    for t in types:
-        for ph in probe_plan(cfg, t):
-            if fork_key(target, t, ph) in st["done_forks"]:
-                continue
-            ss.probe(t, target, fork_of=st["sid"], phrasing=ph)
+    for t, ph in probe_order(cfg, types):
+        if fork_key(target, t, ph) in st["done_forks"]:
+            continue
+        ss.probe(t, target, fork_of=st["sid"], phrasing=ph)
     # leak check: no probe marker may appear in the main timeline
     prefix = "PROBE-%d-%s-" % (ss.seed, ss.arm)
     leaks = 0
@@ -1431,11 +1445,10 @@ def checkpoint(ctx, ss, target):
 
 def run_z(ctx, ss):
     st = ss.st
-    for t in (nc_types(ctx.cfg) if ss.d3 else ctx.cfg["types"]):
-        for ph in probe_plan(ctx.cfg, t, d3=ss.d3):
-            if fork_key(0, t, ph) in st["done_forks"]:
-                continue
-            ss.probe(t, 0, z_sid=str(uuid.uuid4()), phrasing=ph)
+    for t, ph in probe_order(ctx.cfg, (nc_types(ctx.cfg) if ss.d3 else ctx.cfg["types"]), d3=ss.d3):
+        if fork_key(0, t, ph) in st["done_forks"]:
+            continue
+        ss.probe(t, 0, z_sid=str(uuid.uuid4()), phrasing=ph)
 
 
 def session_summary(ctx, ss):
@@ -1782,12 +1795,14 @@ def build_cfg(kind, a):
         bad_seeds = proof.check_seeds(seeds, HERE, want=len(seeds) if a.seeds else 4)
         if bad_seeds:
             raise SystemExit("proof test: the seeds must be new. " + "; ".join(bad_seeds))
-    if kind in ("fair-step1", "fair-step2"):      # fair-preflight uses a dev seed, as preflight4. Step 1 and step 2 share seeds-fair.txt on purpose
+    if kind in ("fair-step1", "fair-step2") + FAIR6_KINDS:      # FR.8.1: the fair6 seeds go through the same check. fair-preflight uses a dev seed, as preflight4. Step 1 and step 2 share seeds-fair.txt on purpose
         bad_seeds = proof.check_seeds(seeds, HERE, want=len(seeds) if a.seeds else k["seeds"], skip=(os.path.basename(a.seed_file or k["seed_file"]),), skip_kinds=FAIR_KINDS)
         if bad_seeds:
             raise SystemExit("fair re-test: the seeds must be new. " + "; ".join(bad_seeds))
     if kind == "fair-step2" and not getattr(a, "compare", None) and not a.dry_run:
         raise SystemExit("fair-step2 needs --compare <run id of fair-step1>: the verdict compares arm B with arm Af and the controls of that run")
+    if kind == "fair6-step2" and not getattr(a, "compare", None) and not a.dry_run:
+        raise SystemExit("fair6-step2 needs --compare <run id of fair6-step1>: the verdict compares arm B with arm Af and the controls of that run")
     types = [t for t in ((a.types or k.get("types") or "").split(",") if (a.types or k.get("types")) else ALL_TYPES)]
     bad = [t for t in types if t not in ALL_TYPES]
     arms = (a.arms or k["arms"]).split(",")
@@ -1844,7 +1859,7 @@ def build_cfg(kind, a):
         "nc_window": nc_window, "nc_lines": nc_lines, "nc_estimate_tokens": nc_est, "levels": levels,
         "work_base": work_base(a.work_base), "call_cap_usd": a.call_cap_usd or 1.50,
         "turn_timeout_s": a.turn_timeout_s or (420 if "haiku" in (a.model or k["model"]) else 900),
-        "jobs": a.jobs or 2, "budget_usd": a.budget_usd, "claude_version": sh(["claude", "--version"]),
+        "jobs": a.jobs or k.get("jobs", 2), "budget_usd": a.budget_usd, "claude_version": sh(["claude", "--version"]),
         "allowed_tools": ALLOWED_TOOLS, "started": now_iso(),
         "command": " ".join(sys.argv),
     }
@@ -2048,6 +2063,11 @@ def reprobe_plan(run_dir, cfg, state, seed, arm, ptype, phrasing, n=None):
     old = [r for r in rows if r["n_target"] == ckpt]
     if not old:
         raise Fatal("reprobe: no rows at checkpoint %s (found %s)" % (n, ckpts))
+    if cfg.get("kind") in FAIR6_KINDS:      # FR.8.5: a harness parse failure only, one time. Never a wrong answer
+        if any(r.get("reprobe") for r in old):
+            raise Fatal("reprobe: this fork was already reprobed one time (FR.8.5 allows one reprobe for each fork). Nothing was run.")
+        if any(r.get("parse_ok") for r in old):
+            raise Fatal("reprobe: this fork parsed, so its wrong answer counts (FR.8.5: reprobe only a harness parse failure). Nothing was run.")
     return name, old, ckpt
 
 
