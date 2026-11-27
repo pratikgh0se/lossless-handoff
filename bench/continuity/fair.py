@@ -10,6 +10,7 @@ This module holds the logic that makes no model call:
   - preflight_check: the PASS or FAIL checklist of run.sh fair-preflight.
 
 Usage: fair.py preflight-check <run-id> | stop-check <run-id>
+       fair.py new8 <fair6-step1 dir> <fair6-step2 dir> <fair6x-step1 dir> <fair6x-step2 dir>   (FR.8.10 secondary result, $0)
 """
 import json, math, os, random, re, sys
 from fractions import Fraction
@@ -505,6 +506,67 @@ def section6(rows, sessions, cfg, th_all, seeds=None, meta=None, old_rows=None):
     return lines, v
 
 
+# ---- FR.8.10: 2 extra seeds (4007 4008), a side result. It never changes the verdict. No stop rule, no 6-seed verdict section.
+
+FAIR6X_KINDS = ("fair6x-step1", "fair6x-step2")
+X8_LABEL = "secondary: 2 seeds added after registration; does not change the verdict"
+X8_TITLE = "8 new seeds (4001-4008)"
+
+
+def seeds6x(here=HERE):
+    """The 2 extra seeds, from seeds-fair6x.txt (FR.8.10)."""
+    with open(os.path.join(here, "seeds-fair6x.txt")) as f:
+        return [int(x) for x in f.read().split()]
+
+
+def section6x(rows, sessions, cfg, th_all, meta=None):
+    """(markdown lines, dict) for the fair6x runs: per-arm counts per phrasing and the FR.8.5 gates for the 2 extra seeds. No stop rule, no verdict."""
+    th = th6(th_all)
+    seeds = seeds6x()
+    new = [r for r in rows if r.get("seed") in seeds]
+    sess = [s for s in sessions if s.get("seed") in seeds or s.get("seed") is None]
+    gl = validity_gates6(new, sess, th, seeds, meta)
+    invalid = [g["gate"] for g in gl if g["result"] != "PASS"]
+    rules = {ph: rule6(new, th, ph, seeds) for ph in PHRASINGS6}
+    lines = ["## Extra seeds (%d seeds, FR.8.10)\n" % len(seeds), "**%s.** No stop rule and no verdict apply to these seeds.\n" % X8_LABEL,
+             "| Probes | Af (can search) | B (Lossless Handoff) | B minus Af |", "|---|---|---|---|"]
+    for ph in PHRASINGS6:
+        r = rules[ph]
+        lines.append("| %s | %s | %s | %s |" % (ph, _frac(*r["af"]), _frac(*r["b"]) if r["b"][1] else "not run yet", "n/a" if r["gain_points"] is None else "%+.1f points" % r["gain_points"]))
+    lines += ["", "Per seed (counts, cued ; neutral ; told):\n", "| Seed | Af | B |", "|---|---|---|"]
+    for sd in seeds:
+        cells = [[_frac(*rules[ph]["per_seed"][sd][arm]) for ph in PHRASINGS6] for arm in ("af", "b")]
+        lines.append("| %s | %s | %s |" % (sd, " ; ".join(cells[0]), " ; ".join(cells[1])))
+    lines += ["", "Validity gates for these %d seeds (any result but PASS makes this secondary result INVALID):\n" % len(seeds), "| Gate | Threshold | Measured | Result |", "|---|---|---|---|"]
+    lines += ["| %s | %s | %s | %s |" % (g["gate"], g["threshold"], g["measured"], g["result"]) for g in gl]
+    lines.append("")
+    return lines, {"seeds": seeds, "rules": rules, "gates": gl, "invalid_gates": invalid, "invalid": bool(invalid)}
+
+
+def new8(rows, sessions_x, th_all, meta_x=None, rows_x=None):
+    """The FR.8.10 secondary result. rows: the rows of all 8 seeds (4001-4008). rows_x, sessions_x, meta_x: rows, sessions and run metadata of the 2 extra seeds
+    for the FR.8.5 gates. Returns (lines, dict). Cued, neutral and told: pooled Af and B counts, G, k and the exact sign-flip p over 256 patterns."""
+    th = th6(th_all)
+    xs = seeds6x()
+    seeds = list(seeds6(th_all)) + xs
+    gl = validity_gates6([r for r in (rows_x if rows_x is not None else rows) if r.get("seed") in xs], sessions_x, th, xs, meta_x)
+    invalid = [g["gate"] for g in gl if g["result"] != "PASS"]
+    rules = {ph: rule6(rows, th, ph, seeds) for ph in PHRASINGS6}
+    lines = ["%s: %s" % (X8_TITLE, X8_LABEL)]
+    if invalid:
+        lines.append("INVALID: the FR.8.5 gates failed or have no data for the 2 extra seeds: " + "; ".join(invalid))
+    lines.append("%d seeds, %d sign patterns" % (len(seeds), 2 ** len(seeds)))
+    for ph in PHRASINGS6:
+        r = rules[ph]
+        if r["cls"] is None:
+            lines.append("%-8s no data for every seed (Af %s, B %s)" % (ph, _frac(*r["af"]), _frac(*r["b"])))
+            continue
+        lines.append("%-8s Af %s  B %s  G %+.1f points  k %d of %d  p %s" % (ph, _frac(*r["af"]), _frac(*r["b"]), r["gain_points"], r["k"], len(seeds), _p_text(r)))
+    lines.append("FR.8.5 gates for the 2 extra seeds (%s):" % ", ".join(map(str, xs)))
+    lines += ["  %s: %s (%s)" % (g["result"], g["gate"], g["measured"]) for g in gl]
+    return lines, {"rules": rules, "gates": gl, "invalid": bool(invalid), "invalid_gates": invalid, "label": X8_LABEL}
+
+
 def old_fair_rows(results_dir):
     """Rows of the two seeds of the first fair re-test (3001 3002), for the pooled secondary result: the newest fair-step1 and fair-step2 run folders of these seeds. [] if none."""
     import glob
@@ -558,7 +620,40 @@ def _load(run_id):
     return rd, cfg, rows, _jl(os.path.join(rd, "sessions.jsonl"))
 
 
+def _run_meta(rd):
+    try:
+        c = json.load(open(os.path.join(rd, "config.json"), encoding="utf-8"))
+    except (OSError, ValueError):
+        c = {}
+    try:
+        s = json.load(open(os.path.join(rd, "state.json"), encoding="utf-8"))
+    except (OSError, ValueError):
+        s = {}
+    return {"live_recall_sha256": c.get("live_recall_sha256"), "settings_hash_changed": bool(s.get("settings_hash_changed"))}
+
+
+def main_new8(dirs):
+    """fair.py new8 <fair6-step1> <fair6-step2> <fair6x-step1> <fair6x-step2>: prints the FR.8.10 secondary result. $0, no model call."""
+    rows_all, rows_x, sess_x, meta_x = [], [], [], []
+    for i, d in enumerate(dirs):
+        rd, _cfg, rows, sess = _load(d)
+        rows_all += rows
+        if i >= 2:
+            rows_x += rows
+            sess_x += sess
+            meta_x.append(_run_meta(rd))
+    th = json.load(open(os.path.join(HERE, "thresholds.json"), encoding="utf-8"))
+    lines, _out = new8(rows_all, sess_x, th, meta_x, rows_x)
+    print("\n".join(lines))
+    return 0
+
+
 def main(argv):
+    if argv[:1] == ["new8"]:
+        if len(argv) != 5:
+            print(__doc__, file=sys.stderr)
+            return 2
+        return main_new8(argv[1:])
     if len(argv) != 2 or argv[0] not in ("preflight-check", "stop-check"):
         print(__doc__, file=sys.stderr)
         return 2
@@ -570,6 +665,9 @@ def main(argv):
         return 0 if all(st == "PASS" for _l, st, _d in res) else 1
     th = json.load(open(os.path.join(HERE, "thresholds.json"), encoding="utf-8"))
     import gates
+    if cfg.get("kind") in FAIR6X_KINDS:      # FR.8.10: no stop rule for the 2 extra seeds
+        print("no stop rule for %s (FR.8.10: the extra seeds are a side result)" % cfg.get("kind"))
+        return 0
     if str(cfg.get("kind", "")).startswith("fair6"):      # FR.8.7: Af >= 128 of 150 hinted: the primary rule cannot pass. Step 2 does not start by itself
         stop, x, y = stop_rule6(rows, th)
         if gates.reprobe_line(rd):

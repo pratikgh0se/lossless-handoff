@@ -13,6 +13,8 @@
 #   run.sh fair-step2 --compare <step1 run id> [options]   fair re-test step 2: arm B on the same seeds, cap $45 (add --dry-run to any fair preset for the estimate)
 #   run.sh fair6-step1 [options]  FR.8 fair replication step 1: arms Af O Z on seeds-fair6.txt (6 seeds), phrasings cued neutral told, N=10, cap $130, jobs 3. It prints the stop check at the end (the owner decides about step 2)
 #   run.sh fair6-step2 --compare <fair6-step1 run id> [options]   FR.8 step 2: arm B on the same 6 seeds, cap $110, jobs 3 (add --dry-run to either preset for the estimate)
+#   run.sh fair6x-step1 [options]  FR.8.10 side result: arms Af O Z on seeds-fair6x.txt (2 extra seeds 4007 4008), cap $45, jobs 3. No stop rule, no verdict
+#   run.sh fair6x-step2 --compare <fair6x-step1 run id> [options]   FR.8.10 step 2: arm B on the same 2 seeds, cap $40, jobs 3 (add --dry-run to either preset for the estimate)
 #   run.sh proof   [options]      the proof test: 4 new seeds, arms A B O Z, N 1 3 10, about $165 (add --dry-run to only print the estimate). The live selfcheck runs first
 #   run.sh litm-smoke [options]   1 dev seed, arms A and R, no compaction only (about $12)
 #   run.sh litm-pilot [options]   lost-in-the-middle pilot: 2 dev seeds, arms A,B,R, both conditions, both phrasings (add --dry-run to only print the cost)
@@ -34,7 +36,7 @@ D="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cmd="${1:-}"
 [ $# -gt 0 ] && shift
 case "$cmd" in
-  slice|full|proof|proof-recheck|fair-preflight|fair-step1|fair-step2|fair6-step1|fair6-step2|preflight|litm-smoke|litm-pilot|litm-full|litm3-smoke|litm3-nc-smoke|litm3-pilot|litm3-full|litm3-full-v3|litm3-full-v5|litm4-oracle-check|litm4-calibrate|litm4-calibrate-l5|litm4-smoke|litm4-pilot|litm4-full-v3|preflight4)
+  slice|full|proof|proof-recheck|fair-preflight|fair-step1|fair-step2|fair6-step1|fair6-step2|fair6x-step1|fair6x-step2|preflight|litm-smoke|litm-pilot|litm-full|litm3-smoke|litm3-nc-smoke|litm3-pilot|litm3-full|litm3-full-v3|litm3-full-v5|litm4-oracle-check|litm4-calibrate|litm4-calibrate-l5|litm4-smoke|litm4-pilot|litm4-full-v3|preflight4)
     python3 "$D/runner.py" run "$cmd" "$@"
     rc=$?
     if { [ "$cmd" = preflight ] || [ "$cmd" = preflight4 ]; } && [ "$rc" -ne 3 ] && [ "$rc" -ne 4 ]; then

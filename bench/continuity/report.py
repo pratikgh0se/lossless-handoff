@@ -538,6 +538,18 @@ def build(run_id, draws=None):
         fmd, fv = fair.section6(rows_f, sess_f, cfg, th, meta=meta, old_rows=fair.old_fair_rows(RESULTS))
         out["fair6"] = json.loads(json.dumps(fv, default=str))
         return out, "\n".join(head[:1] + [""] + fmd + [""] + head[1:] + md) + "\n"
+    if cfg.get("kind") in ("fair6x-step1", "fair6x-step2"):      # FR.8.10: 2 extra seeds. Counts and gates only; no stop rule, no 6-seed verdict (not fair.section6)
+        import fair
+        rows_f, sess_f = list(rows_all), list(sess_all)
+        meta = []
+        for d_ in [os.path.join(RESULTS, cfg["compare"])] if cfg.get("compare") else []:
+            rows_f = gates.load_rows(d_) + rows_f
+            sess_f = load_jsonl(os.path.join(d_, "sessions.jsonl")) + sess_f
+            meta.append(_run_meta(d_))
+        meta.append(_run_meta(rd))
+        fmd, fv = fair.section6x(rows_f, sess_f, cfg, th, meta=meta)
+        out["fair6x"] = json.loads(json.dumps(fv, default=str))
+        return out, "\n".join(head[:1] + [""] + fmd + [""] + head[1:] + md) + "\n"
     if cfg.get("kind") in ("fair-step1", "fair-step2", "fair-preflight"):      # the fair re-test: counts and the pre-registered rule first (fair.py), then the usual tables
         import fair
         rows_f, sess_f = list(rows_all), list(sess_all)

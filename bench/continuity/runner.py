@@ -31,7 +31,8 @@ TOOLS_PREFIX = "lhtools-"      # hooks copies of the arms, outside the lhbench-*
 ALL_TYPES = gen.TYPES + ["F"]
 ALL_ARMS = ("A", "Af", "B", "Z", "O", "R", "K", "G", "P")
 FAIR6_KINDS = ("fair6-step1", "fair6-step2")      # SPEC.md FR.8: the 6-seed confirmatory replication, same code paths as fair-step1 and fair-step2
-FAIR_KINDS = ("fair-preflight", "fair-step1", "fair-step2") + FAIR6_KINDS     # SPEC.md section 16. Arm Af = plain Claude Code that may read its OWN transcripts
+FAIR6X_KINDS = ("fair6x-step1", "fair6x-step2")      # SPEC.md FR.8.10: 2 extra seeds (4007 4008), a side result; no stop rule, no 6-seed verdict
+FAIR_KINDS = ("fair-preflight", "fair-step1", "fair-step2") + FAIR6_KINDS + FAIR6X_KINDS     # SPEC.md section 16. Arm Af = plain Claude Code that may read its OWN transcripts
 LH_ARMS = ("B", "R", "K", "G", "P")   # arms with Lossless Handoff hooks: B default install, R plus --auto-recall, K plus auto-recall, recall rules, recall MCP and reanchor
 MCP_TOOLS = "mcp__lossless-recall__search_earlier_chat mcp__lossless-recall__open_message"
 K_FILES = ("auto-recall.py", "recall-mcp.py", "reanchor.py")
@@ -142,6 +143,13 @@ KINDS = {
     "fair6-step2": {"model": "sonnet", "window": 400000, "n": [10], "arms": "B", "seeds": 6, "seed_file": "seeds-fair6.txt", "types": "R,D,X,S,E,C,M", "conditions": "compact",
                     "phrasings": "cued,neutral,told", "probe_design": 4, "selfcheck": True, "search_used": True, "fair": True, "budget_usd": 110.0, "jobs": 3,
                     "cost_basis": {"B": 15.95}},
+    # FR.8.10: the same as fair6-step1 and fair6-step2 on 2 extra seeds (seeds-fair6x.txt). The verdict does not change; no stop rule.
+    "fair6x-step1": {"model": "sonnet", "window": 400000, "n": [10], "arms": "Af,O,Z", "seeds": 2, "seed_file": "seeds-fair6x.txt", "types": "R,D,X,S,E,C,M", "conditions": "compact",
+                     "phrasings": "cued,neutral,told", "probe_design": 4, "selfcheck": True, "search_used": True, "fair": True, "budget_usd": 45.0, "jobs": 3,
+                     "cost_basis": {"Af": 18.20, "O": 0.83, "Z": 0.19}},
+    "fair6x-step2": {"model": "sonnet", "window": 400000, "n": [10], "arms": "B", "seeds": 2, "seed_file": "seeds-fair6x.txt", "types": "R,D,X,S,E,C,M", "conditions": "compact",
+                     "phrasings": "cued,neutral,told", "probe_design": 4, "selfcheck": True, "search_used": True, "fair": True, "budget_usd": 40.0, "jobs": 3,
+                     "cost_basis": {"B": 15.95}},
     "preflight4": {"model": "haiku", "window": 30000, "n": [1], "arms": "A,B,R,K,Z,O", "seeds": 1, "seed_file": "seeds-dev.txt", "types": "R,X",
                    "conditions": "compact,nocompact", "phrasings": "cued,neutral,nonliteral", "probe_design": 4, "nc_window": 120000,
                    "mcp_check": True, "selfcheck": True, "big_check": True},
@@ -1795,7 +1803,7 @@ def build_cfg(kind, a):
         bad_seeds = proof.check_seeds(seeds, HERE, want=len(seeds) if a.seeds else 4)
         if bad_seeds:
             raise SystemExit("proof test: the seeds must be new. " + "; ".join(bad_seeds))
-    if kind in ("fair-step1", "fair-step2") + FAIR6_KINDS:      # FR.8.1: the fair6 seeds go through the same check. fair-preflight uses a dev seed, as preflight4. Step 1 and step 2 share seeds-fair.txt on purpose
+    if kind in ("fair-step1", "fair-step2") + FAIR6_KINDS + FAIR6X_KINDS:      # FR.8.1: the fair6 seeds go through the same check. fair-preflight uses a dev seed, as preflight4. Step 1 and step 2 share seeds-fair.txt on purpose
         bad_seeds = proof.check_seeds(seeds, HERE, want=len(seeds) if a.seeds else k["seeds"], skip=(os.path.basename(a.seed_file or k["seed_file"]),), skip_kinds=FAIR_KINDS)
         if bad_seeds:
             raise SystemExit("fair re-test: the seeds must be new. " + "; ".join(bad_seeds))
@@ -1803,6 +1811,8 @@ def build_cfg(kind, a):
         raise SystemExit("fair-step2 needs --compare <run id of fair-step1>: the verdict compares arm B with arm Af and the controls of that run")
     if kind == "fair6-step2" and not getattr(a, "compare", None) and not a.dry_run:
         raise SystemExit("fair6-step2 needs --compare <run id of fair6-step1>: the verdict compares arm B with arm Af and the controls of that run")
+    if kind == "fair6x-step2" and not getattr(a, "compare", None) and not a.dry_run:
+        raise SystemExit("fair6x-step2 needs --compare <run id of fair6x-step1>: the secondary result compares arm B with arm Af and the controls of that run")
     types = [t for t in ((a.types or k.get("types") or "").split(",") if (a.types or k.get("types")) else ALL_TYPES)]
     bad = [t for t in types if t not in ALL_TYPES]
     arms = (a.arms or k["arms"]).split(",")
@@ -2063,7 +2073,7 @@ def reprobe_plan(run_dir, cfg, state, seed, arm, ptype, phrasing, n=None):
     old = [r for r in rows if r["n_target"] == ckpt]
     if not old:
         raise Fatal("reprobe: no rows at checkpoint %s (found %s)" % (n, ckpts))
-    if cfg.get("kind") in FAIR6_KINDS:      # FR.8.5: a harness parse failure only, one time. Never a wrong answer
+    if cfg.get("kind") in FAIR6_KINDS + FAIR6X_KINDS:      # FR.8.5: a harness parse failure only, one time. Never a wrong answer
         if any(r.get("reprobe") for r in old):
             raise Fatal("reprobe: this fork was already reprobed one time (FR.8.5 allows one reprobe for each fork). Nothing was run.")
         if any(r.get("parse_ok") for r in old):

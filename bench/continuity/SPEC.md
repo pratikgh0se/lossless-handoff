@@ -382,3 +382,10 @@ Why: the fair re-test (FR.1-FR.7, seeds 3001 3002) shows a direction only. The o
   "note": "Primary uses the 6 new seeds only. Do not change after a run."}
 ```
 
+
+**FR.8.10 Extra seeds (side result), registered 2026-11-28 while fair6-step1 ran and before any fair6 result was read.**
+- The owner added 2 more new seeds: 4007 4008 (file `seeds-fair6x.txt`). No earlier run used them.
+- They run with the same settings as FR.8.2 (arms Af, O, Z in step 1, then B in step 2; phrasings cued, neutral, told; N=10), after the 6-seed runs.
+- The FR.8.3 verdict does not change. It uses the 6 seeds 4001-4006 only.
+- Secondary result "8 new seeds" (4001-4008): the FR.8.3 statistics (pooled G, k, exact one-sided sign-flip p over 256 patterns) on cued, neutral and told. Label: "secondary: 2 seeds added after registration; does not change the verdict". It never changes the verdict.
+- The FR.8.5 gates apply to the 2 extra seeds too. If a gate fails there, only the secondary result is INVALID.
