@@ -4,6 +4,10 @@ Lossless Handoff, formerly claude-handoff.
 
 ## [Unreleased]
 
+### Docs
+
+- Correct the benchmark claims after the 6-seed fair replication (run `20261128T002104-fair6-step1`, verdict INVALID): plain Claude Code scored 186 of 200 (93%) with a hint, so we claim no gain there; 117 of 160 (73%) without a hint, against 40 of 40 for Lossless Handoff on 2 seeds only. Remove the 82% and 100% badges, add the section "Fair replication, 6 seeds (2026-11-28)" to `docs/evidence.md`, and update claim C11. The earlier 82% against 100% numbers overstate the gap.
+
 ## [0.23.0] - 2026-11-26
 
 A live canary, a shape census and a mutation gate (hooks 1.25.0). Spec: F91 in `docs/spec.md`.
