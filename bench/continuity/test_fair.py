@@ -714,6 +714,655 @@ class Reprobe(unittest.TestCase):
             runner.RESULTS = old
 
 
+# ---- FR.8 (SPEC.md): the 6-seed replication. No model call, no cost.
+
+SEEDS6 = [4001, 4002, 4003, 4004, 4005, 4006]
+PER_TYPE = {"R": 4, "D": 4, "X": 4, "S": 4, "E": 4, "C": 4, "M": 1}      # 25 items per seed and phrasing (the real item counts of gen.build)
+HOOKS = {"precompact-handoff.py": "aa11", "recall.py": "bb22"}
+
+
+def row6(seed, arm, typ, item, correct, phrasing="cued", **kw):
+    r = row(seed, arm, typ, item, correct, phrasing, 10 if arm in ("Af", "B") else 0, claude_version="2.1.0", **kw)
+    r["n_target"] = 10
+    return r
+
+
+def make6(af=(15,) * 6, b=(22,) * 6, neutral=None, told=None, with_b=True, o=1.0, z=0.0, lookup=None):
+    """Rows for 6 seeds x 3 phrasings x 25 items. af, b: correct items of 25 for each seed (cued). neutral and told: (af, b) tuples that replace the cued numbers.
+    lookup: {phrasing: used_lookup of Af}."""
+    per_ph = {"cued": (af, b), "neutral": neutral or (af, b), "told": told or (af, b)}
+    rows = []
+    for si, s in enumerate(SEEDS6):
+        for ph, (a_list, b_list) in per_ph.items():
+            for arm, k in (("Af", a_list[si]), ("B", b_list[si]), ("O", round(o * 25)), ("Z", round(z * 25))):
+                if arm == "B" and not with_b:
+                    continue
+                n = 0
+                for t, cnt in PER_TYPE.items():
+                    for i in range(1, cnt + 1):
+                        n += 1
+                        extra = {"used_lookup": (lookup or {}).get(ph, True)} if arm == "Af" else {}
+                        rows.append(row6(s, arm, t, i, n <= k, ph, **extra))
+    return rows
+
+
+def sessions6(with_b=True, version="2.1.0", hooks=None):
+    out = []
+    for s in SEEDS6:
+        out.append({"name": "s%d-Af" % s, "arm": "Af", "seed": s, "condition": "compact", "boundaries": 10, "claude_version": version, "hook_sha256": None,
+                    "af_reads": {"own_ok": 4, "own_denied": 0, "other": [], "calls": 40}})
+        if with_b:
+            out.append({"name": "s%d-B" % s, "arm": "B", "seed": s, "condition": "compact", "boundaries": 10, "claude_version": version, "hook_sha256": dict(hooks or HOOKS), "hook_receipts": 3})
+    return out
+
+
+META = [{"live_recall_sha256": "cc33", "settings_hash_changed": False}, {"live_recall_sha256": "cc33", "settings_hash_changed": False}]
+
+
+class Fair6Seeds(unittest.TestCase):
+    def test_seed_file_and_check(self):
+        seeds = [int(x) for x in open(os.path.join(HERE, "seeds-fair6.txt")).read().split()]
+        self.assertEqual(seeds, SEEDS6)
+        self.assertEqual(proof.check_seeds(seeds, HERE, want=6, skip=("seeds-fair6.txt",), skip_kinds=runner.FAIR_KINDS), [])
+        self.assertEqual(fair.seeds6(TH), SEEDS6)
+
+    def test_seeds_are_new_and_used_seeds_are_caught(self):
+        import tempfile
+        used = proof.used_seeds(HERE, skip=("seeds-fair6.txt",), skip_kinds=runner.FAIR_KINDS)
+        self.assertFalse([s for s in SEEDS6 if s in used], used)      # no other seeds file and no run folder holds them
+        d = tempfile.mkdtemp()
+        os.makedirs(os.path.join(d, "results", "r1"))
+        json.dump({"seeds": SEEDS6, "kind": "fair6-step1"}, open(os.path.join(d, "results", "r1", "config.json"), "w"))
+        self.assertEqual(proof.check_seeds(SEEDS6, d, want=6, skip_kinds=runner.FAIR_KINDS), [])      # step 1 and step 2 share them
+        self.assertEqual(len(proof.check_seeds(SEEDS6, d, want=6)), 6)
+        json.dump({"seeds": [4003], "kind": "full"}, open(os.path.join(d, "results", "r1", "config.json"), "w"))
+        self.assertEqual(len(proof.check_seeds(SEEDS6, d, want=6, skip_kinds=runner.FAIR_KINDS)), 1)      # a run of another kind makes a seed used
+        self.assertTrue(proof.check_seeds(SEEDS6[:5], d, want=6))      # the wrong count
+
+    def test_build_cfg_checks_the_seeds(self):
+        import argparse
+        ap = argparse.ArgumentParser()
+        runner.parse_common(ap)
+        cfg = runner.build_cfg("fair6-step1", ap.parse_args(["--dry-run"]))
+        self.assertEqual(cfg["seeds"], SEEDS6)
+        self.assertEqual(runner.build_cfg("fair6-step2", ap.parse_args(["--dry-run"]))["seeds"], SEEDS6)
+        self.assertEqual(runner.build_cfg("fair6-step1", ap.parse_args(["--dry-run", "--seeds", "3"]))["seeds"], SEEDS6[:3])
+        orig = runner.proof.check_seeds
+        try:
+            runner.proof.check_seeds = lambda *a, **k: ["seed 4001 was used before (x)"]      # a used seed stops the preset, as for the fair presets
+            with self.assertRaises(SystemExit) as cm:
+                runner.build_cfg("fair6-step1", ap.parse_args(["--dry-run"]))
+            self.assertIn("seeds must be new", str(cm.exception))
+        finally:
+            runner.proof.check_seeds = orig
+
+
+class Fair6Presets(unittest.TestCase):
+    def test_kinds(self):
+        s1, s2 = runner.KINDS["fair6-step1"], runner.KINDS["fair6-step2"]
+        o1, o2 = runner.KINDS["fair-step1"], runner.KINDS["fair-step2"]
+        self.assertEqual((s1["arms"], s2["arms"]), ("Af,O,Z", "B"))
+        for k in (s1, s2):
+            self.assertEqual((k["model"], k["window"], k["n"], k["seeds"], k["seed_file"], k["conditions"], k["phrasings"], k["probe_design"], k["jobs"]),
+                             ("sonnet", 400000, [10], 6, "seeds-fair6.txt", "compact", "cued,neutral,told", 4, 3))
+            self.assertEqual(k["types"], "R,D,X,S,E,C,M")
+            self.assertTrue(k["fair"] and k["search_used"] and k["selfcheck"])
+        self.assertEqual((s1["budget_usd"], s2["budget_usd"]), (130.0, 110.0))
+        self.assertEqual((s1["cost_basis"], s2["cost_basis"]), ({"Af": 18.20, "O": 0.83, "Z": 0.19}, {"B": 15.95}))
+        for old in (o1, o2):      # the old presets do not change
+            self.assertEqual(old["phrasings"], "cued,neutral")
+            self.assertEqual(old["seeds"], 2)
+            self.assertNotIn("jobs", old)
+        self.assertEqual(runner.KINDS["fair-preflight"]["phrasings"], "cued,neutral,told")      # FR.8.2: the preflight runs told too
+        for k in ("fair6-step1", "fair6-step2"):
+            self.assertIn(k, runner.FAIR_KINDS)
+
+    def test_thresholds_block_is_the_registered_text(self):
+        spec = open(os.path.join(HERE, "SPEC.md"), encoding="utf-8").read()
+        block = spec.split("## FR.8 ")[1].split("```json\n")[1].split("\n```")[0]
+        self.assertEqual(json.loads("{" + block + "}")["fair6"], TH["fair6"])
+        self.assertEqual(TH["version"], 8)
+        self.assertIn("v8 adds the fair6 block, committed before any fair6 data", TH["note"])
+        self.assertEqual((TH["fair"]["min_seeds_b_ge_af"], TH["fair"]["seeds"], TH["fair"]["registered"]), (2, 2, "2026-11-26"))      # the fair block does not change
+
+    def test_run_sh(self):
+        sh = open(os.path.join(HERE, "run.sh")).read()
+        head = sh.split("case")[1].split(")")[0]
+        for k in ("fair6-step1", "fair6-step2"):
+            self.assertIn(k, head)
+            self.assertIn("run.sh " + k, sh)      # usage text
+        self.assertIn('"$cmd" = fair6-step1', sh)      # the stop check runs after step 1
+        self.assertNotIn('"$cmd" = fair6-step2 ]; } && [ "$dry"', sh)      # and never after step 2
+        self.assertEqual(subprocess.run(["bash", "-n", os.path.join(HERE, "run.sh")]).returncode, 0)
+
+    def dry(self, kind, *extra):
+        p = subprocess.run([sys.executable, os.path.join(HERE, "runner.py"), "run", kind, "--dry-run", *extra], capture_output=True, text=True, timeout=120)
+        self.assertEqual(p.returncode, 0, p.stderr[-300:])
+        return p.stdout
+
+    def test_dry_run_step1(self):
+        out = self.dry("fair6-step1")
+        self.assertIn("arms Af,O,Z", out)
+        self.assertIn("phrasings ['cued', 'neutral', 'told']", out)
+        self.assertIn("budget_usd: 130.0", out)
+        self.assertIn("6 seeds", out)
+        total = float(re.search(r"total about \$(\d+)", out).group(1))
+        self.assertLessEqual(total, 130)
+        self.assertAlmostEqual(total, 115, delta=1)      # 6 x (18.20 + 0.83 + 0.19)
+        self.assertIn("ordering", out)
+
+    def test_dry_run_step2(self):
+        out = self.dry("fair6-step2", "--compare", "20261127T000000-fair6-step1")
+        self.assertIn("budget_usd: 110.0", out)
+        self.assertIn("arms B", out)
+        total = float(re.search(r"total about \$(\d+)", out).group(1))
+        self.assertLessEqual(total, 110)
+        self.assertAlmostEqual(total, 96, delta=1)      # 6 x 15.95
+
+    def test_dry_run_step2_without_compare_prints_the_estimate_but_a_real_run_needs_it(self):
+        import argparse
+        ap = argparse.ArgumentParser()
+        runner.parse_common(ap)
+        with self.assertRaises(SystemExit) as cm:
+            runner.build_cfg("fair6-step2", ap.parse_args([]))
+        self.assertIn("--compare", str(cm.exception))
+
+    def test_default_jobs_is_3_and_the_old_default_is_kept(self):
+        import argparse
+        ap = argparse.ArgumentParser()
+        runner.parse_common(ap)
+        self.assertEqual(runner.build_cfg("fair6-step1", ap.parse_args(["--dry-run"]))["jobs"], 3)
+        self.assertEqual(runner.build_cfg("fair6-step1", ap.parse_args(["--dry-run", "--jobs", "1"]))["jobs"], 1)
+        self.assertEqual(runner.build_cfg("fair-step1", ap.parse_args(["--dry-run"]))["jobs"], 2)
+        cfg = runner.build_cfg("fair6-step1", ap.parse_args(["--dry-run"]))
+        self.assertEqual((cfg["budget_usd"], cfg["n"], cfg["arms"], cfg["phrasings"]), (130.0, [10], ["Af", "O", "Z"], ["cued", "neutral", "told"]))
+        self.assertTrue(cfg["fair"])
+
+
+class Fair6Prompts(unittest.TestCase):
+    """FR.8.6: told = the cued head plus one sentence. The cued and neutral prompts stay byte-identical to before (hashes made with the code of main, before this change)."""
+    GOLD = {4001: "15190928bcd3da2724a702ebe6ebf63864d595f37700c1425481255d986c26f2", 4002: "68183488206f4cf5c4022fa62ae56f427c9dfe9edab449a9dc714be1f6ce9be9"}
+
+    def prompts(self, seed, phrasing, cue=True):
+        import gen
+        sc = gen.build(seed)
+        out = {}
+        for t in "RDXSECM":
+            if phrasing == "neutral" and t not in gen.NEUTRAL_TYPES:
+                continue
+            items = gen.select(sc, t, None)
+            out[t] = gen.probe_prompt(t, sc, "PROBE-%d-Af-10-%s%s" % (seed, t, {"neutral": "n", "told": "t"}.get(phrasing, "")), 10, items=items, phrasing=phrasing, cue=cue)
+        return out
+
+    def test_cued_and_neutral_are_byte_identical_to_before(self):
+        import hashlib
+        for seed, want in self.GOLD.items():
+            h = hashlib.sha256()
+            for t in "RDXSECM":
+                for ph in ("cued", "neutral"):
+                    p = self.prompts(seed, ph).get(t)
+                    if p is None:
+                        continue
+                    marker = "PROBE-%d-Af-10-%s%s" % (seed, t, "n" if ph == "neutral" else "")
+                    self.assertTrue(p.startswith("[%s]" % marker))
+                    h.update(p.encode() + b"\x00")
+            self.assertEqual(h.hexdigest(), want, seed)
+
+    def test_cued_and_neutral_literal_text(self):
+        import gen
+        sc = {"items": {"R": [{"id": 1, "question": "What is the tag?"}]}}
+        self.assertEqual(gen.probe_prompt("R", sc, "M1", 10, items=sc["items"]["R"], phrasing="cued", cue=True),
+                         "[M1] Answer from this session's history only. Do not guess. I told you these values earlier, so remember them.\n"
+                         '1. What is the tag?\nReply with JSON only, in this form: {"answers":[{"id":1,"answer":"..."}]}')
+        self.assertEqual(gen.probe_prompt("R", sc, "M1", 10, items=sc["items"]["R"], phrasing="cued", cue=False),
+                         "[M1] Answer from this session's history only. Do not guess.\n"
+                         '1. What is the tag?\nReply with JSON only, in this form: {"answers":[{"id":1,"answer":"..."}]}')
+
+    def test_told_is_the_cued_head_plus_the_sentence(self):
+        import gen
+        sentence = " If a value is not in your context, search the transcript files of this session before you answer."
+        self.assertEqual(gen.TOLD_SENTENCE, sentence)
+        for seed in (4001, 4002):
+            cued, told = self.prompts(seed, "cued"), self.prompts(seed, "told")
+            self.assertEqual(set(cued), set("RDXSECM"))
+            self.assertEqual(set(told), set("RDXSECM"))      # every type, as cued: the same items for all four arms
+            for t in cued:
+                c = cued[t].replace("-%s]" % t, "-%st]" % t, 1)      # only the marker differs: the told marker ends in t
+                self.assertEqual(told[t].count(sentence), 1)
+                self.assertEqual(told[t].replace(sentence, "", 1), c, t)
+                head = told[t].split("\n")[0]
+                self.assertTrue(head.endswith("remember them." + sentence), head)      # the sentence ends the cued head
+
+    def test_told_has_no_neutral_phrasing_for_c_and_m_and_uses_all_25_items(self):
+        import gen
+        sc = gen.build(4001)
+        n = sum(len(gen.select(sc, t, None)) for t in "RDXSECM")
+        self.assertEqual(n, 25)
+
+    def test_probe_plan_and_order(self):
+        cfg = {"phrasings": ["cued", "neutral", "told"]}
+        for t in "RDXSECM":
+            self.assertIn("told", runner.probe_plan(cfg, t))
+            self.assertEqual(runner.probe_plan(cfg, t)[0], "cued")
+        self.assertEqual(runner.probe_plan(cfg, "C"), ["cued", "told"])
+        self.assertEqual(runner.probe_plan(cfg, "R"), ["cued", "neutral", "told"])
+        order = runner.probe_order(cfg, list("RDXSECM"))
+        phs = [p for _t, p in order]
+        self.assertEqual(phs.index("told"), len([p for p in phs if p != "told"]))      # told forks come after every cued and neutral fork
+        self.assertEqual(phs[phs.index("told"):], ["told"] * 7)
+        self.assertEqual([x for x in order if x[1] != "told"][:3], [("R", "cued"), ("R", "neutral"), ("D", "cued")])
+        old = {"phrasings": ["cued", "neutral"]}
+        self.assertEqual(runner.probe_order(old, list("RDXSECM")), [(t, ph) for t in "RDXSECM" for ph in runner.probe_plan(old, t)])      # no told: the old order
+        self.assertEqual(runner.probe_order({}, ["R", "C"]), [("R", "cued"), ("C", "cued")])
+
+    def test_told_has_its_own_fork_key_and_marker(self):
+        keys = {runner.fork_key(10, "R", ph) for ph in ("cued", "neutral", "told")}
+        self.assertEqual(len(keys), 3)
+        self.assertEqual(runner.fork_key(10, "R", "cued"), "10:R")      # the old key does not change
+        self.assertEqual(runner.fork_key(10, "R", "neutral"), "10:R:neutral")
+        self.assertIn('"told": "t"', open(os.path.join(HERE, "runner.py")).read())
+
+    def test_told_runs_through_probe(self):
+        import tempfile
+        t = Reprobe("test_fallback_takes_the_last_parsable_assistant_message")
+        root = tempfile.mkdtemp()
+        ctx, ss = t.session(root)
+        seen = {}
+        ss.transcript = lambda sid: os.path.join(root, "none.jsonl")
+        ss.call = lambda prompt, *a, **k: (seen.update(prompt=prompt) or {"result": "{}", "session_id": "f1", "usage": {}, "_delta": 0.1, "permission_denials": []})
+        ss.probe("R", 10, fork_of="main-sid", phrasing="told")
+        self.assertIn("search the transcript files of this session", seen["prompt"])
+        self.assertTrue(seen["prompt"].startswith("[PROBE-3002-Af-10-Rt]"))
+        rows = runner.read_jsonl(os.path.join(ctx.dir, "results.jsonl"))
+        self.assertTrue(rows and all(r["phrasing"] == "told" for r in rows))
+        self.assertIn("10:R:told", ss.st["done_forks"])
+
+
+class Fair6Rule(unittest.TestCase):
+    def v(self, rows, sess=None, meta=META, old_rows=None):
+        return fair.verdict6(rows, sess if sess is not None else sessions6(), TH, meta=meta, old_rows=old_rows)
+
+    def test_sign_flip_p(self):
+        from fractions import Fraction as F
+        self.assertEqual(fair.sign_flip_p([F(1, 25)] * 6), F(1, 64))      # 6 of 6: the smallest p
+        self.assertEqual(fair.sign_flip_p([F(1)] * 6), F(1, 64))
+        self.assertEqual(fair.sign_flip_p([F(7, 25)] * 5 + [F(-1, 25)]), F(2, 64))      # 5 of 6
+        self.assertEqual(fair.sign_flip_p([F(0)] * 6), F(1))      # all ties: every pattern counts
+        self.assertEqual(fair.sign_flip_p([F(-1, 25)] * 6), F(1))      # all negative: p = 1
+        self.assertEqual(fair.sign_flip_p([F(1)] * 8), F(1, 256))      # the pooled 8 seeds: 256 patterns
+        self.assertIsNone(fair.sign_flip_p([]))
+
+    def test_pass(self):
+        v = self.v(make6(af=(15,) * 6, b=(22,) * 6))
+        self.assertEqual(v["verdict"], "PASS", v["gates"])
+        p = v["primary"]
+        self.assertEqual((p["af"], p["b"], p["k"]), ((90, 150), (132, 150), 6))
+        self.assertAlmostEqual(p["gain_points"], 28.0, places=3)
+        from fractions import Fraction as F
+        self.assertEqual(p["p"], F(1, 64))      # 6 of 6
+        self.assertIsNone(p["note"])
+
+    def test_pass_with_5_of_6_seeds(self):
+        v = self.v(make6(af=(15,) * 6, b=(22, 22, 22, 22, 22, 14)))
+        from fractions import Fraction as F
+        self.assertEqual((v["primary"]["k"], v["primary"]["p"]), (5, F(2, 64)))
+        self.assertGreaterEqual(v["primary"]["gain_points"], 15)
+        self.assertEqual(v["verdict"], "PASS")
+
+    def test_4_of_6_seeds_is_not_a_pass(self):
+        v = self.v(make6(af=(15,) * 6, b=(24, 24, 24, 24, 12, 12)))      # G = 20 points, k = 4: not PASS, not FAIL
+        self.assertEqual((v["primary"]["k"], v["verdict"]), (4, NO_CLEAR_6))
+
+    def test_fail_when_the_gain_is_under_5_points(self):
+        v = self.v(make6(af=(20,) * 6, b=(21,) * 6))      # G = 4.0
+        self.assertEqual(v["verdict"], "FAIL")
+        self.assertAlmostEqual(v["primary"]["gain_points"], 4.0, places=3)
+
+    def test_fail_when_b_is_ahead_in_3_seeds_or_fewer(self):
+        v = self.v(make6(af=(15,) * 6, b=(24, 24, 24, 10, 10, 10)))      # G = 8 points, k = 3
+        self.assertEqual((v["primary"]["k"], v["verdict"]), (3, "FAIL"))
+        v = self.v(make6(af=(10,) * 6, b=(25, 25, 25, 9, 9, 9)))      # G is 30 points, but k = 3: FAIL
+        self.assertGreaterEqual(v["primary"]["gain_points"], 15)
+        self.assertEqual(v["verdict"], "FAIL")
+
+    def test_no_clear_difference_and_the_extra_line(self):
+        v = self.v(make6(af=(15,) * 6, b=(18,) * 6))      # G = 12, k = 6, p = 1/64
+        self.assertEqual(v["verdict"], NO_CLEAR_6)
+        self.assertEqual(v["primary"]["note"], "gain of 12.0 points, below the registered 15")
+        md, _ = fair.section6(make6(af=(15,) * 6, b=(18,) * 6), sessions6(), CFG, TH, meta=META)
+        text = "\n".join(md)
+        self.assertIn("Primary: no clear difference.", text)
+        self.assertIn("gain of 12.0 points, below the registered 15", text)
+
+    def test_no_extra_line_when_p_is_above_0_05(self):
+        v = self.v(make6(af=(15,) * 6, b=(20, 20, 20, 14, 14, 20)))      # k = 4, G = 11.3, p > 0.05
+        self.assertEqual(v["verdict"], NO_CLEAR_6)
+        self.assertGreater(float(v["primary"]["p"]), 0.05)
+        self.assertIsNone(v["primary"]["note"])
+
+    def test_just_above_and_below_15_points(self):
+        v = self.v(make6(af=(16,) * 6, b=(20, 20, 20, 20, 20, 19)))      # (119 - 96) / 150 = 15.33 points
+        self.assertAlmostEqual(v["primary"]["gain_points"], 15.333333, places=5)
+        self.assertEqual(v["verdict"], "PASS")
+        v = self.v(make6(af=(16,) * 6, b=(19, 19, 19, 19, 19, 19)))      # (114 - 96) / 150 = 12 points
+        self.assertEqual(v["verdict"], NO_CLEAR_6)
+
+    def test_exactly_15_points_passes(self):
+        th = fair.th6(TH)
+        rows = []
+        for s in SEEDS6:      # 20 questions each for the test: Af 12 of 20, B 15 of 20 = exactly 15 points
+            for arm, k in (("Af", 12), ("B", 15)):
+                rows += [row6(s, arm, "R", i, i <= k, "cued") for i in range(1, 21)]
+        r = fair.rule6(rows, th, "cued", SEEDS6)
+        self.assertEqual(r["gain_points"], 15.0)
+        self.assertEqual(r["cls"], "PASS")
+
+    def test_secondary_results_never_change_the_verdict(self):
+        rows = make6(af=(15,) * 6, b=(22,) * 6, neutral=((24,) * 6, (10,) * 6), told=((24,) * 6, (10,) * 6))      # neutral and told say B is far behind
+        v = self.v(rows)
+        self.assertEqual(v["verdict"], "PASS")
+        self.assertEqual(v["secondary"]["neutral"]["cls"], "FAIL")
+        self.assertEqual(v["secondary"]["told"]["cls"], "FAIL")
+        self.assertEqual(v["secondary"]["told"]["af"], (144, 150))
+
+    def test_pooled8_is_secondary_and_has_256_patterns(self):
+        old = []
+        for s in (3001, 3002):
+            for arm, k in (("Af", 15), ("B", 22)):
+                n = 0
+                for t, cnt in PER_TYPE.items():
+                    for i in range(1, cnt + 1):
+                        n += 1
+                        old.append(row6(s, arm, t, i, n <= k, "cued"))
+        v = self.v(make6(), old_rows=old)
+        from fractions import Fraction as F
+        self.assertEqual(v["pooled8"]["seeds"], [3001, 3002] + SEEDS6)
+        self.assertEqual((v["pooled8"]["af"], v["pooled8"]["p"]), ((120, 200), F(1, 256)))
+        self.assertEqual(v["primary"]["af"], (90, 150))      # the primary rule uses the 6 new seeds only
+        md, _ = fair.section6(make6(), sessions6(), CFG, TH, meta=META, old_rows=old)
+        self.assertIn("not confirmatory: 2 of these seeds set the plan; other LH commit", "\n".join(md))
+        self.assertIsNone(self.v(make6())["pooled8"])
+
+    def test_bootstrap_is_fixed_and_not_a_gate(self):
+        v1, v2 = self.v(make6()), self.v(make6())
+        self.assertEqual(v1["bootstrap"], v2["bootstrap"])      # the same rng seed, the same interval
+        lo, hi = v1["bootstrap"]
+        self.assertAlmostEqual(lo, 28.0, places=3)      # every seed has the same difference
+        self.assertAlmostEqual(hi, 28.0, places=3)
+        b = fair.bootstrap6(v1["primary"], dict(fair.th6(TH), bootstrap_rng_seed=1))
+        self.assertIsNotNone(b)
+        self.assertFalse(TH["fair6"]["bootstrap_is_gate"])
+        v = self.v(make6(af=(15,) * 6, b=(24, 24, 24, 24, 14, 14)))
+        self.assertLess(v["bootstrap"][0], v["bootstrap"][1])
+        self.assertEqual(v["bootstrap"], fair.bootstrap6(v["primary"], fair.th6(TH)))
+        text = "\n".join(fair.section6(make6(af=(15,) * 6, b=(24, 24, 24, 24, 14, 14)), sessions6(), CFG, TH, meta=META)[0])
+        self.assertIn("6 seeds: this interval is too narrow; description only", text)
+        self.assertIn("10000 draws, rng seed 20261127", text)
+
+    def test_step1_alone_is_incomplete(self):
+        v = self.v(make6(with_b=False), sessions6(with_b=False))
+        self.assertEqual(v["verdict"], "INCOMPLETE")
+        self.assertEqual(v["primary"]["af"], (90, 150))
+        self.assertIsNone(v["bootstrap"])
+
+
+NO_CLEAR_6 = "NO CLEAR DIFFERENCE"
+
+
+class Fair6Stop(unittest.TestCase):
+    def test_stop_at_128_and_not_at_127(self):
+        s127 = make6(af=(22, 21, 21, 21, 21, 21), with_b=False)      # 127 of 150: 23 errors
+        s128 = make6(af=(22, 22, 21, 21, 21, 21), with_b=False)      # 128 of 150: 22 errors
+        stop, x, y = fair.stop_rule6(s127, TH)
+        self.assertEqual((stop, x, y), (False, 127, 150))
+        stop, x, y = fair.stop_rule6(s128, TH)
+        self.assertEqual((stop, x, y), (True, 128, 150))
+        self.assertEqual(fair.STOP6_FMT % (x, y), "STOP: plain Claude Code with search scores 128/150; the primary rule cannot pass")
+
+    def test_stop_uses_the_hinted_probes_only(self):
+        rows = make6(af=(5,) * 6, neutral=((25,) * 6, (25,) * 6), told=((25,) * 6, (25,) * 6), with_b=False)
+        self.assertFalse(fair.stop_rule6(rows, TH)[0])
+
+    def test_stop_line_is_in_the_summary_of_step1(self):
+        md, v = fair.section6(make6(af=(22, 22, 21, 21, 21, 21), with_b=False), sessions6(with_b=False), CFG, TH, meta=META[:1])
+        text = "\n".join(md)
+        self.assertIn("STOP: plain Claude Code with search scores 128/150; the primary rule cannot pass", text)
+        self.assertIn("INCOMPLETE", text)
+
+    def test_stop_check_command_reads_the_fair6_run(self):
+        import io, contextlib, tempfile
+        root = tempfile.mkdtemp()
+        rd = os.path.join(root, "fx")
+        os.makedirs(rd)
+        json.dump({"kind": "fair6-step1", "seeds": SEEDS6}, open(os.path.join(rd, "config.json"), "w"))
+        open(os.path.join(rd, "results.jsonl"), "w").write("\n".join(json.dumps(r) for r in make6(af=(22, 22, 21, 21, 21, 21), with_b=False)) + "\n")
+        open(os.path.join(rd, "sessions.jsonl"), "w").write("")
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = fair.main(["stop-check", rd])
+        self.assertEqual(rc, 0)
+        self.assertIn("STOP: plain Claude Code with search scores 128/150; the primary rule cannot pass", buf.getvalue())
+        open(os.path.join(rd, "results.jsonl"), "w").write("\n".join(json.dumps(r) for r in make6(af=(22, 21, 21, 21, 21, 21), with_b=False)) + "\n")
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            fair.main(["stop-check", rd])
+        self.assertNotIn("STOP", buf.getvalue())
+        self.assertIn("127/150", buf.getvalue())
+
+
+class Fair6Gates(unittest.TestCase):
+    def v(self, rows=None, sess=None, meta=META):
+        return fair.verdict6(rows if rows is not None else make6(), sess if sess is not None else sessions6(), TH, meta=meta)
+
+    def invalid(self, v, name):
+        self.assertEqual(v["verdict"], "INVALID", v["gates"])
+        self.assertTrue(any(name in g for g in v["invalid_gates"]), (name, v["invalid_gates"]))
+
+    def test_all_gates_pass_on_clean_data(self):
+        v = self.v()
+        self.assertEqual(v["invalid_gates"], [])
+        self.assertEqual(v["verdict"], "PASS")
+        names = " | ".join(g["gate"] for g in v["gates"])
+        for n in ("Oracle", "Amnesia", "Parse rate", "real compactions", "Denied reads", "another arm", "Every seed has", "One claude_version", "One hook sha256", "No live install"):
+            self.assertIn(n, names)
+
+    def test_the_fr4_gates_still_apply(self):
+        self.invalid(self.v(make6(o=0.9)), "Oracle")
+        self.invalid(self.v(make6(z=0.12)), "Amnesia")
+        sess = sessions6()
+        sess[0] = dict(sess[0], boundaries=9)
+        self.invalid(self.v(sess=sess), "real compactions")
+        sess = sessions6()
+        sess[0] = dict(sess[0], af_reads={"own_ok": 0, "own_denied": 1, "other": [], "calls": 3})
+        self.invalid(self.v(sess=sess), "Denied reads")
+        sess = sessions6()
+        sess[0] = dict(sess[0], af_reads={"own_ok": 1, "own_denied": 0, "other": ["Bash cat /x/lhbench-r-s4001-B/a.jsonl"], "calls": 3})
+        self.invalid(self.v(sess=sess), "another arm")
+        rows = make6()
+        for r in [x for x in rows if x["arm"] == "Af" and x["seed"] == 4001][:10]:
+            r["parse_ok"] = False
+        self.invalid(self.v(rows), "Parse rate, arm Af")
+
+    def test_a_seed_without_arm_o_rows(self):
+        rows = [r for r in make6() if not (r["arm"] == "O" and r["seed"] == 4003)]
+        self.invalid(self.v(rows), "Every seed has")
+
+    def test_a_seed_without_z_af_or_b_rows(self):
+        for arm in ("Z", "Af", "B"):
+            rows = [r for r in make6() if not (r["arm"] == arm and r["seed"] == 4006)]
+            self.invalid(self.v(rows), "Every seed has")
+
+    def test_o_and_z_must_run_on_all_6_seeds(self):
+        rows = [r for r in make6() if not (r["arm"] in ("O", "Z") and r["seed"] in (4005, 4006))]
+        v = self.v(rows)
+        self.invalid(v, "Every seed has")
+        self.assertIn("s4005-O", [g for g in v["gates"] if g["gate"].startswith("Every seed")][0]["measured"])
+
+    def test_two_claude_versions(self):
+        sess = sessions6()
+        sess[3] = dict(sess[3], claude_version="2.1.1")
+        self.invalid(self.v(sess=sess), "claude_version")
+        rows = make6()
+        rows[-1] = dict(rows[-1], claude_version="2.0.9")
+        self.invalid(self.v(rows), "claude_version")
+
+    def test_no_claude_version_is_no_data_not_a_pass(self):
+        rows = [dict(r, claude_version=None) for r in make6()]
+        sess = [dict(s, claude_version=None) for s in sessions6()]
+        v = self.v(rows, sess)
+        self.assertEqual(v["verdict"], "INVALID")
+        self.assertEqual([g["result"] for g in v["gates"] if g["gate"].startswith("One claude_version")], ["NO DATA"])
+
+    def test_two_hook_hashes_in_arm_b(self):
+        sess = sessions6()
+        i = [k for k, s in enumerate(sess) if s["arm"] == "B"][2]
+        sess[i] = dict(sess[i], hook_sha256={"precompact-handoff.py": "aa11", "recall.py": "CHANGED"})
+        self.invalid(self.v(sess=sess), "hook sha256")
+
+    def test_missing_hook_hash_in_arm_b(self):
+        sess = sessions6()
+        i = [k for k, s in enumerate(sess) if s["arm"] == "B"][0]
+        sess[i] = dict(sess[i], hook_sha256=None)
+        self.invalid(self.v(sess=sess), "hook sha256")
+
+    def test_live_install_between_the_steps(self):
+        self.invalid(self.v(meta=[{"live_recall_sha256": "cc33", "settings_hash_changed": False}, {"live_recall_sha256": "dd44", "settings_hash_changed": False}]), "No live install")
+        self.invalid(self.v(meta=[{"live_recall_sha256": "cc33", "settings_hash_changed": False}, {"live_recall_sha256": "cc33", "settings_hash_changed": True}]), "No live install")
+        self.invalid(self.v(meta=None), "No live install")
+        self.invalid(self.v(meta=[{"live_recall_sha256": None, "settings_hash_changed": False}]), "No live install")
+
+    def test_a_row_that_does_not_parse_counts_as_wrong(self):
+        rows = make6()
+        r = [x for x in rows if x["arm"] == "B" and x["phrasing"] == "cued" and x["correct"]][0]
+        r.update(parse_ok=False, correct=False)      # the grader sets correct False for a row that does not parse, also after the FR.7 fallback
+        b = fair.rule6(rows, fair.th6(TH), "cued", SEEDS6)["b"]
+        self.assertEqual(b, (131, 150))      # still 150 questions: the row counts as wrong, it is not dropped
+
+    def test_reprobe_only_a_harness_parse_failure_one_time(self):
+        import argparse, tempfile
+        ap = argparse.ArgumentParser()
+        runner.parse_common(ap)
+        cfg = runner.build_cfg("fair6-step1", ap.parse_args(["--dry-run"]))
+        cfg["run_id"] = "fx-r6"
+        root = tempfile.mkdtemp()
+
+        def plan(rows):
+            open(os.path.join(root, "results.jsonl"), "w").write("\n".join(json.dumps(r) for r in rows) + "\n")
+            return runner.reprobe_plan(root, cfg, {"sessions": {"s4001-Af": {"sid": "m1"}}}, 4001, "Af", "E", "cued")
+
+        fails = [row6(4001, "Af", "E", i, False, "cued", parse_ok=False) for i in range(1, 5)]
+        self.assertEqual(plan(fails)[2], 10)      # a harness parse failure: allowed
+        wrong = [row6(4001, "Af", "E", i, False, "cued", parse_ok=True) for i in range(1, 5)]
+        with self.assertRaises(runner.Fatal) as cm:
+            plan(wrong)
+        self.assertIn("wrong answer", str(cm.exception))
+        again = [dict(r, reprobe=True) for r in fails]
+        with self.assertRaises(runner.Fatal) as cm:
+            plan(again)
+        self.assertIn("one time", str(cm.exception))
+        old = runner.build_cfg("fair-step1", ap.parse_args(["--dry-run"]))      # the old presets keep the old rule
+        old["run_id"] = "fx-old"
+        open(os.path.join(root, "results.jsonl"), "w").write("\n".join(json.dumps(r) for r in wrong) + "\n")
+        self.assertEqual(runner.reprobe_plan(root, old, {"sessions": {"s4001-Af": {"sid": "m1"}}}, 4001, "Af", "E", "cued")[2], 10)
+
+
+class Fair6Report(unittest.TestCase):
+    def text(self, rows, sess=None, **kw):
+        md, _v = fair.section6(rows, sess if sess is not None else sessions6(), CFG, TH, meta=kw.pop("meta", META), **kw)
+        return "\n".join(md)
+
+    def test_fr5_wording_with_6_new_seeds(self):
+        t = self.text(make6(af=(15,) * 6, b=(22,) * 6))
+        self.assertIn("Small test: 6 new seeds, 150 hinted questions, Sonnet, 10 compactions. Plain Claude Code that can search its own transcripts: 90 of 150. "
+                      "Lossless Handoff: 132 of 150.", t)
+        self.assertIn("B minus Af: +28.0 points. Seeds with B >= Af: 6 of 6. Exact one-sided sign-flip p: 1/64 = 0.0156 (64 patterns).", t)
+        self.assertIn("Verdict (primary rule, 6 new seeds, hinted probes, N=10): PASS.", t)
+
+    def test_never_says_validated_or_proof(self):
+        for rows in (make6(), make6(af=(20,) * 6, b=(21,) * 6), make6(af=(15,) * 6, b=(18,) * 6), make6(o=0.5), make6(with_b=False), make6(af=(24,) * 6, b=(24,) * 6)):
+            t = self.text(rows).lower()
+            self.assertNotIn("validated", t)
+            self.assertNotIn("proof", t)
+
+    def test_told_line_and_the_no_instruction_note(self):
+        t = self.text(make6(af=(15,) * 6, b=(22,) * 6, told=((13,) * 6, (24,) * 6)))
+        self.assertIn("When the prompt tells plain Claude Code to search: 78 of 150. Lossless Handoff: 144 of 150.", t)
+        self.assertNotIn("The gain is that no instruction is necessary.", t)
+        t = self.text(make6(af=(15,) * 6, b=(22,) * 6, told=((23,) * 6, (24,) * 6)))      # told Af 138 of 150 = 92%
+        self.assertIn("When the prompt tells plain Claude Code to search: 138 of 150. Lossless Handoff: 144 of 150.", t)
+        self.assertIn("The gain is that no instruction is necessary.", t)
+        t = self.text(make6(af=(15,) * 6, b=(22,) * 6, told=((22,) * 6, (24,) * 6)))      # 132 of 150 = 88%: no note
+        self.assertNotIn("The gain is that no instruction is necessary.", t)
+        edge = self.text(make6(af=(15,) * 6, b=(22,) * 6, told=((23, 22, 22, 22, 23, 23), (24,) * 6)))      # 135 of 150 = 90% exactly: the note
+        self.assertIn("The gain is that no instruction is necessary.", edge)
+
+    def test_search_rate_and_accuracy_with_and_without_a_lookup(self):
+        rows = make6(lookup={"cued": True, "neutral": False, "told": True})
+        v = fair.verdict6(rows, sessions6(), TH, meta=META)
+        s = v["search"]
+        self.assertEqual((s["cued"]["searched"], s["cued"]["forks"]), (150, 150))      # every Af fork of the fixture searched
+        self.assertEqual(s["neutral"]["searched"], 0)
+        self.assertEqual(s["neutral"]["with"], (0, 0))
+        self.assertEqual(s["neutral"]["without"][1], 150)
+        self.assertEqual(s["cued"]["with"], (90, 150))
+        # a mixed fork set: half of the Af rows of cued searched, the half that searched are right
+        rows = make6(af=(15,) * 6)
+        for r in rows:
+            if r["arm"] == "Af" and r["phrasing"] == "cued":
+                r["used_lookup"] = bool(r["correct"])
+        s = fair.verdict6(rows, sessions6(), TH, meta=META)["search"]["cued"]
+        self.assertEqual((s["with"], s["without"]), ((90, 90), (0, 60)))
+        t = self.text(rows)
+        self.assertIn("Af search rate", t)
+        self.assertIn("Forks that searched", t)
+
+    def test_types_apart_are_counts_only(self):
+        v = fair.verdict6(make6(), sessions6(), TH, meta=META)
+        self.assertEqual(set(v["types"]), {"S and E", "R D X C M"})
+        self.assertEqual(v["types"]["S and E"]["told"]["Af"][1], 48)      # 2 types x 4 items x 6 seeds
+        self.assertEqual(v["types"]["R D X C M"]["cued"]["B"][1], 102)      # (4+4+4+4+1) x 6 seeds
+        self.assertEqual(set(v["types"]["S and E"]), {"cued", "neutral", "told"})
+
+    def test_report_build_for_step1_then_step2(self):
+        import tempfile
+        import argparse
+        import report
+        root = tempfile.mkdtemp()
+        old = report.RESULTS
+        report.RESULTS = root
+        try:
+            all_rows, all_sess = make6(), sessions6()
+
+            def make_run(kind, rows, sess, compare=None):
+                ap = argparse.ArgumentParser()
+                runner.parse_common(ap)
+                cfg = runner.build_cfg(kind, ap.parse_args(["--dry-run"] + (["--compare", compare] if compare else [])))
+                cfg["run_id"] = "fx-" + kind
+                cfg["live_recall_sha256"] = "cc33"
+                rd = os.path.join(root, cfg["run_id"])
+                os.makedirs(rd)
+                json.dump(cfg, open(os.path.join(rd, "config.json"), "w"))
+                json.dump({"spent": 1.0, "status": "done", "sessions": {}}, open(os.path.join(rd, "state.json"), "w"))
+                open(os.path.join(rd, "results.jsonl"), "w").write("\n".join(json.dumps(r) for r in rows) + "\n")
+                open(os.path.join(rd, "sessions.jsonl"), "w").write("\n".join(json.dumps(dict({"turns": 50, "cost_usd": 1.0, "missed": [], "status": "done"}, **s)) for s in sess) + "\n")
+                open(os.path.join(rd, "calls.jsonl"), "w").write("")
+                return cfg["run_id"]
+
+            step1 = make_run("fair6-step1", [r for r in all_rows if r["arm"] != "B"], [s for s in all_sess if s["arm"] != "B"])
+            out, text = report.build(step1)
+            self.assertIn("## Fair replication (6 seeds)", text)
+            self.assertIn("INCOMPLETE", text)
+            json.dumps(out, default=str)
+            step2 = make_run("fair6-step2", [dict(r, run="r2") for r in all_rows if r["arm"] == "B"], [s for s in all_sess if s["arm"] == "B"], compare=step1)
+            out2, text2 = report.build(step2)
+            self.assertIn("Verdict (primary rule, 6 new seeds, hinted probes, N=10): PASS", text2)
+            self.assertIn("Lossless Handoff: 132 of 150", text2)
+            self.assertNotIn("validated", text2.lower())
+            self.assertEqual(out2["fair6"]["verdict"], "PASS")
+        finally:
+            report.RESULTS = old
+
+
 def inspect_src(mod):
     import inspect
     return inspect.getsource(mod)

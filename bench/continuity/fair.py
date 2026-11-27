@@ -11,7 +11,8 @@ This module holds the logic that makes no model call:
 
 Usage: fair.py preflight-check <run-id> | stop-check <run-id>
 """
-import json, os, re, sys
+import json, math, os, random, re, sys
+from fractions import Fraction
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 TYPES = ["R", "D", "X", "S", "E", "C", "M"]
@@ -281,6 +282,249 @@ def section(rows, sessions, cfg, th_all):
     return lines, v
 
 
+# ---- FR.8: the 6-seed confirmatory replication (SPEC.md FR.8, thresholds.json block "fair6"). The fair code above does not change.
+
+STOP6_FMT = "STOP: plain Claude Code with search scores %d/%d; the primary rule cannot pass"
+TOLD_LINE = "When the prompt tells plain Claude Code to search: %d of %d. Lossless Handoff: %d of %d."
+TOLD_NOTE = "The gain is that no instruction is necessary."
+BOOT_LABEL = "6 seeds: this interval is too narrow; description only"
+POOLED_LABEL = "not confirmatory: 2 of these seeds set the plan; other LH commit"
+OLD_SEEDS = (3001, 3002)
+NO_CLEAR = "NO CLEAR DIFFERENCE"
+PHRASINGS6 = ("cued", "neutral", "told")
+
+
+def th6(th_all):
+    """The fair6 block with the keys of the fair block that it does not repeat (the FR.4 gates read denied_own_reads_max and other_arm_reads_max)."""
+    return dict(th_all["fair"], **th_all["fair6"])
+
+
+def seeds6(th_all, here=HERE):
+    """The 6 new seeds, from the seed file of the fair6 block."""
+    with open(os.path.join(here, th_all["fair6"]["seed_file"])) as f:
+        return [int(x) for x in f.read().split()]
+
+
+def sign_flip_p(diffs):
+    """Exact one-sided sign-flip test on the mean of the per-seed differences: the share of all 2^n sign patterns whose mean is >= the observed mean.
+    No random numbers. diffs are Fractions, so a tie is exact. Returns a Fraction (the smallest value is 1/2^n)."""
+    n = len(diffs)
+    if not n:
+        return None
+    obs = sum(diffs)
+    hit = 0
+    for mask in range(1 << n):
+        if sum((d if (mask >> i) & 1 else -d) for i, d in enumerate(diffs)) >= obs:
+            hit += 1
+    return Fraction(hit, 1 << n)
+
+
+def rule6(rows, th, phrasing, seeds):
+    """The FR.8.3 statistics for one phrasing on the given seeds: pooled counts, G (points), k, exact p, and the class PASS, FAIL or NO CLEAR DIFFERENCE.
+    Returns ok None (class None) when a seed has no Af or no B rows."""
+    n = th["n"]
+    per = {s: {"af": _acc(rows, "Af", phrasing, TYPES, n, s), "b": _acc(rows, "B", phrasing, TYPES, n, s)} for s in seeds}
+    af = (sum(v["af"][0] for v in per.values()), sum(v["af"][1] for v in per.values()))
+    b = (sum(v["b"][0] for v in per.values()), sum(v["b"][1] for v in per.values()))
+    out = {"phrasing": phrasing, "af": af, "b": b, "per_seed": per, "seeds": list(seeds), "gain_points": None, "k": None, "p": None, "cls": None, "note": None}
+    if not seeds or any(not v["af"][1] or not v["b"][1] for v in per.values()):
+        return out
+    diffs = [Fraction(v["b"][0], v["b"][1]) - Fraction(v["af"][0], v["af"][1]) for v in per.values()]
+    out["gain_points"] = round(100 * (b[0] / b[1] - af[0] / af[1]), 6)      # rounded: exactly 15.0 points must pass
+    out["k"] = sum(1 for d in diffs if d >= 0)
+    out["p"] = sign_flip_p(diffs)
+    g, k, p = out["gain_points"], out["k"], float(out["p"])
+    if g >= th["min_gain_points"] and p <= th["p_max"] and k >= th["min_seeds_b_ge_af"]:
+        out["cls"] = "PASS"
+    elif g < th["fail_below_points"] or k <= th["fail_max_seeds_b_ge_af"]:
+        out["cls"] = "FAIL"
+    else:
+        out["cls"] = NO_CLEAR
+        if p <= th["p_max"]:
+            out["note"] = "gain of %.1f points, below the registered %d" % (g, th["min_gain_points"])
+    return out
+
+
+def bootstrap6(rule, th):
+    """95% percentile bootstrap interval of G over seeds (description only, never a gate). 10000 draws, fixed rng seed. None without data."""
+    per, seeds = rule["per_seed"], rule["seeds"]
+    if rule["gain_points"] is None:
+        return None
+    rng = random.Random(th["bootstrap_rng_seed"])
+    gains = []
+    for _ in range(th["bootstrap_draws"]):
+        pick = [seeds[rng.randrange(len(seeds))] for _ in seeds]
+        ca, ta = sum(per[s]["af"][0] for s in pick), sum(per[s]["af"][1] for s in pick)
+        cb, tb = sum(per[s]["b"][0] for s in pick), sum(per[s]["b"][1] for s in pick)
+        if ta and tb:
+            gains.append(100 * (cb / tb - ca / ta))
+    gains.sort()
+    if not gains:
+        return None
+    return gains[int(math.floor(0.025 * len(gains)))], gains[int(math.ceil(0.975 * len(gains))) - 1]
+
+
+def stop_rule6(rows, th_all):
+    """(stop, x, y): Af on the hinted N=10 probes. FR.8.7: with 150 questions and x >= 128 (fewer than 23 errors), G cannot reach 15 points."""
+    th = th6(th_all)
+    x, y = _acc(rows, "Af", th["primary_phrasing"], TYPES, th["n"])
+    return (y == 150 and x >= th["stop_af_min_correct_of_150"]), x, y
+
+
+def search_rates(rows, th):
+    """Af search rate per phrasing: the forks with used_lookup of all forks. And Af accuracy (rows) with and without a lookup."""
+    out = {}
+    for ph in PHRASINGS6:
+        forks, cw, cwo = {}, [0, 0], [0, 0]
+        for r in rows:
+            if r.get("arm") != "Af" or r.get("phrasing", "cued") != ph or r.get("condition", "compact") != "compact" or r.get("type") not in TYPES or r.get("refused") or r.get("n_target") != th["n"]:
+                continue
+            forks.setdefault((r.get("run"), r.get("fork_sid") or id(r)), []).append(r)
+            c = cw if r.get("used_lookup") else cwo
+            c[0] += 1 if r.get("correct") else 0
+            c[1] += 1
+        out[ph] = {"forks": len(forks), "searched": sum(1 for rs in forks.values() if any(x.get("used_lookup") for x in rs)), "with": tuple(cw), "without": tuple(cwo)}
+    return out
+
+
+def validity_gates6(rows, sessions, th, seeds, meta=None):
+    """The FR.4 gates (validity_gates) and the FR.8.5 gates: every seed has Af, B, O and Z rows; one claude_version; one hook sha256 in all B sessions;
+    no live install (the live recall.py hash is the same in every run folder and the settings file did not change). A gate without data is NO DATA, not PASS."""
+    out = validity_gates(rows, sessions, th)
+    present = _arms_present(rows)
+    missing = ["s%d-%s" % (s, a) for s in seeds for a in ("Af", "B", "O", "Z") if not any(r["seed"] == s and r.get("arm") == a and r.get("condition", "compact") == "compact" for r in rows)]
+    if "B" not in present:
+        out.append(_gate("Every seed has Af, B, O and Z rows", "0 missing", "arm B has no rows yet (step 1 alone)", None))
+    else:
+        out.append(_gate("Every seed has Af, B, O and Z rows", "0 missing", "%d missing%s" % (len(missing), (": " + ", ".join(missing[:6])) if missing else ""), not missing))
+    vers = {r.get("claude_version") for r in rows if r.get("claude_version")} | {s.get("claude_version") for s in sessions if s.get("claude_version")}
+    out.append(_gate("One claude_version in all sessions of both steps", "= 1", "%d (%s)" % (len(vers), ", ".join(sorted(map(str, vers)))[:80]) if vers else "no version recorded", (len(vers) == 1) if vers else None))
+    bs = [s for s in sessions if s.get("arm") == "B"]
+    hashes = {json.dumps(s.get("hook_sha256"), sort_keys=True) for s in bs if s.get("hook_sha256")}
+    nohash = [s.get("name") for s in bs if not s.get("hook_sha256")]
+    out.append(_gate("One hook sha256 in all B sessions", "= 1", "%d distinct%s" % (len(hashes), (", no hash in: " + ", ".join(map(str, nohash))) if nohash else "") if bs else "no B session yet",
+                     (len(hashes) == 1 and not nohash) if bs else None))
+    if meta:
+        shas = {m.get("live_recall_sha256") for m in meta}
+        changed = [m for m in meta if m.get("settings_hash_changed")]
+        out.append(_gate("No live install between the registration commit and the end of step 2", "no change", "%d live recall.py hash(es), %d run(s) with a changed settings file" % (len(shas), len(changed)),
+                         len(shas) == 1 and None not in shas and not changed))
+    else:
+        out.append(_gate("No live install between the registration commit and the end of step 2", "no change", "no run metadata", None))
+    return out
+
+
+def verdict6(rows, sessions, th_all, seeds=None, meta=None, old_rows=None):
+    """Returns {"verdict": PASS|FAIL|NO CLEAR DIFFERENCE|INVALID|INCOMPLETE, "primary", "secondary" (neutral, told), "pooled8", "bootstrap", "gates", "invalid_gates",
+    "stop", "stop_counts", "types", "search"}. Only the primary rule on the 6 new seeds sets the verdict. Everything else is secondary."""
+    th = th6(th_all)
+    seeds = list(seeds or seeds6(th_all))
+    new = [r for r in rows if r.get("seed") in seeds]
+    sess = [s for s in sessions if s.get("seed") in seeds or s.get("seed") is None]
+    gl = validity_gates6(new, sess, th, seeds, meta)
+    invalid = [g["gate"] for g in gl if g["result"] != "PASS"]
+    prim = rule6(new, th, th["primary_phrasing"], seeds)
+    sec = {ph: rule6(new, th, ph, seeds) for ph in th["secondary_phrasings"].split()}
+    pooled = None
+    if old_rows:
+        both = list(new) + [r for r in old_rows if r.get("seed") in OLD_SEEDS]
+        pooled = rule6(both, th, th["primary_phrasing"], list(OLD_SEEDS) + seeds)
+    stop, x, y = stop_rule6(new, th_all)
+    types = {}
+    for label, ts in (("S and E", SE_TYPES), ("R D X C M", OTHER_TYPES)):
+        types[label] = {ph: {arm: _acc(new, arm, ph, ts, th["n"]) for arm in ("Af", "B")} for ph in PHRASINGS6}
+    if any(g["result"] == "FAIL" for g in gl):
+        overall = "INVALID"
+    elif prim["cls"] is None:
+        overall = "INCOMPLETE"
+    elif invalid:
+        overall = "INVALID"
+    else:
+        overall = prim["cls"]
+    return {"verdict": overall, "primary": prim, "secondary": sec, "pooled8": pooled, "bootstrap": bootstrap6(prim, th), "gates": gl, "invalid_gates": invalid,
+            "stop": stop, "stop_counts": [x, y], "types": types, "search": search_rates(new, th)}
+
+
+def _p_text(r):
+    if r["p"] is None:
+        return "n/a"
+    return "%d/%d = %.4f" % (r["p"].numerator, r["p"].denominator, float(r["p"]))
+
+
+def _row6(name, r):
+    return "| %s | %s | %s | %s | %s | %s |" % (name, _frac(*r["af"]), _frac(*r["b"]) if r["b"][1] else "not run yet", "n/a" if r["gain_points"] is None else "%+.1f points" % r["gain_points"],
+                                                "n/a" if r["k"] is None else "%d of %d" % (r["k"], len(r["seeds"])), _p_text(r))
+
+
+def section6(rows, sessions, cfg, th_all, seeds=None, meta=None, old_rows=None):
+    """(markdown lines, dict) for the fair6 runs. Counts, G, k and p. FR.5 wording with the new seed count. It never says that anything is validated or proven."""
+    th = th6(th_all)
+    v = verdict6(rows, sessions, th_all, seeds, meta, old_rows)
+    p, told = v["primary"], v["secondary"]["told"]
+    ns = len(p["seeds"])
+    y = p["af"][1]
+    lines = ["## Fair replication (%d seeds)\n" % ns]
+    if v["stop"]:
+        lines.append("**" + STOP6_FMT % tuple(v["stop_counts"]) + "**\n")
+    lines.append("**Verdict (primary rule, %d new seeds, hinted probes, N=%d): %s.**\n" % (ns, th["n"], v["verdict"]))
+    lines.append("Small test: %d new seeds, %d hinted questions, %s, %d compactions. Plain Claude Code that can search its own transcripts: %s. Lossless Handoff: %s.\n" % (
+        ns, y, cfg.get("model", "sonnet").capitalize(), th["n"], ("%d of %d" % p["af"]) if y else "no data", ("%d of %d" % p["b"]) if p["b"][1] else "not run yet"))
+    if p["cls"] is not None:
+        lines.append("B minus Af: %+.1f points. Seeds with B >= Af: %d of %d. Exact one-sided sign-flip p: %s (%d patterns).\n" % (p["gain_points"], p["k"], ns, _p_text(p), 2 ** ns))
+        if p["note"]:
+            lines.append(p["note"] + "\n")
+        lines.append("Primary: %s.\n" % ("no clear difference" if p["cls"] == NO_CLEAR else p["cls"]))
+    if v["bootstrap"]:
+        lines.append("95%% percentile bootstrap interval of B minus Af over seeds (%d draws, rng seed %d): %.1f to %.1f points. %s.\n" % (th["bootstrap_draws"], th["bootstrap_rng_seed"], v["bootstrap"][0], v["bootstrap"][1], BOOT_LABEL))
+    if told["af"][1]:
+        lines.append(TOLD_LINE % (told["af"][0], told["af"][1], told["b"][0], told["b"][1]) + "\n" if told["b"][1] else
+                     "When the prompt tells plain Claude Code to search: %d of %d. Lossless Handoff: not run yet.\n" % told["af"])
+        if told["af"][0] / told["af"][1] >= th["told_af_note_min_rate"]:
+            lines.append(TOLD_NOTE + "\n")
+    lines += ["Secondary results (they never change the verdict):\n", "| Probes | Af (can search) | B (Lossless Handoff) | B minus Af | Seeds with B >= Af | p |", "|---|---|---|---|---|---|"]
+    for name, r in (("hinted (cued), primary", p), ("neutral", v["secondary"]["neutral"]), ("told", told)):
+        lines.append(_row6(name, r))
+    if v["pooled8"] is not None:
+        lines.append(_row6("hinted (cued), pooled %d seeds (%s)" % (len(v["pooled8"]["seeds"]), POOLED_LABEL), v["pooled8"]))
+    lines += ["", "Per seed (counts, hinted ; neutral ; told):\n", "| Seed | Af | B |", "|---|---|---|"]
+    for sd in p["seeds"]:
+        cells = [[_frac(*v["secondary"][ph]["per_seed"][sd][arm]) if ph != "cued" else _frac(*p["per_seed"][sd][arm]) for ph in PHRASINGS6] for arm in ("af", "b")]
+        lines.append("| %s | %s | %s |" % (sd, " ; ".join(cells[0]), " ; ".join(cells[1])))
+    lines += ["", "Types apart (S and E: the fact file is deleted, so the fact lives in the transcript only; counts only):\n", "| Types | Probes | Af | B |", "|---|---|---|---|"]
+    for label, d in v["types"].items():
+        for ph, arms in d.items():
+            lines.append("| %s | %s | %s | %s |" % (label, ph, _frac(*arms["Af"]), _frac(*arms["B"])))
+    lines += ["", "Af search rate (forks with used_lookup, of all Af forks) and Af accuracy with and without a lookup:\n", "| Probes | Forks that searched | Af correct with a lookup | Af correct without a lookup |", "|---|---|---|---|"]
+    for ph, d in v["search"].items():
+        lines.append("| %s | %s | %s | %s |" % (ph, "%d of %d" % (d["searched"], d["forks"]) if d["forks"] else "no data", _frac(*d["with"]), _frac(*d["without"])))
+    lines += ["", "Validity gates (any result but PASS makes the verdict INVALID):\n", "| Gate | Threshold | Measured | Result |", "|---|---|---|---|"]
+    lines += ["| %s | %s | %s | %s |" % (g["gate"], g["threshold"], g["measured"], g["result"]) for g in v["gates"]]
+    lines.append("")
+    lines.append("af_blocked_attempts (Af tool calls on a folder of another arm or a state folder that a deny rule blocked; not a gate): %d.\n" % blocked_total(rows, sessions))
+    lines.append("Isolation method: ordering. All Af sessions and probe forks finish before any O, Z or B session of the same seeds starts (SPEC.md section 16).\n")
+    return lines, v
+
+
+def old_fair_rows(results_dir):
+    """Rows of the two seeds of the first fair re-test (3001 3002), for the pooled secondary result: the newest fair-step1 and fair-step2 run folders of these seeds. [] if none."""
+    import glob
+    sys.path.insert(0, HERE)
+    import gates
+    rows = []
+    for kind in ("fair-step1", "fair-step2"):
+        best = None
+        for f in sorted(glob.glob(os.path.join(results_dir, "*", "config.json"))):
+            try:
+                c = json.load(open(f, encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            if c.get("kind") == kind and set(c.get("seeds") or []) <= set(OLD_SEEDS) and os.path.isfile(os.path.join(os.path.dirname(f), "results.jsonl")):
+                best = os.path.dirname(f)
+        if best:
+            rows += gates.load_rows(best)
+    return rows
+
+
 # ---- the fair-preflight checklist
 
 def preflight_check(rows, sessions, cfg):
@@ -325,8 +569,14 @@ def main(argv):
             print("%s  %s (%s)" % (st, label, detail))
         return 0 if all(st == "PASS" for _l, st, _d in res) else 1
     th = json.load(open(os.path.join(HERE, "thresholds.json"), encoding="utf-8"))
-    stop, x, y = stop_rule(rows, th)
     import gates
+    if str(cfg.get("kind", "")).startswith("fair6"):      # FR.8.7: Af >= 128 of 150 hinted: the primary rule cannot pass. Step 2 does not start by itself
+        stop, x, y = stop_rule6(rows, th)
+        if gates.reprobe_line(rd):
+            print(gates.reprobe_line(rd))
+        print(STOP6_FMT % (x, y) if stop else "go on: plain Claude Code with search scores %d/%d (stop at %d of 150 or more; the owner decides about step 2)" % (x, y, th["fair6"]["stop_af_min_correct_of_150"]))
+        return 0
+    stop, x, y = stop_rule(rows, th)
     if gates.reprobe_line(rd):
         print(gates.reprobe_line(rd))
     print(STOP_FMT % (x, y) if stop else "go on: plain Claude Code with search scores %d/%d (stop rule at %s)" % (x, y, _pct(th["fair"]["stop_af_min_rate"])))
