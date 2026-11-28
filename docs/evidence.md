@@ -15,6 +15,8 @@ Measurements, proof checks and the two benchmarks. This page is part of the [doc
 
 The numbers are from the author's own machine, one heavy user. The author collected them on 2026-11-16.
 
+The daily live-health pages (counts and rates only, with a trend table) are in [docs/proof/live/README.md](proof/live/README.md).
+
 ## Benchmarks
 
 Two benchmarks are in this repository. Both are code-graded: no model grades an answer.
